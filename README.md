@@ -50,8 +50,9 @@ into something that matches human kinetic reaction time.
 ## Project layout
 
 ```
-server.js                 Express app: static hosting + /api/locate + /api/health
+src/index.js              Cloudflare Worker (Hono): /api/locate + /api/health
 lib/locator.js            Cerebras call, strict JSON parsing/validation, mock fallback
+wrangler.toml             Worker + static-assets config (serves /public, run_worker_first)
 public/index.html         Accessible, large-tap-target UI
 public/app.js             Camera capture + inference loop + telemetry
 public/feedback.js        Web Vibration + Web Speech driver (throttled/de-duped)
@@ -61,32 +62,38 @@ scripts/gen-icons.js      Regenerates PWA icons (no image deps)
 test/locator.test.js      Unit tests for the locator (node --test)
 ```
 
+Aura runs on **Cloudflare Workers** with **Hono**. The PWA client in `/public`
+is served by Workers Static Assets; `run_worker_first = ["/api/*"]` routes only
+API calls to the Hono Worker, which is the Cerebras orchestration layer.
+
 ## Run it
 
 ```bash
 npm install
 
-# Mock mode (no API key) — full client + haptic/speech loop works offline,
-# the locator returns a converging spiral so you can demo the UX immediately.
-npm start
+# Local dev (Workers runtime via Miniflare). Mock mode unless a key is set —
+# the locator returns a converging spiral so the full UX works offline.
+npm run dev            # wrangler dev → http://localhost:8787
 
-# Live mode — point at Cerebras:
-cp .env.example .env        # then set CEREBRAS_API_KEY
-npm start
+# Live Cerebras inference locally: put CEREBRAS_API_KEY in .dev.vars
+cp .dev.vars.example .dev.vars   # then set CEREBRAS_API_KEY
+
+# Deploy to Cloudflare:
+npx wrangler deploy
+# Then set the secret for live inference (otherwise mock mode):
+npx wrangler secret put CEREBRAS_API_KEY
 ```
 
-Open `http://localhost:3000`. The camera, Vibration, and Speech APIs require a
-**secure context** — that means `https://` (or `localhost`) on a real device.
-For phone testing, serve behind HTTPS (e.g. a tunnel or your host's TLS).
+The camera, Vibration, and Speech APIs require a **secure context** —
+`localhost` in dev, or the `https://*.workers.dev` URL once deployed.
 
 ### Configuration
 
-| Variable             | Default                                            | Purpose                          |
-| -------------------- | -------------------------------------------------- | -------------------------------- |
-| `CEREBRAS_API_KEY`   | _(unset → mock mode)_                              | Enables live Cerebras inference. |
-| `CEREBRAS_BASE_URL`  | `https://api.cerebras.ai/v1/chat/completions`      | Inference endpoint.              |
-| `CEREBRAS_MODEL`     | `gemma-4-31b`                                       | Vision model id.                 |
-| `PORT`               | `3000`                                             | HTTP port.                       |
+| Variable             | Where                          | Purpose                          |
+| -------------------- | ------------------------------ | -------------------------------- |
+| `CEREBRAS_API_KEY`   | secret (`.dev.vars` / dashboard) | Enables live inference (unset → mock). |
+| `CEREBRAS_BASE_URL`  | `[vars]` in wrangler.toml       | Inference endpoint.              |
+| `CEREBRAS_MODEL`     | `[vars]` in wrangler.toml       | Vision model id.                 |
 
 ### Tests
 

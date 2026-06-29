@@ -67,8 +67,7 @@ test('buildSystemPrompt embeds the target and schema', () => {
 });
 
 test('locate falls back to a valid mock without an API key', async () => {
-  delete process.env.CEREBRAS_API_KEY;
-  const r = await locate({ target: 'keys', image: 'x'.repeat(64) });
+  const r = await locate({ target: 'keys', image: 'x'.repeat(64), env: {} });
   assert.equal(r.mode, 'mock');
   assert.equal(typeof r.found, 'boolean');
   assert.ok(r.x >= 0 && r.x <= 100);
