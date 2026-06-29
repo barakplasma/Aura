@@ -6,6 +6,7 @@ import {
   deriveAction,
   buildSystemPrompt,
   locate,
+  normalizeUsage,
   VALID_ACTIONS,
 } from '../lib/locator.js';
 
@@ -73,9 +74,23 @@ test('buildSystemPrompt embeds the target and schema', () => {
   assert.match(p, /Do not output markdown/);
 });
 
+test('normalizeUsage coerces and derives total tokens', () => {
+  assert.deepEqual(normalizeUsage({ prompt_tokens: 1180, completion_tokens: 18 }), {
+    prompt_tokens: 1180,
+    completion_tokens: 18,
+    total_tokens: 1198,
+  });
+  assert.deepEqual(normalizeUsage(undefined), {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+  });
+});
+
 test('locate falls back to a valid mock without an API key', async () => {
   const r = await locate({ target: 'keys', image: 'x'.repeat(64), env: {} });
   assert.equal(r.mode, 'mock');
+  assert.ok(r.usage && r.usage.total_tokens > 0); // mock reports plausible spend
   assert.equal(typeof r.found, 'boolean');
   assert.ok(r.x >= 0 && r.x <= 100);
   assert.ok(VALID_ACTIONS.includes(r.action));

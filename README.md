@@ -121,6 +121,20 @@ in mock mode.
 npm test
 ```
 
+## Runtime controls
+
+- **Scan rate** (1–10 fps slider): how often a frame is sent for inference.
+  Lower = fewer API calls = lower cost; higher = tighter tracking. Persisted.
+- **Haptics**: the vibration is a *parking sensor* for proximity — direction is
+  spoken, while the buzz speeds up and lengthens as you close in, then becomes a
+  single sustained buzz when the target is centered (`hold_center`). A **Test
+  vibration** button confirms the device actually vibrates; if the browser has
+  no Vibration API (e.g. **iOS Safari**), haptics are disabled and the UI says so.
+- **Live cost**: each inference reports Cerebras token `usage`; the telemetry
+  shows cumulative **Tokens** and an **Est. cost** computed from an editable
+  **$/1M tokens** rate (persisted). Set the rate to your plan's price to track
+  spend in real time.
+
 ## Demo mode (the side-by-side)
 
 The UI has a **"Demo: simulate slow GPU"** toggle. Flip it on to inject ~2 s of
@@ -131,7 +145,9 @@ loop track your hand in real time. That contrast is the 60-second demo.
 ## Accessibility notes
 
 - Voice input for the target (`SpeechRecognition`) plus a text fallback.
-- `aria-live` status region announces guidance/state changes.
+- Primary guidance is spoken (Web Speech) and felt (Web Vibration); the visual
+  status line is intentionally **not** a live region (it updates at the frame
+  rate, which would flood screen readers).
 - Large, high-contrast touch targets; skip link; semantic landmarks.
 - Voice and haptics are independently toggleable.
 

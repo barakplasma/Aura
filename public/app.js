@@ -9,12 +9,17 @@
 // New frames are dropped while we wait, so we always act on the freshest
 // possible result instead of building a backlog.
 
-import { drive as driveFeedback, resetFeedback } from './feedback.js';
+import {
+  drive as driveFeedback,
+  resetFeedback,
+  testVibration,
+  canVibrate,
+} from './feedback.js';
 
 const CAPTURE_W = 640;
 const CAPTURE_H = 480;
 const JPEG_QUALITY = 0.4;
-const TARGET_FPS = 8; // upload cadence ceiling (5–10 fps per spec)
+const DEFAULT_FPS = 8; // upload cadence; user-adjustable 1–10
 const SLOW_GPU_DELAY_MS = 2000; // artificial latency for the side-by-side demo
 
 const els = {
@@ -28,9 +33,16 @@ const els = {
   speechToggle: document.getElementById('speech-toggle'),
   hapticsToggle: document.getElementById('haptics-toggle'),
   slowToggle: document.getElementById('slow-toggle'),
+  fpsRange: document.getElementById('fps-range'),
+  fpsTarget: document.getElementById('fps-target'),
+  vibeTest: document.getElementById('vibe-test'),
+  vibeStatus: document.getElementById('vibe-status'),
+  rate: document.getElementById('rate'),
   latency: document.getElementById('latency'),
   fps: document.getElementById('fps'),
   mode: document.getElementById('mode'),
+  tokens: document.getElementById('tokens'),
+  cost: document.getElementById('cost'),
 };
 
 const ctx = els.canvas.getContext('2d', { willReadFrequently: true });
@@ -41,6 +53,8 @@ const state = {
   inFlight: false,
   loopTimer: null,
   frames: [],
+  targetFps: DEFAULT_FPS,
+  totalTokens: 0,
 };
 
 // --- Camera ---------------------------------------------------------------
@@ -94,6 +108,7 @@ async function tick() {
       recordFrame();
       els.latency.textContent = String(result.latencyMs ?? rtt);
       els.mode.textContent = slow ? 'Slow GPU (sim)' : result.mode || '—';
+      recordUsage(result.usage);
 
       applyResult(result);
     } catch (err) {
@@ -103,7 +118,22 @@ async function tick() {
     }
   }
 
-  state.loopTimer = setTimeout(tick, 1000 / TARGET_FPS);
+  state.loopTimer = setTimeout(tick, 1000 / state.targetFps);
+}
+
+// Accumulate token spend and refresh the running cost estimate.
+function recordUsage(usage) {
+  const t = usage && Number.isFinite(usage.total_tokens) ? usage.total_tokens : 0;
+  if (!t) return;
+  state.totalTokens += t;
+  els.tokens.textContent = state.totalTokens.toLocaleString();
+  renderCost();
+}
+
+function renderCost() {
+  const rate = parseFloat(els.rate.value); // $ per 1M tokens
+  const cost = (state.totalTokens / 1e6) * (Number.isFinite(rate) ? rate : 0);
+  els.cost.textContent = cost.toFixed(4);
 }
 
 async function postLocate(target, image, slow) {
@@ -257,6 +287,48 @@ function setupVoiceInput() {
   });
 }
 
+// --- Settings: scan rate, cost rate, vibration test ----------------------
+
+function setupControls() {
+  // Restore persisted preferences.
+  const savedFps = parseInt(localStorage.getItem('aura.fps'), 10);
+  if (savedFps >= 1 && savedFps <= 10) {
+    state.targetFps = savedFps;
+    els.fpsRange.value = String(savedFps);
+  }
+  els.fpsTarget.textContent = String(state.targetFps);
+
+  const savedRate = localStorage.getItem('aura.rate');
+  if (savedRate !== null) els.rate.value = savedRate;
+
+  // Scan-rate slider takes effect immediately (the loop reads state.targetFps).
+  els.fpsRange.addEventListener('input', () => {
+    state.targetFps = parseInt(els.fpsRange.value, 10) || DEFAULT_FPS;
+    els.fpsTarget.textContent = String(state.targetFps);
+    localStorage.setItem('aura.fps', String(state.targetFps));
+  });
+
+  // Cost-rate input: re-price the running total live.
+  els.rate.addEventListener('input', () => {
+    localStorage.setItem('aura.rate', els.rate.value);
+    renderCost();
+  });
+
+  // Vibration self-test + capability messaging.
+  if (!canVibrate) {
+    els.vibeTest.disabled = true;
+    els.hapticsToggle.checked = false;
+    els.hapticsToggle.disabled = true;
+    els.vibeStatus.textContent =
+      'Vibration is not supported on this browser/device (e.g. iOS Safari).';
+  } else {
+    els.vibeTest.addEventListener('click', () => {
+      testVibration();
+      els.vibeStatus.textContent = 'Buzzing now — feel that?';
+    });
+  }
+}
+
 // --- Utils ----------------------------------------------------------------
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -264,6 +336,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 // --- Init -----------------------------------------------------------------
 
 setupVoiceInput();
+setupControls();
 
 fetch('/api/health')
   .then((r) => r.json())

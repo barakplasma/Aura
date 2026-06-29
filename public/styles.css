@@ -221,8 +221,62 @@ main {
   accent-color: var(--accent);
 }
 
+/* --- Scan-rate slider --- */
+.slider-row {
+  margin: 1rem 0 0.25rem;
+}
+.slider-row label {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+.slider-row label strong {
+  color: var(--fg);
+}
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+  height: 28px;
+}
+
+/* --- Vibration test + cost rate row --- */
+.inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+.btn-secondary {
+  background: #2a2a3a;
+  font-size: 1rem;
+  padding: 0.7rem 1rem;
+}
+.btn-secondary:disabled {
+  opacity: 0.5;
+}
+.rate-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.rate-label input {
+  width: 5.5rem;
+  font-size: 1rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 10px;
+  border: 2px solid #2a2a3a;
+  background: #0e0e18;
+  color: var(--fg);
+}
+
 .telemetry {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
   justify-content: space-between;
   margin: 0;
   padding: 0.75rem 0 0;

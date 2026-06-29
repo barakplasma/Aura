@@ -19,22 +19,44 @@ const SPEECH_PHRASES = {
 
 const SPEECH_MIN_INTERVAL_MS = 900; // floor between spoken cues (same action)
 const SPEECH_CHANGE_FLOOR_MS = 400; // hard floor even when the action changes
-const HOLD_PULSE_INTERVAL_MS = 500; // cadence of the "locked" solid pulse
+
+// Parking-sensor haptics. Direction is spoken; the vibration encodes how close
+// you are: slow, short taps when far → fast, longer buzzes as you close in →
+// one sustained buzz when locked on target. The wide ranges below make the
+// "getting warmer" change unmistakable on a phone.
+const HOLD_BUZZ_MS = 700;        // length of the sustained "locked" buzz
+const HOLD_REFRESH_MS = 600;     // re-issue cadence so it feels continuous
+const FAR_INTERVAL_MS = 650;     // gap between taps when far from center
+const NEAR_INTERVAL_MS = 120;    // gap between taps when almost centered
+const FAR_PULSE_MS = 120;        // tap length when far
+const NEAR_PULSE_MS = 230;       // tap length when almost centered
+const DIST_FAR = 70;             // ~corner distance on the 0–100 grid
+const DIST_NEAR = 15;            // edge of the center dead-zone
+
+export const canVibrate = typeof navigator !== 'undefined' && 'vibrate' in navigator;
+const canSpeak =
+  typeof window !== 'undefined' && 'speechSynthesis' in window;
 
 let lastAction = null;
 let lastSpeechAt = 0;
-let lastHoldPulseAt = 0;
-
-const canVibrate = typeof navigator !== 'undefined' && 'vibrate' in navigator;
-const canSpeak =
-  typeof window !== 'undefined' && 'speechSynthesis' in window;
+let lastHapticAt = 0;
+let lastHapticAction = null;
 
 export function resetFeedback() {
   lastAction = null;
   lastSpeechAt = 0;
-  lastHoldPulseAt = 0;
+  lastHapticAt = 0;
+  lastHapticAction = null;
   if (canVibrate) navigator.vibrate(0);
   if (canSpeak) window.speechSynthesis.cancel();
+}
+
+// Fire a recognizable test pattern so the user can confirm their device/browser
+// actually vibrates (iOS Safari, for one, has no Vibration API at all).
+// Returns false when vibration is unsupported.
+export function testVibration() {
+  if (!canVibrate) return false;
+  return navigator.vibrate([200, 120, 200, 120, 500]);
 }
 
 // Drive both feedback channels for a single guidance result.
@@ -46,9 +68,9 @@ export function drive(result, opts = {}) {
 
   if (!result.found) {
     // Gentle, infrequent "still searching" tick.
-    if (haptics && now - lastHoldPulseAt > 1200) {
+    if (haptics && now - lastHapticAt > 1200) {
       vibrate(30);
-      lastHoldPulseAt = now;
+      lastHapticAt = now;
     }
     if (speech && lastAction !== 'searching' && now - lastSpeechAt > 1500) {
       speak('Searching');
@@ -70,23 +92,38 @@ function driveHaptics(result, now) {
   if (!canVibrate) return;
 
   if (result.action === 'hold_center') {
-    // Target locked: continuous solid pulse, re-issued on a steady cadence so
-    // it feels sustained without overlapping calls.
-    if (now - lastHoldPulseAt > HOLD_PULSE_INTERVAL_MS) {
-      navigator.vibrate([400]);
-      lastHoldPulseAt = now;
+    // Just locked on: a punchy double-buzz marks the transition distinctly.
+    if (lastHapticAction !== 'hold_center') {
+      navigator.vibrate([300, 90, 300]);
+      lastHapticAt = now;
+      lastHapticAction = 'hold_center';
+      return;
+    }
+    // Sustained solid buzz while held, re-issued so it feels continuous.
+    if (now - lastHapticAt > HOLD_REFRESH_MS) {
+      navigator.vibrate(HOLD_BUZZ_MS);
+      lastHapticAt = now;
     }
     return;
   }
 
-  // Off-center: rapid dual-pulse warning. Cadence tightens as the target nears
-  // center, so the haptics "grow more solid" as the hand closes in.
-  const dist = Math.hypot(result.x - 50, result.y - 50); // 0..~70
-  const interval = 180 + Math.min(dist, 50) * 8; // closer => faster repeats
-  if (now - lastHoldPulseAt > interval) {
-    navigator.vibrate([100, 50, 100]);
-    lastHoldPulseAt = now;
+  // Off-center: a single tap whose rate and length both ramp with proximity,
+  // like a parking sensor accelerating as you approach. proximity: 0 far → 1 near.
+  const dist = Math.hypot(result.x - 50, result.y - 50);
+  const proximity = clamp01((DIST_FAR - dist) / (DIST_FAR - DIST_NEAR));
+  const interval = lerp(FAR_INTERVAL_MS, NEAR_INTERVAL_MS, proximity);
+  if (now - lastHapticAt > interval) {
+    navigator.vibrate(Math.round(lerp(FAR_PULSE_MS, NEAR_PULSE_MS, proximity)));
+    lastHapticAt = now;
+    lastHapticAction = result.action;
   }
+}
+
+function clamp01(v) {
+  return Math.min(1, Math.max(0, v));
+}
+function lerp(a, b, t) {
+  return a + (b - a) * t;
 }
 
 function driveSpeech(result, now, actionChanged) {
