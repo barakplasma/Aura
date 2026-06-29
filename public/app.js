@@ -34,7 +34,7 @@ const els = {
   providerBaseUrl: $('provider-baseurl'),
   providerApiKey: $('provider-apikey'),
   providerModel: $('provider-model'),
-  modelSelect: $('model-select'),
+  modelDropdown: $('model-dropdown'),
   fetchModelsBtn: $('fetch-models-btn'),
   webhookUrl: $('webhook-url'),
   webhookMethod: $('webhook-method'),
@@ -157,9 +157,6 @@ async function tick() {
 }
 
 function getModelName() {
-  if (els.modelSelect.style.display !== 'none' && els.modelSelect.value) {
-    return els.modelSelect.value;
-  }
   return els.providerModel.value.trim() || undefined;
 }
 
@@ -214,6 +211,7 @@ function sendWebhook(body) {
     headers,
     body: method === 'GET' || method === 'HEAD' ? undefined : parsedBody,
     signal: AbortSignal.timeout(5000),
+    mode: 'no-cors',
   }).catch(() => {});
 }
 
@@ -327,43 +325,64 @@ async function handleFetchModels() {
   try {
     const models = await fetchModels(baseUrl, apiKey);
     if (!state.running) {
-      populateModelSelect(models);
-      els.modelSelect.style.display = 'block';
-      const current = els.providerModel.value.trim();
-      if (current && models.includes(current)) {
-        els.modelSelect.value = current;
-      } else if (models.length > 0) {
-        els.modelSelect.value = models[0];
+      populateModelDropdown(models);
+      if (models.length > 0 && !els.providerModel.value.trim()) {
+        els.providerModel.value = models[0];
+        localStorage.setItem('aura.model', models[0]);
       }
       els.status.textContent = `Found ${models.length} models.`;
     }
   } catch (err) {
     els.status.textContent = `Fetch failed: ${err.message}. You can type a model name manually.`;
-    els.modelSelect.style.display = 'none';
   } finally {
     els.fetchModelsBtn.innerHTML = 'Fetch Models';
     els.fetchModelsBtn.disabled = false;
   }
 }
 
-function populateModelSelect(models) {
-  els.modelSelect.innerHTML = '';
+function populateModelDropdown(models) {
+  els.modelDropdown.innerHTML = '';
   for (const m of models) {
-    const opt = document.createElement('md-select-option');
-    opt.value = m;
-    opt.textContent = m;
-    els.modelSelect.appendChild(opt);
+    const item = document.createElement('div');
+    item.className = 'model-dropdown-item';
+    item.role = 'option';
+    item.textContent = m;
+    item.dataset.value = m;
+    item.addEventListener('click', () => {
+      els.providerModel.value = m;
+      els.modelDropdown.hidden = true;
+      localStorage.setItem('aura.model', m);
+    });
+    els.modelDropdown.appendChild(item);
+  }
+  filterModelDropdown();
+  els.modelDropdown.hidden = false;
+}
+
+function filterModelDropdown() {
+  const query = els.providerModel.value.trim().toLowerCase();
+  const items = Array.from(els.modelDropdown.querySelectorAll('.model-dropdown-item'));
+  let visibleCount = 0;
+  for (const item of items) {
+    const value = item.dataset.value.toLowerCase();
+    const match = value.includes(query);
+    item.style.display = match ? '' : 'none';
+    if (match) visibleCount++;
+  }
+  const existingEmpty = els.modelDropdown.querySelector('.model-dropdown-empty');
+  if (!visibleCount && items.length > 0) {
+    if (!existingEmpty) {
+      const empty = document.createElement('div');
+      empty.className = 'model-dropdown-empty';
+      empty.textContent = 'No matching models';
+      els.modelDropdown.appendChild(empty);
+    }
+  } else if (existingEmpty) {
+    existingEmpty.remove();
   }
 }
 
 els.fetchModelsBtn.addEventListener('click', handleFetchModels);
-
-// When model text field changes, hide the select if user is typing manually
-els.providerModel.addEventListener('input', () => {
-  if (els.providerModel.value.trim()) {
-    els.modelSelect.style.display = 'none';
-  }
-});
 
 // --- Settings -------------------------------------------------------------
 
@@ -390,15 +409,20 @@ function setupControls() {
   els.scanVal.textContent = String(state.scanEverySec);
 
   // Provider persistence
-  els.providerBaseUrl.addEventListener('input', () =>
-    localStorage.setItem('aura.baseUrl', els.providerBaseUrl.value)
-  );
-  els.providerApiKey.addEventListener('input', () =>
-    localStorage.setItem('aura.apiKey', els.providerApiKey.value)
-  );
-  els.providerModel.addEventListener('input', () =>
-    localStorage.setItem('aura.model', els.providerModel.value)
-  );
+  const saveProvider = () => {
+    localStorage.setItem('aura.baseUrl', els.providerBaseUrl.value);
+    localStorage.setItem('aura.apiKey', els.providerApiKey.value);
+    localStorage.setItem('aura.model', els.providerModel.value);
+  };
+  els.providerBaseUrl.addEventListener('input', saveProvider);
+  els.providerBaseUrl.addEventListener('change', saveProvider);
+  els.providerApiKey.addEventListener('input', saveProvider);
+  els.providerApiKey.addEventListener('change', saveProvider);
+  els.providerModel.addEventListener('input', () => {
+    saveProvider();
+    filterModelDropdown();
+  });
+  els.providerModel.addEventListener('change', saveProvider);
 
   els.thresholdRange.addEventListener('input', () => {
     state.threshold = parseInt(els.thresholdRange.value, 10) || 60;
