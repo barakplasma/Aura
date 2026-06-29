@@ -1,48 +1,42 @@
-// Aura client — closed-loop spatial guidance in the browser.
+// Aura monitor client — turn the camera into an automated detect→act loop.
 //
-// Pipeline:
 //   getUserMedia -> hidden <canvas> (640x480, JPEG q~0.4)
-//     -> POST /api/locate -> { found, x, y, action }
-//       -> Web Vibration API + Web Speech API feedback
+//     -> POST /api/scan { mission, action, image, threshold }
+//       -> { triggered, confidence, reason, message }
+//         -> on alert: speak the announcement + vibrate + log
 //
-// Real-time discipline: at most one inference request is in flight at a time.
-// New frames are dropped while we wait, so we always act on the freshest
-// possible result instead of building a backlog.
+// One request is in flight at a time; the next scan is scheduled after the
+// configured interval. Any result that resolves after Stop is discarded.
 
-import {
-  drive as driveFeedback,
-  resetFeedback,
-  testVibration,
-  canVibrate,
-} from './feedback.js';
+import { alert as alertOut, resetFeedback, testVibration, canVibrate } from './feedback.js';
 
 const CAPTURE_W = 640;
 const CAPTURE_H = 480;
 const JPEG_QUALITY = 0.4;
-const DEFAULT_FPS = 8; // upload cadence; user-adjustable 1–10
-const SLOW_GPU_DELAY_MS = 2000; // artificial latency for the side-by-side demo
 
 const els = {
   video: document.getElementById('video'),
   canvas: document.getElementById('canvas'),
+  flash: document.getElementById('flash'),
   status: document.getElementById('status'),
-  reticle: document.getElementById('reticle'),
-  target: document.getElementById('target'),
+  mission: document.getElementById('mission'),
+  action: document.getElementById('action'),
   toggle: document.getElementById('toggle'),
-  mic: document.getElementById('mic'),
+  thresholdRange: document.getElementById('threshold-range'),
+  thresholdVal: document.getElementById('threshold-val'),
+  scanRange: document.getElementById('scan-range'),
+  scanVal: document.getElementById('scan-val'),
   speechToggle: document.getElementById('speech-toggle'),
   hapticsToggle: document.getElementById('haptics-toggle'),
-  slowToggle: document.getElementById('slow-toggle'),
-  fpsRange: document.getElementById('fps-range'),
-  fpsTarget: document.getElementById('fps-target'),
   vibeTest: document.getElementById('vibe-test'),
   vibeStatus: document.getElementById('vibe-status'),
   rate: document.getElementById('rate'),
   latency: document.getElementById('latency'),
-  fps: document.getElementById('fps'),
+  confidence: document.getElementById('confidence'),
   mode: document.getElementById('mode'),
   tokens: document.getElementById('tokens'),
   cost: document.getElementById('cost'),
+  alertLog: document.getElementById('alert-log'),
 };
 
 const ctx = els.canvas.getContext('2d', { willReadFrequently: true });
@@ -52,23 +46,22 @@ const state = {
   stream: null,
   inFlight: false,
   loopTimer: null,
-  frames: [],
-  targetFps: DEFAULT_FPS,
+  threshold: 60,
+  scanEverySec: 5,
   totalTokens: 0,
 };
 
 // --- Camera ---------------------------------------------------------------
 
 async function startCamera() {
-  const constraints = {
+  state.stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       facingMode: { ideal: 'environment' },
       width: { ideal: CAPTURE_W },
       height: { ideal: CAPTURE_H },
     },
-  };
-  state.stream = await navigator.mediaDevices.getUserMedia(constraints);
+  });
   els.video.srcObject = state.stream;
   await els.video.play();
 }
@@ -81,47 +74,89 @@ function stopCamera() {
   els.video.srcObject = null;
 }
 
-// Draw the current video frame into the constrained, compressed canvas buffer
-// and return a JPEG data URL.
 function captureFrame() {
   ctx.drawImage(els.video, 0, 0, CAPTURE_W, CAPTURE_H);
   return els.canvas.toDataURL('image/jpeg', JPEG_QUALITY);
 }
 
-// --- Inference loop -------------------------------------------------------
+// --- Scan loop ------------------------------------------------------------
 
 async function tick() {
   if (!state.running) return;
 
-  // Frame dropping: never queue a second request behind an in-flight one.
   if (!state.inFlight && els.video.readyState >= 2) {
     state.inFlight = true;
-    const image = captureFrame();
-    const target = els.target.value.trim();
     const started = performance.now();
-
     try {
-      const slow = els.slowToggle.checked;
-      const result = await postLocate(target, image, slow);
+      const result = await postScan({
+        mission: els.mission.value.trim(),
+        action: els.action.value.trim(),
+        image: captureFrame(),
+        threshold: state.threshold,
+      });
+      if (!state.running) return; // discard results that land after Stop
       const rtt = Math.round(performance.now() - started);
-
-      recordFrame();
       els.latency.textContent = String(result.latencyMs ?? rtt);
-      els.mode.textContent = slow ? 'Slow GPU (sim)' : result.mode || '—';
+      els.mode.textContent = result.mode || '—';
+      els.confidence.textContent =
+        Number.isFinite(result.confidence) ? String(Math.round(result.confidence)) : '—';
       recordUsage(result.usage);
-
-      applyResult(result);
+      handleResult(result);
     } catch (err) {
-      els.status.textContent = `Error: ${err.message}`;
+      if (state.running) els.status.textContent = `Error: ${err.message}`;
     } finally {
       state.inFlight = false;
     }
   }
 
-  state.loopTimer = setTimeout(tick, 1000 / state.targetFps);
+  if (state.running) {
+    state.loopTimer = setTimeout(tick, state.scanEverySec * 1000);
+  }
 }
 
-// Accumulate token spend and refresh the running cost estimate.
+async function postScan(body) {
+  const resp = await fetch('/api/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const b = await resp.json().catch(() => ({}));
+    throw new Error(b.error || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+function handleResult(result) {
+  if (result.triggered) {
+    els.status.textContent = `⚠ ALERT — ${result.message || result.reason}`;
+    flashAlert();
+    logAlert(result.message || result.reason, result.confidence);
+    alertOut(result.message || result.reason, {
+      speech: els.speechToggle.checked,
+      haptics: els.hapticsToggle.checked,
+    });
+  } else {
+    els.status.textContent = `Watching — ${result.reason}`;
+  }
+}
+
+function flashAlert() {
+  els.flash.classList.add('on');
+  setTimeout(() => els.flash.classList.remove('on'), 700);
+}
+
+function logAlert(message, confidence) {
+  const li = document.createElement('li');
+  const time = new Date().toLocaleTimeString();
+  const conf = Number.isFinite(confidence) ? ` (${Math.round(confidence)}%)` : '';
+  li.textContent = `${time}${conf} — ${message}`;
+  els.alertLog.prepend(li);
+  while (els.alertLog.children.length > 20) els.alertLog.lastChild.remove();
+}
+
+// --- Cost telemetry -------------------------------------------------------
+
 function recordUsage(usage) {
   const t = usage && Number.isFinite(usage.total_tokens) ? usage.total_tokens : 0;
   if (!t) return;
@@ -136,73 +171,12 @@ function renderCost() {
   els.cost.textContent = cost.toFixed(4);
 }
 
-async function postLocate(target, image, slow) {
-  const resp = await fetch('/api/locate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ target, image }),
-  });
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${resp.status}`);
-  }
-  const data = await resp.json();
-  // Demo mode: emulate a laggy cloud GPU by withholding the (already computed)
-  // result, illustrating why Cerebras' throughput matters for kinetic tasks.
-  if (slow) await delay(SLOW_GPU_DELAY_MS);
-  return data;
-}
-
-function applyResult(result) {
-  moveReticle(result);
-  els.status.textContent = describe(result, els.target.value.trim());
-  driveFeedback(result, {
-    speech: els.speechToggle.checked,
-    haptics: els.hapticsToggle.checked,
-  });
-}
-
-function describe(result, target) {
-  if (!result.found) return `Searching for ${target || 'target'}…`;
-  if (result.action === 'hold_center') return `${target} centered — reach now`;
-  const word = {
-    steer_left: 'Move left',
-    steer_right: 'Move right',
-    steer_up: 'Move up',
-    steer_down: 'Move down',
-  }[result.action];
-  return `${word} — ${target}`;
-}
-
-function moveReticle(result) {
-  if (!result.found) {
-    els.reticle.classList.remove('visible', 'centered');
-    return;
-  }
-  els.reticle.classList.add('visible');
-  els.reticle.classList.toggle('centered', result.action === 'hold_center');
-  els.reticle.style.left = `${result.x}%`;
-  els.reticle.style.top = `${result.y}%`;
-}
-
-// --- FPS telemetry --------------------------------------------------------
-
-function recordFrame() {
-  const now = performance.now();
-  state.frames.push(now);
-  while (state.frames.length && now - state.frames[0] > 1000) {
-    state.frames.shift();
-  }
-  els.fps.textContent = String(state.frames.length);
-}
-
 // --- Lifecycle ------------------------------------------------------------
 
 async function start() {
-  const target = els.target.value.trim();
-  if (!target) {
-    els.status.textContent = 'Please enter a target object first.';
-    els.target.focus();
+  if (!els.mission.value.trim()) {
+    els.status.textContent = 'Describe the mission (what to watch for) first.';
+    els.mission.focus();
     return;
   }
   try {
@@ -213,10 +187,10 @@ async function start() {
     return;
   }
   state.running = true;
-  els.toggle.textContent = 'Stop guidance';
+  els.toggle.textContent = 'Stop monitoring';
   els.toggle.classList.add('active');
   els.toggle.setAttribute('aria-pressed', 'true');
-  els.status.textContent = `Scanning for ${target}…`;
+  els.status.textContent = 'Monitoring…';
   resetFeedback();
   tick();
 }
@@ -226,95 +200,52 @@ function stop() {
   clearTimeout(state.loopTimer);
   stopCamera();
   resetFeedback();
-  els.reticle.classList.remove('visible', 'centered');
-  els.toggle.textContent = 'Start guidance';
+  els.toggle.textContent = 'Start monitoring';
   els.toggle.classList.remove('active');
   els.toggle.setAttribute('aria-pressed', 'false');
   els.status.textContent = 'Stopped.';
-  els.fps.textContent = '0';
 }
 
 els.toggle.addEventListener('click', () => (state.running ? stop() : start()));
 
-// --- Voice input for target object ---------------------------------------
-
-function setupVoiceInput() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    els.mic.disabled = true;
-    els.mic.title = 'Speech recognition not supported on this browser';
-    return;
-  }
-  const recognition = new SR();
-  recognition.lang = 'en-US';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-
-  // Drive UI state from the official recognition events rather than the click,
-  // so it can't desync if start() throws or the engine stops on its own. A
-  // second tap stops/submits early.
-  let recording = false;
-
-  els.mic.addEventListener('click', () => {
-    if (recording) {
-      recognition.stop();
-      return;
-    }
-    try {
-      recognition.start();
-    } catch {
-      /* start() throws if already starting; the start event will sync state */
-    }
-  });
-  recognition.addEventListener('start', () => {
-    recording = true;
-    els.mic.classList.add('recording');
-    els.status.textContent = 'Listening for target…';
-  });
-  recognition.addEventListener('result', (e) => {
-    const said = e.results[0][0].transcript.trim().replace(/[.!?]+$/, '');
-    els.target.value = said;
-    els.status.textContent = `Target set: ${said}`;
-  });
-  recognition.addEventListener('end', () => {
-    recording = false;
-    els.mic.classList.remove('recording');
-  });
-  recognition.addEventListener('error', () => {
-    recording = false;
-    els.mic.classList.remove('recording');
-    els.status.textContent = 'Could not hear that — please type the target.';
-  });
-}
-
-// --- Settings: scan rate, cost rate, vibration test ----------------------
+// --- Settings -------------------------------------------------------------
 
 function setupControls() {
-  // Restore persisted preferences.
-  const savedFps = parseInt(localStorage.getItem('aura.fps'), 10);
-  if (savedFps >= 1 && savedFps <= 10) {
-    state.targetFps = savedFps;
-    els.fpsRange.value = String(savedFps);
-  }
-  els.fpsTarget.textContent = String(state.targetFps);
-
+  const savedThreshold = parseInt(localStorage.getItem('aura.threshold'), 10);
+  if (savedThreshold >= 10 && savedThreshold <= 95) state.threshold = savedThreshold;
+  const savedScan = parseInt(localStorage.getItem('aura.scanEvery'), 10);
+  if (savedScan >= 2 && savedScan <= 30) state.scanEverySec = savedScan;
   const savedRate = localStorage.getItem('aura.rate');
   if (savedRate !== null) els.rate.value = savedRate;
+  els.mission.value = localStorage.getItem('aura.mission') || '';
+  els.action.value = localStorage.getItem('aura.action') || '';
 
-  // Scan-rate slider takes effect immediately (the loop reads state.targetFps).
-  els.fpsRange.addEventListener('input', () => {
-    state.targetFps = parseInt(els.fpsRange.value, 10) || DEFAULT_FPS;
-    els.fpsTarget.textContent = String(state.targetFps);
-    localStorage.setItem('aura.fps', String(state.targetFps));
+  els.thresholdRange.value = String(state.threshold);
+  els.thresholdVal.textContent = String(state.threshold);
+  els.scanRange.value = String(state.scanEverySec);
+  els.scanVal.textContent = String(state.scanEverySec);
+
+  els.thresholdRange.addEventListener('input', () => {
+    state.threshold = parseInt(els.thresholdRange.value, 10) || 60;
+    els.thresholdVal.textContent = String(state.threshold);
+    localStorage.setItem('aura.threshold', String(state.threshold));
   });
-
-  // Cost-rate input: re-price the running total live.
+  els.scanRange.addEventListener('input', () => {
+    state.scanEverySec = parseInt(els.scanRange.value, 10) || 5;
+    els.scanVal.textContent = String(state.scanEverySec);
+    localStorage.setItem('aura.scanEvery', String(state.scanEverySec));
+  });
   els.rate.addEventListener('input', () => {
     localStorage.setItem('aura.rate', els.rate.value);
     renderCost();
   });
+  els.mission.addEventListener('input', () =>
+    localStorage.setItem('aura.mission', els.mission.value)
+  );
+  els.action.addEventListener('input', () =>
+    localStorage.setItem('aura.action', els.action.value)
+  );
 
-  // Vibration self-test + capability messaging.
   if (!canVibrate) {
     els.vibeTest.disabled = true;
     els.hapticsToggle.checked = false;
@@ -329,13 +260,8 @@ function setupControls() {
   }
 }
 
-// --- Utils ----------------------------------------------------------------
-
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-
 // --- Init -----------------------------------------------------------------
 
-setupVoiceInput();
 setupControls();
 
 fetch('/api/health')

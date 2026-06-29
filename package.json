@@ -1,7 +1,7 @@
 {
   "name": "aura",
   "version": "1.0.0",
-  "description": "Aura — Low-Latency Haptic & Audio Spatial Guidance for the Visually Impaired. A zero-install mobile web app that turns an Android phone into a closed-loop spatial guidance engine using Cerebras-hosted Gemma vision inference. Runs on Cloudflare Workers (Hono).",
+  "description": "Aura — an automated visual monitoring platform. Give a phone camera a mission and an action prompt; Gemma vision (on Cerebras) decides each scan cycle whether to alert and announces the response. Runs on Cloudflare Workers (Hono).",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

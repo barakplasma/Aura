@@ -1,119 +1,102 @@
 # Aura
 
-**Low-Latency Haptic & Audio Spatial Guidance for the Visually Impaired**
+**An automated visual monitor powered by Gemma vision — on any phone, zero install.**
 
-Aura turns an ordinary Android phone into a closed-loop spatial guidance engine —
-**zero install, no native app, no extra hardware.** Open a URL in Chrome, name an
-object ("water bottle"), and the phone vibrates and speaks to steer your hand
-directly onto it.
+Point a phone (or webcam) at a scene, give it a **mission** in plain language, and
+Aura watches the camera and **acts** when the condition you described happens.
 
-The whole idea hinges on one thing: **latency**. A cloud VLM round-trip of
-1.5–3 s means a moving hand overshoots the target by ~1 m before feedback
-arrives. Aura runs **Google DeepMind's Gemma vision model on Cerebras'
-wafer-scale engine (>1,500 tokens/sec)** to collapse the vision-to-feedback loop
-into something that matches human kinetic reaction time.
+- **Mission prompt** — what to watch for: *"Alert if someone is loitering near the
+  front door,"* *"Alert if my son leaves his desk or stops doing homework,"*
+  *"Alert if anyone runs on the pool deck or dives in the shallow end."*
+- **Action prompt** — what to announce when it triggers: *"Firmly tell the person
+  they're being recorded and to leave,"* *"Tell him to get back to his homework,"*
+  *"Tell the swimmer to stop running."*
+
+Each scan cycle, Gemma decides whether the alert condition is met and how
+confident it is. If it fires (and clears your **sensitivity threshold**), Aura
+runs the action prompt and **speaks the announcement aloud** (plus a vibration and
+an on-screen flash). It's a security guard, a homework monitor, or a lifeguard —
+defined entirely by two prompts.
+
+It runs **Google DeepMind's Gemma vision model on Cerebras' wafer-scale engine**,
+so each scan is fast and cheap enough to run continuously.
 
 ---
 
 ## How it works
 
 ```
-[ HTML5 camera frame ]  ->  [ 640x480 JPEG q~0.4 ]  ->  POST /api/locate
-                                                              |
-                                                              v
-                                  [ Cerebras · Gemma vision · strict JSON ]
-                                                              |
-                       found / x / y / action  <--------------+
-                                  |
-          +-----------------------+-----------------------+
-          v                                               v
-   off-center                                        centered
-   Web Speech API: "Left" / "Right" / ...     Web Vibration API: solid pulse
-   Web Vibration API: rapid dual-pulse        (haptics tighten as you close in)
+[ camera frame ] -> [ 640x480 JPEG (~40%) ] -> POST /api/scan { mission, action, threshold }
+                                                        |
+                                          DETECTION call (Gemma)
+                                          {triggered, confidence, reason}
+                                                        |
+                              triggered AND confidence >= threshold ?
+                                       no |                 | yes
+                                          v                 v
+                                   "Watching…"        ACTION call (Gemma)
+                                                      {message}  -> speak + vibrate + log
 ```
 
-- **Camera** — `getUserMedia` (rear camera) drawn to a hidden `<canvas>`,
-  constrained to 640×480 and JPEG-compressed (~40%) before upload.
-- **Inference** — the backend forwards the frame to Cerebras and enforces
-  *correct-by-construction* spatial JSON
-  (`{found, x, y, action}` on a normalized 0–100 grid). The API key stays
-  server-side.
-- **Haptics** — `navigator.vibrate([400])` for a locked target;
-  `navigator.vibrate([100,50,100])` dual-pulse when off-center, with the cadence
-  tightening as the target nears center.
-- **Voice** — `SpeechSynthesisUtterance` at `rate = 1.4`, and the queue is
-  `cancel()`-ed before every cue so audio always reflects the *latest* frame
-  rather than a backlog.
-- **Frame dropping** — only one inference request is ever in flight; new frames
-  are dropped while waiting, keeping the loop real-time under network jitter.
+Most cycles are detection-only; the second (action) call happens only on a real
+alert, so steady-state cost stays low.
 
 ## Project layout
 
 ```
-src/index.js              Cloudflare Worker (Hono): /api/locate + /api/health
-lib/locator.js            Cerebras call, strict JSON parsing/validation, mock fallback
-wrangler.toml             Worker + static-assets config (serves /public, run_worker_first)
-public/index.html         Accessible, large-tap-target UI
-public/app.js             Camera capture + inference loop + telemetry
-public/feedback.js        Web Vibration + Web Speech driver (throttled/de-duped)
-public/manifest.webmanifest  Web app manifest (installable on Android Chrome)
+src/index.js              Cloudflare Worker (Hono): POST /api/scan + /api/health
+lib/monitor.js            Detection + action prompts, Cerebras calls, parsing, mock
+public/index.html         Mission/action prompts, sensitivity + cadence, alert log
+public/app.js             Camera capture + scan loop + alert delivery
+public/feedback.js        Web Speech announcement + Web Vibration alert
+public/manifest.webmanifest
 scripts/gen-icons.js      Regenerates PWA icons (no image deps)
 .github/workflows/deploy.yml  CI deploy via cloudflare/wrangler-action
-test/locator.test.js      Unit tests for the locator (node --test)
+test/monitor.test.js      Unit tests for the monitor engine (node --test)
 ```
 
 Aura runs on **Cloudflare Workers** with **Hono**. The client in `/public` is
 served by Workers Static Assets; `run_worker_first = ["/api/*"]` routes only API
-calls to the Hono Worker, which is the Cerebras orchestration layer.
-
-There is no service worker / offline cache: the app is non-functional without
-network (every frame needs inference), so offline support would be pointless.
-The web manifest is kept so it's still installable on Android Chrome.
+calls to the Worker. The Cerebras API key stays server-side as a Worker secret.
 
 ## Run it
 
 ```bash
 npm install
+npm run dev            # wrangler dev → http://localhost:8787 (mock mode without a key)
 
-# Local dev (Workers runtime via Miniflare). Mock mode unless a key is set —
-# the locator returns a converging spiral so the full UX works without a key.
-npm run dev            # wrangler dev → http://localhost:8787
+# Live inference:
+cp .dev.vars.example .dev.vars   # set CEREBRAS_API_KEY
+npm run dev
 
-# Live Cerebras inference locally: put CEREBRAS_API_KEY in .dev.vars
-cp .dev.vars.example .dev.vars   # then set CEREBRAS_API_KEY
-
-# Manual deploy to Cloudflare:
+# Deploy:
 npx wrangler deploy
-# Then set the secret for live inference (otherwise mock mode):
 npx wrangler secret put CEREBRAS_API_KEY
 ```
 
-The camera, Vibration, and Speech APIs require a **secure context** —
-`localhost` in dev, or the `https://*.workers.dev` URL once deployed.
+With no `CEREBRAS_API_KEY`, the monitor runs in **mock mode** — it cycles between
+"normal" and "alert" so you can see the speech, vibration, and alert log working
+offline. The camera, Vibration, and Speech APIs need a **secure context**
+(`localhost` in dev, or the `https://*.workers.dev` URL once deployed).
 
-### Continuous deployment (GitHub Actions)
+### Continuous deployment
 
-`.github/workflows/deploy.yml` deploys on every push to `main` (and on manual
-dispatch) via [`cloudflare/wrangler-action`](https://github.com/cloudflare/wrangler-action).
-Add one repository secret:
+`.github/workflows/deploy.yml` deploys on every push to `main` via
+[`cloudflare/wrangler-action`](https://github.com/cloudflare/wrangler-action).
+Add a `CLOUDFLARE_API_TOKEN` repo secret (*Workers Scripts: Edit*); add a
+`CEREBRAS_API_KEY` repo secret to run live (it's synced to the Worker after
+deploy). Optional `CLOUDFLARE_ACCOUNT_ID` if the token sees more than one account.
 
-- **`CLOUDFLARE_API_TOKEN`** — a token with *Workers Scripts: Edit*
-  (the "Edit Cloudflare Workers" template works).
-- *(optional)* `CLOUDFLARE_ACCOUNT_ID` — only if the token can see more than one
-  account; an account-scoped token is auto-detected.
+## Runtime controls
 
-If a `CEREBRAS_API_KEY` repo secret is present, the workflow pushes it as a
-Worker secret (in a guarded step after deploy, so the script exists first) and
-the Worker runs live. If it's absent, that step is skipped and the Worker stays
-in mock mode.
-
-### Configuration
-
-| Variable             | Where                          | Purpose                          |
-| -------------------- | ------------------------------ | -------------------------------- |
-| `CEREBRAS_API_KEY`   | secret (`.dev.vars` / dashboard) | Enables live inference (unset → mock). |
-| `CEREBRAS_BASE_URL`  | `[vars]` in wrangler.toml       | Inference endpoint.              |
-| `CEREBRAS_MODEL`     | `[vars]` in wrangler.toml       | Vision model id.                 |
+- **Mission** / **Action** prompts (free-form, persisted).
+- **Alert sensitivity** (10–95%): the confidence the detection must reach to fire.
+  Higher = fewer false alarms.
+- **Scan every N seconds** (2–30 s): cadence, and your main cost dial.
+- **Speak alerts** / **Vibrate on alert** toggles; a **Test vibration** button
+  (note: iOS Safari has no Vibration API — it's disabled there).
+- **Live cost**: each scan reports Cerebras token `usage`; telemetry shows
+  cumulative **Tokens** and **Est. cost** from an editable **$/1M tokens** rate.
 
 ### Tests
 
@@ -121,35 +104,12 @@ in mock mode.
 npm test
 ```
 
-## Runtime controls
+## A note on responsible use
 
-- **Scan rate** (1–10 fps slider): how often a frame is sent for inference.
-  Lower = fewer API calls = lower cost; higher = tighter tracking. Persisted.
-- **Haptics**: the vibration is a *parking sensor* for proximity — direction is
-  spoken, while the buzz speeds up and lengthens as you close in, then becomes a
-  single sustained buzz when the target is centered (`hold_center`). A **Test
-  vibration** button confirms the device actually vibrates; if the browser has
-  no Vibration API (e.g. **iOS Safari**), haptics are disabled and the UI says so.
-- **Live cost**: each inference reports Cerebras token `usage`; the telemetry
-  shows cumulative **Tokens** and an **Est. cost** computed from an editable
-  **$/1M tokens** rate (persisted). Set the rate to your plan's price to track
-  spend in real time.
-
-## Demo mode (the side-by-side)
-
-The UI has a **"Demo: simulate slow GPU"** toggle. Flip it on to inject ~2 s of
-artificial latency on top of each result — recreating the standard-cloud
-failure mode (overshoot, knocked-over cup). Flip it off to feel the Cerebras
-loop track your hand in real time. That contrast is the 60-second demo.
-
-## Accessibility notes
-
-- Voice input for the target (`SpeechRecognition`) plus a text fallback.
-- Primary guidance is spoken (Web Speech) and felt (Web Vibration); the visual
-  status line is intentionally **not** a live region (it updates at the frame
-  rate, which would flood screen readers).
-- Large, high-contrast touch targets; skip link; semantic landmarks.
-- Voice and haptics are independently toggleable.
+Aura points a camera at people and reacts automatically. Use it only where you're
+allowed to record, tell people they're being monitored, and don't rely on it for
+safety-critical enforcement — it's an LLM making best-effort judgements from a
+single frame, and it will sometimes be wrong in both directions.
 
 ## License
 
