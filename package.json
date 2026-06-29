@@ -1,0 +1,19 @@
+{
+  "name": "aura",
+  "version": "1.0.0",
+  "description": "Aura — Low-Latency Haptic & Audio Spatial Guidance for the Visually Impaired. A zero-install mobile web app that turns an Android phone into a closed-loop spatial guidance engine using Cerebras-hosted Gemma vision inference.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "license": "GPL-3.0"
+}
