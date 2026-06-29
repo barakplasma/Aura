@@ -1,6 +1,6 @@
 # Aura
 
-**Team Members:** <@352130433745551383>
+**Team Members:** @barakplasma
 
 **GitHub Repository:** [github.com/barakplasma/Aura](https://github.com/barakplasma/Aura)
 
