@@ -1,18 +1,15 @@
 // Aura — Cloudflare Worker (Hono).
 //
-// Static assets (the PWA client in /public) are served by the Workers Assets
-// runtime before this script runs; `run_worker_first = ["/api/*"]` in
-// wrangler.toml routes only API calls here. So this Worker is purely the
-// orchestration layer: it forwards a compressed camera frame to Cerebras'
-// Gemma vision endpoint and returns normalized spatial guidance.
+// Static assets (the client in /public) are served by the Workers Assets runtime
+// before this script runs; `run_worker_first = ["/api/*"]` routes only API calls
+// here. This Worker is the orchestration layer: it runs the detection (+ action)
+// monitoring loop against Cerebras' Gemma vision model.
 //
-// The Cerebras API key lives as a Worker secret (env.CEREBRAS_API_KEY) and
-// never reaches the client.
+// The Cerebras API key lives as a Worker secret (env.CEREBRAS_API_KEY) and never
+// reaches the client.
 
-// hono/tiny uses Hono's smallest router — ideal for a Worker with a handful of
-// routes and a lean bundle.
 import { Hono } from 'hono/tiny';
-import { locate } from '../lib/locator.js';
+import { scan } from '../lib/monitor.js';
 
 const app = new Hono();
 
@@ -24,10 +21,10 @@ app.get('/api/health', (c) => {
   });
 });
 
-// Core spatial guidance endpoint.
-// Body: { target: string, image: string (data URL or raw base64) }
-// Response: { found, x, y, action, latencyMs, mode }
-app.post('/api/locate', async (c) => {
+// Monitoring scan.
+// Body: { mission: string, action: string, image: string, threshold?: number }
+// Response: { triggered, confidence, reason, message, latencyMs, mode, usage }
+app.post('/api/scan', async (c) => {
   const started = Date.now();
 
   let payload;
@@ -37,19 +34,22 @@ app.post('/api/locate', async (c) => {
     return c.json({ error: 'Invalid JSON body.' }, 400);
   }
 
-  const { target, image } = payload || {};
-  if (typeof target !== 'string' || target.trim() === '') {
-    return c.json({ error: 'Missing "target" string.' }, 400);
-  }
+  const { mission, action, image, threshold } = payload || {};
   if (typeof image !== 'string' || image.length < 32) {
     return c.json({ error: 'Missing "image" data.' }, 400);
   }
 
   try {
-    const result = await locate({ target: target.trim(), image, env: c.env });
+    const result = await scan({
+      mission: typeof mission === 'string' ? mission : '',
+      action: typeof action === 'string' ? action : '',
+      image,
+      threshold: Number.isFinite(threshold) ? threshold : 60,
+      env: c.env,
+    });
     return c.json({ ...result, latencyMs: Date.now() - started });
   } catch (err) {
-    console.error('[locate] error:', err.message);
+    console.error('[scan] error:', err.message);
     return c.json(
       { error: 'Inference failed.', detail: err.message, latencyMs: Date.now() - started },
       502
@@ -57,8 +57,7 @@ app.post('/api/locate', async (c) => {
   }
 });
 
-// Any other /api/* path is unknown. (Non-API paths are handled by Workers
-// Assets and never reach this Worker.)
+// Any other /api/* path is unknown. (Non-API paths are served by Workers Assets.)
 app.all('/api/*', (c) => c.json({ error: 'Not found.' }, 404));
 
 export default app;

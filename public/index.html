@@ -9,9 +9,9 @@
     <meta name="theme-color" content="#0b0b14" />
     <meta
       name="description"
-      content="Aura — low-latency haptic and audio spatial guidance for the visually impaired."
+      content="Aura — turn any phone camera into an automated visual monitor powered by Gemma vision."
     />
-    <title>Aura — Spatial Guidance</title>
+    <title>Aura — Visual Monitor</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="stylesheet" href="/styles.css" />
@@ -20,88 +20,68 @@
     <a class="skip-link" href="#controls">Skip to controls</a>
 
     <main>
-      <h1 class="visually-hidden">Aura spatial guidance</h1>
+      <h1 class="visually-hidden">Aura visual monitor</h1>
 
-      <!-- Live camera preview. Hidden canvas is used for frame compression. -->
       <section class="viewport" aria-label="Camera view">
         <video id="video" playsinline muted autoplay></video>
         <canvas id="canvas" width="640" height="480" hidden></canvas>
+        <div id="flash" class="flash" aria-hidden="true"></div>
 
-        <!-- Visual targeting overlay (also useful for sighted helpers / demo). -->
-        <div class="overlay" aria-hidden="true">
-          <div class="deadzone"></div>
-          <div id="reticle" class="reticle"></div>
-        </div>
-
-        <!-- Not a live region: this updates at the frame rate (~8Hz), which
-             would flood screen readers. Spoken guidance is the a11y channel. -->
-        <div id="status" class="status">
-          Enter a target and press Start.
+        <div id="status" class="status" role="status" aria-live="polite">
+          Set a mission and press Start.
         </div>
       </section>
 
       <section id="controls" class="controls" aria-label="Controls">
-        <label for="target" class="field-label">Target object</label>
-        <div class="field-row">
-          <input
-            id="target"
-            type="text"
-            inputmode="text"
-            autocomplete="off"
-            placeholder="e.g. water bottle"
-            aria-describedby="target-hint"
-          />
-          <button id="mic" class="btn btn-icon" type="button" aria-label="Speak target">
-            🎤
-          </button>
-        </div>
-        <p id="target-hint" class="hint">
-          Type or speak the object you are looking for.
-        </p>
+        <label for="mission" class="field-label">Mission — what to watch for</label>
+        <textarea
+          id="mission"
+          class="textarea"
+          rows="2"
+          placeholder="e.g. Alert if someone is loitering near the front door or doing something suspicious."
+        ></textarea>
+
+        <label for="action" class="field-label">Action — what to announce on alert</label>
+        <textarea
+          id="action"
+          class="textarea"
+          rows="2"
+          placeholder="e.g. Firmly tell the person they are being recorded and to leave the area."
+        ></textarea>
 
         <button id="toggle" class="btn btn-primary" type="button" aria-pressed="false">
-          Start guidance
+          Start monitoring
         </button>
 
-        <!-- Frame rate: how often a frame is sent for inference. Lower = fewer
-             API calls = lower cost; higher = tighter tracking. -->
         <div class="slider-row">
-          <label for="fps-range">
-            Scan rate: <strong><span id="fps-target">8</span> fps</strong>
+          <label for="threshold-range">
+            Alert sensitivity: <strong>fire at ≥ <span id="threshold-val">60</span>% confidence</strong>
           </label>
-          <input
-            id="fps-range"
-            type="range"
-            min="1"
-            max="10"
-            step="1"
-            value="8"
-            aria-describedby="fps-hint"
-          />
-          <p id="fps-hint" class="hint">
-            Lower rate = fewer inferences = lower cost.
-          </p>
+          <input id="threshold-range" type="range" min="10" max="95" step="5" value="60" />
+          <p class="hint">Higher = fewer false alarms; lower = more sensitive.</p>
+        </div>
+
+        <div class="slider-row">
+          <label for="scan-range">
+            Scan every: <strong><span id="scan-val">5</span> s</strong>
+          </label>
+          <input id="scan-range" type="range" min="2" max="30" step="1" value="5" />
+          <p class="hint">Slower = fewer inferences = lower cost.</p>
         </div>
 
         <div class="settings">
           <label class="switch">
             <input id="speech-toggle" type="checkbox" checked />
-            <span>Voice guidance</span>
+            <span>Speak alerts</span>
           </label>
           <label class="switch">
             <input id="haptics-toggle" type="checkbox" checked />
-            <span>Haptics</span>
-          </label>
-          <label class="switch">
-            <input id="slow-toggle" type="checkbox" />
-            <span>Demo: simulate slow GPU</span>
+            <span>Vibrate on alert</span>
           </label>
         </div>
 
         <div class="inline-row">
-          <button id="vibe-test" class="btn btn-secondary" type="button">
-            Test vibration
-          </button>
+          <button id="vibe-test" class="btn btn-secondary" type="button">Test vibration</button>
           <label for="rate" class="rate-label">
             $/1M tokens
             <input id="rate" type="number" min="0" step="0.01" value="0.10" />
@@ -111,11 +91,14 @@
 
         <dl class="telemetry" aria-label="Telemetry">
           <div><dt>Latency</dt><dd><span id="latency">—</span> ms</dd></div>
-          <div><dt>Rate</dt><dd><span id="fps">0</span> fps</dd></div>
+          <div><dt>Confidence</dt><dd><span id="confidence">—</span>%</dd></div>
           <div><dt>Engine</dt><dd><span id="mode">—</span></dd></div>
           <div><dt>Tokens</dt><dd><span id="tokens">0</span></dd></div>
           <div><dt>Est. cost</dt><dd>$<span id="cost">0.0000</span></dd></div>
         </dl>
+
+        <h2 class="log-title">Alerts</h2>
+        <ul id="alert-log" class="alert-log" aria-live="polite"></ul>
       </section>
     </main>
 

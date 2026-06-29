@@ -68,43 +68,6 @@ main {
   display: block;
 }
 
-.overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.deadzone {
-  position: absolute;
-  left: 35%;
-  top: 35%;
-  width: 30%;
-  height: 30%;
-  border: 2px dashed rgba(255, 255, 255, 0.35);
-  border-radius: 12px;
-}
-
-.reticle {
-  position: absolute;
-  width: 44px;
-  height: 44px;
-  margin: -22px 0 0 -22px;
-  border: 3px solid var(--accent);
-  border-radius: 50%;
-  left: 50%;
-  top: 50%;
-  opacity: 0;
-  transition: left 0.12s linear, top 0.12s linear, opacity 0.2s,
-    border-color 0.2s;
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
-}
-.reticle.visible {
-  opacity: 1;
-}
-.reticle.centered {
-  border-color: var(--good);
-  background: rgba(46, 204, 113, 0.25);
-}
 
 .status {
   position: absolute;
@@ -135,23 +98,64 @@ main {
   margin-bottom: 0.35rem;
 }
 
-.field-row {
-  display: flex;
-  gap: 0.5rem;
-}
-
-#target {
-  flex: 1;
-  font-size: 1.15rem;
-  padding: 0.85rem 1rem;
+.textarea {
+  width: 100%;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  padding: 0.75rem 0.9rem;
+  margin-bottom: 0.9rem;
   border-radius: 12px;
   border: 2px solid #2a2a3a;
   background: #0e0e18;
   color: var(--fg);
+  resize: vertical;
+  font-family: inherit;
 }
-#target:focus {
+.textarea:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Alert flash over the camera view. */
+.flash {
+  position: absolute;
+  inset: 0;
+  background: var(--danger);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.flash.on {
+  opacity: 0.55;
+}
+
+.log-title {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 1rem 0 0.4rem;
+}
+.alert-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 22dvh;
+  overflow-y: auto;
+  font-variant-numeric: tabular-nums;
+}
+.alert-log li {
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.35rem;
+  border-left: 3px solid var(--danger);
+  background: #1a0f16;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.alert-log:empty::after {
+  content: 'No alerts yet.';
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .hint {
@@ -175,17 +179,6 @@ main {
   outline-offset: 2px;
 }
 
-.btn-icon {
-  background: #2a2a3a;
-  width: 56px;
-  flex: 0 0 auto;
-  font-size: 1.4rem;
-}
-.btn-icon.recording {
-  background: var(--danger);
-  animation: pulse 1s infinite;
-}
-
 .btn-primary {
   width: 100%;
   background: var(--accent);
@@ -196,11 +189,6 @@ main {
   background: var(--danger);
 }
 
-@keyframes pulse {
-  50% {
-    opacity: 0.55;
-  }
-}
 
 .settings {
   display: flex;

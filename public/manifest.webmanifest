@@ -1,14 +1,14 @@
 {
-  "name": "Aura — Spatial Guidance",
+  "name": "Aura — Visual Monitor",
   "short_name": "Aura",
-  "description": "Low-latency haptic and audio spatial guidance for the visually impaired.",
+  "description": "Automated visual monitoring on any phone camera, powered by Gemma vision.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0b0b14",
   "theme_color": "#0b0b14",
-  "categories": ["accessibility", "utilities", "health"],
+  "categories": ["utilities", "productivity"],
   "icons": [
     {
       "src": "/icons/icon-192.png",
