@@ -1,25 +1,10 @@
 # Aura
 
-**An automated visual monitor powered by Gemma vision — on any phone, zero install.**
+**Team Members:** <@352130433745551383>
 
-Point a phone (or webcam) at a scene, give it a **mission** in plain language, and
-Aura watches the camera and **acts** when the condition you described happens.
+**GitHub Repository:** [github.com/barakplasma/Aura](https://github.com/barakplasma/Aura)
 
-- **Mission prompt** — what to watch for: *"Alert if someone is loitering near the
-  front door,"* *"Alert if my son leaves his desk or stops doing homework,"*
-  *"Alert if anyone runs on the pool deck or dives in the shallow end."*
-- **Action prompt** — what to announce when it triggers: *"Firmly tell the person
-  they're being recorded and to leave,"* *"Tell him to get back to his homework,"*
-  *"Tell the swimmer to stop running."*
-
-Each scan cycle, Gemma decides whether the alert condition is met and how
-confident it is. If it fires (and clears your **sensitivity threshold**), Aura
-runs the action prompt and **speaks the announcement aloud** (plus a vibration and
-an on-screen flash). It's a security guard, a homework monitor, or a lifeguard —
-defined entirely by two prompts.
-
-It runs **Google DeepMind's Gemma vision model on Cerebras' wafer-scale engine**,
-so each scan is fast and cheap enough to run continuously.
+Aura turns any phone or laptop with a webcam into an automated visual monitor in your environment powered by Gemma 4 vision using a simple webapp (on Cerebras for near-realtime detections and actions). The user sets a mission prompt (what to watch for) and an action prompt (what to say via text to speech, or what to send via webhook), and Aura runs a two-stage detect→act loop: frame → detection call → if triggered, action call → speaks alert aloud, vibrates, flashes, fires webhook. Built with history so that it can say or do anything according to mission parameters. Built on Cloudflare Workers + Hono, with a vanilla-JS PWA client served by Workers Static Assets for minimum latency globally.
 
 ---
 
@@ -28,26 +13,27 @@ so each scan is fast and cheap enough to run continuously.
 ```
 [ camera frame ] -> [ 640x480 JPEG (~40%) ] -> POST /api/scan { mission, action, threshold }
                                                         |
-                                          DETECTION call (Gemma)
+                                          DETECTION call (Gemma 4 on Cerebras)
                                           {triggered, confidence, reason}
                                                         |
                               triggered AND confidence >= threshold ?
                                        no |                 | yes
                                           v                 v
-                                   "Watching…"        ACTION call (Gemma)
-                                                      {message}  -> speak + vibrate + log
+                                   "Watching…"        ACTION call (Gemma 4)
+                                                      {message}  -> speak + vibrate + flash + webhook
 ```
 
 Most cycles are detection-only; the second (action) call happens only on a real
-alert, so steady-state cost stays low.
+alert, so steady-state cost stays low. Detection history is carried forward so
+Gemma can act on temporal context — not just a single frame.
 
 ## Project layout
 
 ```
 src/index.js              Cloudflare Worker (Hono): POST /api/scan + /api/health
 lib/monitor.js            Detection + action prompts, Cerebras calls, parsing, mock
-public/index.html         Mission/action prompts, sensitivity + cadence, alert log
-public/app.js             Camera capture + scan loop + alert delivery
+public/index.html         Mission/action/webhook prompts, sensitivity + cadence, alert log
+public/app.js             Camera capture + scan loop + alert delivery + webhook dispatch
 public/feedback.js        Web Speech announcement + Web Vibration alert
 public/manifest.webmanifest
 scripts/gen-icons.js      Regenerates PWA icons (no image deps)
@@ -79,17 +65,11 @@ With no `CEREBRAS_API_KEY`, the monitor runs in **mock mode** — it cycles betw
 offline. The camera, Vibration, and Speech APIs need a **secure context**
 (`localhost` in dev, or the `https://*.workers.dev` URL once deployed).
 
-### Continuous deployment
-
-`.github/workflows/deploy.yml` deploys on every push to `main` via
-[`cloudflare/wrangler-action`](https://github.com/cloudflare/wrangler-action).
-Add a `CLOUDFLARE_API_TOKEN` repo secret (*Workers Scripts: Edit*); add a
-`CEREBRAS_API_KEY` repo secret to run live (it's synced to the Worker after
-deploy). Optional `CLOUDFLARE_ACCOUNT_ID` if the token sees more than one account.
-
 ## Runtime controls
 
 - **Mission** / **Action** prompts (free-form, persisted).
+- **Webhook URL, method, headers, action prompt, and body JSON schema** for
+  sending alerts to any endpoint (ntfy.sh, custom APIs, etc.).
 - **Alert sensitivity** (10–95%): the confidence the detection must reach to fire.
   Higher = fewer false alarms.
 - **Scan every N seconds** (2–30 s): cadence, and your main cost dial.
