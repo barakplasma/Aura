@@ -102,10 +102,10 @@ Add one repository secret:
 - *(optional)* `CLOUDFLARE_ACCOUNT_ID` — only if the token can see more than one
   account; an account-scoped token is auto-detected.
 
-To also push the Cerebras key as a Worker secret from CI, add a
-`CEREBRAS_API_KEY` repo secret and uncomment the `secrets:`/`env:` block in the
-workflow. Left commented, the deploy runs in mock mode until you set the secret
-with `wrangler secret put`.
+If a `CEREBRAS_API_KEY` repo secret is present, the workflow pushes it as a
+Worker secret (in a guarded step after deploy, so the script exists first) and
+the Worker runs live. If it's absent, that step is skipped and the Worker stays
+in mock mode.
 
 ### Configuration
 
