@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0b14" />
+    <meta name="description" content="Aura — turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model." />
+    <title>Aura — Visual Monitor</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <link rel="stylesheet" href="material-theme.css" />
+    <base href="/Aura/">
+  </head>
+  <body>
+    <a class="skip-link" href="#controls">Skip to controls</a>
+
+    <main>
+      <div class="camera-col">
+        <div class="app-bar">
+          <span class="material-symbols-outlined" style="color:var(--md-sys-color-primary)">visibility</span>
+          <h1>Aura</h1>
+          <span id="status-dot" class="status-dot off" aria-label="Status: off"></span>
+        </div>
+
+        <section class="viewport" aria-label="Camera view">
+          <video id="video" playsinline muted autoplay></video>
+          <canvas id="canvas" width="640" height="480" hidden></canvas>
+          <div id="flash" class="flash" aria-hidden="true"></div>
+          <div id="status" class="status-overlay" role="status" aria-live="polite">Configure a provider and press Start.</div>
+        </section>
+      </div>
+
+      <section id="controls" class="controls" aria-label="Controls">
+        <div class="controls-inner">
+
+          <!-- Provider -->
+          <h2 class="section-label">Provider</h2>
+
+          <md-outlined-text-field id="provider-baseurl" type="url" label="Base URL" value="https://api.cerebras.ai/v1" placeholder="https://api.cerebras.ai/v1">
+            <md-icon slot="leading-icon">dns</md-icon>
+          </md-outlined-text-field>
+
+          <md-outlined-text-field id="provider-apikey" type="password" label="API Key" placeholder="csk-xxxx or sk-xxxx">
+            <md-icon slot="leading-icon">key</md-icon>
+          </md-outlined-text-field>
+
+          <div class="model-row">
+            <md-outlined-text-field id="provider-model" label="Model" placeholder="gemma-4-31b" style="flex:1">
+              <md-icon slot="leading-icon">smart_toy</md-icon>
+            </md-outlined-text-field>
+            <md-filled-tonal-button id="fetch-models-btn">Fetch Models</md-filled-tonal-button>
+          </div>
+          <md-outlined-select id="model-select" label="Available models" style="display:none;width:100%;margin-top:0.25rem"></md-outlined-select>
+
+          <!-- Monitoring -->
+          <h2 class="section-label">Monitoring</h2>
+
+          <md-outlined-text-field id="mission" type="textarea" label="Mission — what to watch for" rows="2" placeholder="e.g. Alert if someone is loitering near the front door."></md-outlined-text-field>
+
+          <md-outlined-text-field id="action" type="textarea" label="Action — what to announce on alert" rows="2" placeholder="e.g. Firmly tell the person they are being recorded and to leave."></md-outlined-text-field>
+
+          <md-filled-button id="toggle" style="width:100%;margin:0.5rem 0" aria-pressed="false">
+            <md-icon slot="icon">play_arrow</md-icon>
+            Start Monitoring
+          </md-filled-button>
+
+          <div class="slider-row">
+            <div class="slider-label">
+              <span>Alert sensitivity</span>
+              <strong>fire at ≥ <span id="threshold-val">60</span>%</strong>
+            </div>
+            <md-slider id="threshold-range" min="10" max="95" step="5" value="60" labeled discrete aria-label="Alert sensitivity"></md-slider>
+            <div style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);margin-top:0.1rem">Higher = fewer false alarms; lower = more sensitive.</div>
+          </div>
+
+          <div class="slider-row">
+            <div class="slider-label">
+              <span>Scan every</span>
+              <strong><span id="scan-val">5</span> s</strong>
+            </div>
+            <md-slider id="scan-range" min="2" max="30" step="1" value="5" aria-label="Scan interval"></md-slider>
+            <div style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);margin-top:0.1rem">Slower = fewer inferences = lower cost.</div>
+          </div>
+
+          <div class="settings-row">
+            <label class="switch-label">
+              <md-switch id="speech-toggle" selected></md-switch>
+              Speak alerts
+            </label>
+            <label class="switch-label">
+              <md-switch id="haptics-toggle" selected></md-switch>
+              Vibrate on alert
+            </label>
+          </div>
+
+          <div class="inline-row">
+            <md-filled-tonal-button id="vibe-test">Test Vibration</md-filled-tonal-button>
+            <span class="rate-box">
+              $/1M tokens
+              <md-outlined-text-field id="rate" type="number" min="0" step="0.01" value="0.10" style="width:5.5rem" aria-label="Cost per 1M tokens"></md-outlined-text-field>
+            </span>
+          </div>
+          <p id="vibe-status" style="font-size:0.8rem;color:var(--md-sys-color-on-surface-variant);margin:0 0 0.5rem" role="status" aria-live="polite"></p>
+
+          <!-- Webhook -->
+          <h2 class="section-label">Webhook</h2>
+
+          <md-outlined-text-field id="webhook-url" type="url" label="Webhook URL" placeholder="https://ntfy.sh/mytopic">
+            <md-icon slot="leading-icon">webhook</md-icon>
+          </md-outlined-text-field>
+
+          <div class="webhook-config-row">
+            <md-outlined-select id="webhook-method" label="Method" style="width:8rem">
+              <md-select-option value="POST"><md-icon slot="icon">send</md-icon>POST</md-select-option>
+              <md-select-option value="GET"><md-icon slot="icon">download</md-icon>GET</md-select-option>
+              <md-select-option value="PUT"><md-icon slot="icon">upload</md-icon>PUT</md-select-option>
+              <md-select-option value="PATCH"><md-icon slot="icon">edit</md-icon>PATCH</md-select-option>
+            </md-outlined-select>
+            <md-filled-tonal-button id="webhook-test">Test</md-filled-tonal-button>
+            <span id="webhook-status" style="font-size:0.8rem;color:var(--md-sys-color-on-surface-variant)" role="status" aria-live="polite"></span>
+          </div>
+
+          <md-outlined-text-field id="webhook-headers" type="textarea" label="Headers (JSON)" rows="2" placeholder='{"Authorization": "Bearer tk_xxxx", "Title": "Aura Alert"}'>
+            <md-icon slot="leading-icon">code</md-icon>
+          </md-outlined-text-field>
+
+          <md-outlined-text-field id="webhook-action" type="textarea" label="Action — what to include in the body" rows="2" placeholder="e.g. Include the alert reason, confidence level, and a timestamp."></md-outlined-text-field>
+
+          <md-outlined-text-field id="webhook-schema" type="textarea" label="Body JSON Schema (optional)" rows="3" placeholder='{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}'>
+            <md-icon slot="leading-icon">data_object</md-icon>
+          </md-outlined-text-field>
+
+          <!-- Training -->
+          <h2 class="section-label">Training</h2>
+
+          <div class="training-type-row">
+            <md-outlined-select id="train-type" label="Example type" style="width:100%">
+              <md-select-option value="detection">Detection</md-select-option>
+              <md-select-option value="action">Action</md-select-option>
+            </md-outlined-select>
+          </div>
+
+          <div id="train-detection-fields">
+            <md-outlined-text-field id="train-mission" label="Mission prompt" placeholder="What to watch for"></md-outlined-text-field>
+            <md-outlined-text-field id="train-scene" type="textarea" label="Scene description" rows="2" placeholder="What the camera sees"></md-outlined-text-field>
+            <div class="train-check-row">
+              <label class="switch-label">
+                <md-switch id="train-triggered"></md-switch>
+                Triggered
+              </label>
+              <md-outlined-text-field id="train-confidence" type="number" label="Confidence" value="80" min="0" max="100" class="train-number"></md-outlined-text-field>
+            </div>
+            <md-outlined-text-field id="train-reason" label="Expected reason" placeholder="Why it triggered"></md-outlined-text-field>
+          </div>
+
+          <div id="train-action-fields" hidden>
+            <md-outlined-text-field id="train-instruction" label="Action instruction" placeholder="What to say or do"></md-outlined-text-field>
+            <md-outlined-text-field id="train-context" label="Detection context" placeholder="What was detected"></md-outlined-text-field>
+            <md-outlined-text-field id="train-message" type="textarea" label="Expected message" rows="2" placeholder="What should be announced"></md-outlined-text-field>
+          </div>
+
+          <div class="inline-row" style="margin:0.5rem 0">
+            <md-filled-tonal-button id="train-add-btn">Add Example</md-filled-tonal-button>
+            <md-outlined-button id="train-clear-btn">Clear All</md-outlined-button>
+          </div>
+
+          <ul id="train-example-list" class="train-example-list"></ul>
+
+          <details class="train-optimize">
+            <summary>Optimization</summary>
+            <md-outlined-text-field id="train-apikey" type="password" label="Cerebras API key (for training)"></md-outlined-text-field>
+            <div class="train-opt-row">
+              <md-filled-tonal-button id="train-opt-detection">Optimize Detection</md-filled-tonal-button>
+              <md-filled-tonal-button id="train-opt-action">Optimize Action</md-filled-tonal-button>
+            </div>
+            <p id="train-status" style="font-size:0.8rem;color:var(--md-sys-color-on-surface-variant);margin:0.25rem 0" role="status" aria-live="polite"></p>
+          </details>
+
+          <!-- Telemetry -->
+          <h2 class="section-label">Telemetry</h2>
+          <dl class="telemetry" aria-label="Telemetry">
+            <div><dt>Latency</dt><dd><span id="latency">—</span> ms</dd></div>
+            <div><dt>Confidence</dt><dd><span id="confidence">—</span>%</dd></div>
+            <div><dt>Engine</dt><dd><span id="mode">—</span></dd></div>
+            <div><dt>Tokens</dt><dd><span id="tokens">0</span></dd></div>
+            <div><dt>Est. cost</dt><dd>$<span id="cost">0.0000</span></dd></div>
+          </dl>
+
+          <!-- Alerts -->
+          <h2 class="section-label">Alerts</h2>
+          <ul id="alert-log" class="alert-log" aria-live="polite"></ul>
+
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="material.bundle.js"></script>
+    <script type="module" src="aura.bundle.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
