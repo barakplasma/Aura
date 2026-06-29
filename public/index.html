@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0b14" />
+    <meta
+      name="description"
+      content="Aura — low-latency haptic and audio spatial guidance for the visually impaired."
+    />
+    <title>Aura — Spatial Guidance</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#controls">Skip to controls</a>
+
+    <main>
+      <h1 class="visually-hidden">Aura spatial guidance</h1>
+
+      <!-- Live camera preview. Hidden canvas is used for frame compression. -->
+      <section class="viewport" aria-label="Camera view">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="canvas" width="640" height="480" hidden></canvas>
+
+        <!-- Visual targeting overlay (also useful for sighted helpers / demo). -->
+        <div class="overlay" aria-hidden="true">
+          <div class="deadzone"></div>
+          <div id="reticle" class="reticle"></div>
+        </div>
+
+        <!-- Not a live region: this updates at the frame rate (~8Hz), which
+             would flood screen readers. Spoken guidance is the a11y channel. -->
+        <div id="status" class="status">
+          Enter a target and press Start.
+        </div>
+      </section>
+
+      <section id="controls" class="controls" aria-label="Controls">
+        <label for="target" class="field-label">Target object</label>
+        <div class="field-row">
+          <input
+            id="target"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            placeholder="e.g. water bottle"
+            aria-describedby="target-hint"
+          />
+          <button id="mic" class="btn btn-icon" type="button" aria-label="Speak target">
+            🎤
+          </button>
+        </div>
+        <p id="target-hint" class="hint">
+          Type or speak the object you are looking for.
+        </p>
+
+        <button id="toggle" class="btn btn-primary" type="button" aria-pressed="false">
+          Start guidance
+        </button>
+
+        <div class="settings">
+          <label class="switch">
+            <input id="speech-toggle" type="checkbox" checked />
+            <span>Voice guidance</span>
+          </label>
+          <label class="switch">
+            <input id="haptics-toggle" type="checkbox" checked />
+            <span>Haptics</span>
+          </label>
+          <label class="switch">
+            <input id="slow-toggle" type="checkbox" />
+            <span>Demo: simulate slow GPU</span>
+          </label>
+        </div>
+
+        <dl class="telemetry" aria-label="Telemetry">
+          <div><dt>Latency</dt><dd><span id="latency">—</span> ms</dd></div>
+          <div><dt>Rate</dt><dd><span id="fps">0</span> fps</dd></div>
+          <div><dt>Engine</dt><dd><span id="mode">—</span></dd></div>
+        </dl>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

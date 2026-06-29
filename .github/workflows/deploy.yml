@@ -1,0 +1,57 @@
+name: Deploy
+
+# Deploys the Worker to Cloudflare with cloudflare/wrangler-action.
+#
+# Required repository secret:
+#   CLOUDFLARE_API_TOKEN  — a token with the "Workers Scripts: Edit" permission
+#                           (the "Edit Cloudflare Workers" template works).
+# Optional repository secret:
+#   CLOUDFLARE_ACCOUNT_ID — only needed if the token can see more than one
+#                           account; an account-scoped token is auto-detected.
+#
+# Runs on pushes to main and on manual dispatch.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare Workers
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Install deps so wrangler can bundle the Worker (resolves `hono`).
+      - run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Sync the Cerebras key as a Worker secret AFTER deploy, so the script
+      # exists when `secret put` runs (avoids a first-deploy ordering failure).
+      # Guarded so an unset key leaves the Worker in mock mode instead of
+      # writing an empty secret.
+      - name: Sync Cerebras API key
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+        run: |
+          if [ -n "$CEREBRAS_API_KEY" ]; then
+            printf '%s' "$CEREBRAS_API_KEY" | npx wrangler secret put CEREBRAS_API_KEY
+          else
+            echo "CEREBRAS_API_KEY not set — leaving the Worker in mock mode."
+          fi

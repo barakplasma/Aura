@@ -1,0 +1,245 @@
+:root {
+  --bg: #0b0b14;
+  --panel: #14141f;
+  --fg: #f5f5fa;
+  --muted: #9aa0b4;
+  --accent: #4f8cff;
+  --good: #2ecc71;
+  --warn: #ffb020;
+  --danger: #ff5470;
+  --radius: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--accent);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  z-index: 10;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+/* --- Camera viewport --- */
+.viewport {
+  position: relative;
+  flex: 1 1 auto;
+  background: #000;
+  overflow: hidden;
+  min-height: 38dvh;
+}
+
+#video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.deadzone {
+  position: absolute;
+  left: 35%;
+  top: 35%;
+  width: 30%;
+  height: 30%;
+  border: 2px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 12px;
+}
+
+.reticle {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border: 3px solid var(--accent);
+  border-radius: 50%;
+  left: 50%;
+  top: 50%;
+  opacity: 0;
+  transition: left 0.12s linear, top 0.12s linear, opacity 0.2s,
+    border-color 0.2s;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+}
+.reticle.visible {
+  opacity: 1;
+}
+.reticle.centered {
+  border-color: var(--good);
+  background: rgba(46, 204, 113, 0.25);
+}
+
+.status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.75rem 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+  text-shadow: 0 1px 4px #000;
+}
+
+/* --- Controls panel --- */
+.controls {
+  flex: 0 0 auto;
+  background: var(--panel);
+  padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+}
+
+.field-label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.field-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+#target {
+  flex: 1;
+  font-size: 1.15rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 2px solid #2a2a3a;
+  background: #0e0e18;
+  color: var(--fg);
+}
+#target:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.hint {
+  margin: 0.4rem 0 0.9rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.btn {
+  font-size: 1.1rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 12px;
+  padding: 0.95rem 1rem;
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+
+.btn-icon {
+  background: #2a2a3a;
+  width: 56px;
+  flex: 0 0 auto;
+  font-size: 1.4rem;
+}
+.btn-icon.recording {
+  background: var(--danger);
+  animation: pulse 1s infinite;
+}
+
+.btn-primary {
+  width: 100%;
+  background: var(--accent);
+  font-size: 1.3rem;
+  padding: 1.1rem;
+}
+.btn-primary.active {
+  background: var(--danger);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin: 1rem 0;
+}
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+.switch input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.telemetry {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid #23233300;
+  font-variant-numeric: tabular-nums;
+}
+.telemetry div {
+  text-align: center;
+}
+.telemetry dt {
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.telemetry dd {
+  margin: 0.15rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
