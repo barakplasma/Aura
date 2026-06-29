@@ -112,7 +112,10 @@ function driveHaptics(result, now) {
   const dist = Math.hypot(result.x - 50, result.y - 50);
   const proximity = clamp01((DIST_FAR - dist) / (DIST_FAR - DIST_NEAR));
   const interval = lerp(FAR_INTERVAL_MS, NEAR_INTERVAL_MS, proximity);
-  if (now - lastHapticAt > interval) {
+  // Pulse immediately when breaking out of a locked target — otherwise the
+  // hold-state timestamp could delay the first correction tap by up to ~650ms.
+  const leftCenter = lastHapticAction === 'hold_center';
+  if (leftCenter || now - lastHapticAt > interval) {
     navigator.vibrate(Math.round(lerp(FAR_PULSE_MS, NEAR_PULSE_MS, proximity)));
     lastHapticAt = now;
     lastHapticAction = result.action;

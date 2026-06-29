@@ -132,7 +132,7 @@ function recordUsage(usage) {
 
 function renderCost() {
   const rate = parseFloat(els.rate.value); // $ per 1M tokens
-  const cost = (state.totalTokens / 1e6) * (Number.isFinite(rate) ? rate : 0);
+  const cost = (state.totalTokens / 1e6) * (Number.isFinite(rate) && rate >= 0 ? rate : 0);
   els.cost.textContent = cost.toFixed(4);
 }
 
