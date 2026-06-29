@@ -9,6 +9,11 @@
 // configured interval. Any result that resolves after Stop is discarded.
 
 import { alert as alertOut, resetFeedback, testVibration, canVibrate } from './feedback.js';
+import {
+  getExamples, addExample, removeExample, clearExamples,
+  getOptimizedArtifact,
+  runDetectionOptimization, runActionOptimization,
+} from './training.bundle.js';
 
 const CAPTURE_W = 640;
 const CAPTURE_H = 480;
@@ -38,6 +43,24 @@ const els = {
   webhookSchema: document.getElementById('webhook-schema'),
   webhookTest: document.getElementById('webhook-test'),
   webhookStatus: document.getElementById('webhook-status'),
+  trainType: document.getElementById('train-type'),
+  trainMission: document.getElementById('train-mission'),
+  trainScene: document.getElementById('train-scene'),
+  trainTriggered: document.getElementById('train-triggered'),
+  trainConfidence: document.getElementById('train-confidence'),
+  trainReason: document.getElementById('train-reason'),
+  trainInstruction: document.getElementById('train-instruction'),
+  trainContext: document.getElementById('train-context'),
+  trainMessage: document.getElementById('train-message'),
+  trainAddBtn: document.getElementById('train-add-btn'),
+  trainExampleList: document.getElementById('train-example-list'),
+  trainApikey: document.getElementById('train-apikey'),
+  trainOptDetection: document.getElementById('train-opt-detection'),
+  trainOptAction: document.getElementById('train-opt-action'),
+  trainStatus: document.getElementById('train-status'),
+  trainClearBtn: document.getElementById('train-clear-btn'),
+  trainDetectionFields: document.getElementById('train-detection-fields'),
+  trainActionFields: document.getElementById('train-action-fields'),
   latency: document.getElementById('latency'),
   confidence: document.getElementById('confidence'),
   mode: document.getElementById('mode'),
@@ -97,6 +120,8 @@ async function tick() {
     try {
       const whAction = els.webhookAction.value.trim();
       const whSchema = parseWebhookSchema();
+      const examples = getExamples();
+      const artifact = getOptimizedArtifact();
       const result = await postScan({
         mission: els.mission.value.trim(),
         action: els.action.value.trim(),
@@ -104,6 +129,8 @@ async function tick() {
         threshold: state.threshold,
         webhookAction: whAction || undefined,
         webhookSchema: whSchema || undefined,
+        examples: examples.length > 0 ? examples : undefined,
+        optimizedInstruction: artifact?.program?.instruction || undefined,
       });
       if (!state.running) return; // discard results that land after Stop
       const rtt = Math.round(performance.now() - started);
@@ -375,6 +402,113 @@ function setupControls() {
     els.webhookStatus.textContent = 'Test sent.';
     setTimeout(() => { if (els.webhookStatus.textContent === 'Test sent.') els.webhookStatus.textContent = ''; }, 3000);
   });
+
+  // --- Training / examples ------------------------------------------------
+
+  els.trainType.addEventListener('change', () => {
+    const isDetection = els.trainType.value === 'detection';
+    els.trainDetectionFields.hidden = !isDetection;
+    els.trainActionFields.hidden = isDetection;
+  });
+
+  function readTrainForm() {
+    if (els.trainType.value === 'detection') {
+      return {
+        type: 'detection',
+        mission: els.trainMission.value.trim(),
+        sceneDescription: els.trainScene.value.trim(),
+        triggered: els.trainTriggered.checked,
+        confidence: parseInt(els.trainConfidence.value, 10) || 0,
+        reason: els.trainReason.value.trim(),
+      };
+    }
+    return {
+      type: 'action',
+      instruction: els.trainInstruction.value.trim(),
+      context: els.trainContext.value.trim(),
+      message: els.trainMessage.value.trim(),
+    };
+  }
+
+  function clearTrainForm() {
+    els.trainMission.value = '';
+    els.trainScene.value = '';
+    els.trainTriggered.checked = false;
+    els.trainConfidence.value = '80';
+    els.trainReason.value = '';
+    els.trainInstruction.value = '';
+    els.trainContext.value = '';
+    els.trainMessage.value = '';
+  }
+
+  function renderExamples() {
+    const examples = getExamples();
+    els.trainExampleList.innerHTML = '';
+    for (const ex of examples) {
+      const li = document.createElement('li');
+      li.className = 'train-example-item';
+      let label;
+      if (ex.type === 'detection') {
+        label = `detection: "${(ex.mission || '').slice(0, 40)}" → ${ex.triggered ? 'true' : 'false'}/${ex.confidence}`;
+      } else {
+        label = `action: "${(ex.instruction || '').slice(0, 40)}"`;
+      }
+      li.textContent = label;
+      const del = document.createElement('button');
+      del.textContent = '×';
+      del.className = 'train-del-btn';
+      del.addEventListener('click', () => { removeExample(ex.id); renderExamples(); });
+      li.appendChild(del);
+      els.trainExampleList.appendChild(li);
+    }
+  }
+
+  els.trainAddBtn.addEventListener('click', () => {
+    const ex = readTrainForm();
+    if (ex.type === 'detection' && !ex.mission) { els.trainStatus.textContent = 'Mission is required.'; return; }
+    if (ex.type === 'action' && !ex.instruction) { els.trainStatus.textContent = 'Instruction is required.'; return; }
+    addExample(ex);
+    clearTrainForm();
+    renderExamples();
+    els.trainStatus.textContent = 'Example added.';
+    setTimeout(() => { if (els.trainStatus.textContent === 'Example added.') els.trainStatus.textContent = ''; }, 2000);
+  });
+
+  els.trainClearBtn.addEventListener('click', () => {
+    clearExamples();
+    renderExamples();
+    els.trainStatus.textContent = 'All examples cleared.';
+  });
+
+  async function runOptimization(type) {
+    const apiKey = els.trainApikey.value.trim();
+    if (!apiKey) { els.trainStatus.textContent = 'Enter a Cerebras API key for optimization.'; return; }
+    const examples = getExamples().filter((ex) => ex.type === type);
+    if (examples.length < 2) { els.trainStatus.textContent = `Need at least 2 ${type} examples.`; return; }
+
+    els.trainStatus.textContent = `Optimizing ${type}… this may take a minute.`;
+    els.trainOptDetection.disabled = true;
+    els.trainOptAction.disabled = true;
+
+    try {
+      const fn = type === 'detection' ? runDetectionOptimization : runActionOptimization;
+      const result = await fn({
+        apiKey,
+        examples,
+      });
+      els.trainStatus.textContent = `${type} optimization done! Best score: ${result.bestScore?.toFixed(2) || '?'}`;
+    } catch (err) {
+      els.trainStatus.textContent = `Optimization failed: ${err.message}`;
+    } finally {
+      els.trainOptDetection.disabled = false;
+      els.trainOptAction.disabled = false;
+    }
+  }
+
+  els.trainOptDetection.addEventListener('click', () => runOptimization('detection'));
+  els.trainOptAction.addEventListener('click', () => runOptimization('action'));
+
+  renderExamples();
 }
 
 // --- Init -----------------------------------------------------------------

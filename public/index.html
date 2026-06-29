@@ -139,6 +139,49 @@
         ></textarea>
         <p id="vibe-status" class="hint" role="status" aria-live="polite"></p>
 
+        <hr class="section-divider" />
+        <h2 class="log-title">Training</h2>
+
+        <div class="training-type-row">
+          <label class="field-label">Example type
+            <select id="train-type" class="webhook-select">
+              <option value="detection">Detection</option>
+              <option value="action">Action</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="train-detection-fields">
+          <input id="train-mission" class="webhook-input" type="text" placeholder="Mission prompt" />
+          <textarea id="train-scene" class="textarea textarea-code" rows="2" placeholder="Scene description (what the camera sees)"></textarea>
+          <div class="train-check-row">
+            <label class="switch"><input id="train-triggered" type="checkbox" /><span>Triggered</span></label>
+            <label class="inline-label">Confidence: <input id="train-confidence" class="train-number" type="number" min="0" max="100" value="80" /></label>
+          </div>
+          <input id="train-reason" class="webhook-input" type="text" placeholder="Expected reason" />
+        </div>
+
+        <div id="train-action-fields" hidden>
+          <input id="train-instruction" class="webhook-input" type="text" placeholder="Action instruction" />
+          <input id="train-context" class="webhook-input" type="text" placeholder="Detection context" />
+          <textarea id="train-message" class="textarea textarea-code" rows="2" placeholder="Expected message"></textarea>
+        </div>
+
+        <button id="train-add-btn" class="btn btn-secondary" type="button">Add Example</button>
+
+        <ul id="train-example-list" class="train-example-list"></ul>
+
+        <details class="train-optimize">
+          <summary class="log-title" style="cursor:pointer">Optimization</summary>
+          <input id="train-apikey" class="webhook-input" type="password" placeholder="Cerebras API key (for training)" />
+          <div class="train-opt-row">
+            <button id="train-opt-detection" class="btn btn-secondary" type="button">Optimize Detection</button>
+            <button id="train-opt-action" class="btn btn-secondary" type="button">Optimize Action</button>
+          </div>
+          <p id="train-status" class="hint" role="status" aria-live="polite"></p>
+          <button id="train-clear-btn" class="btn btn-secondary" type="button">Clear All Examples</button>
+        </details>
+
         <dl class="telemetry" aria-label="Telemetry">
           <div><dt>Latency</dt><dd><span id="latency">—</span> ms</dd></div>
           <div><dt>Confidence</dt><dd><span id="confidence">—</span>%</dd></div>
@@ -152,6 +195,7 @@
       </section>
     </main>
 
+    <script src="/training.bundle.js" type="module"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

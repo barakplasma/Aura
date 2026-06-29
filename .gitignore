@@ -1,8 +1,11 @@
 node_modules/
+.claude/
 .env
 .env.local
 .dev.vars
 .wrangler/
 dist/
+public/training.bundle.js
+public/training.bundle.js.map
 npm-debug.log*
 .DS_Store

@@ -5,10 +5,11 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "predev": "node scripts/gen-icons.js",
+    "build": "node scripts/build-training.js",
+    "predev": "node scripts/gen-icons.js && node scripts/build-training.js",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "predeploy": "node scripts/gen-icons.js",
+    "predeploy": "node scripts/gen-icons.js && node scripts/build-training.js",
     "deploy": "wrangler deploy",
     "test": "node --test"
   },
@@ -16,9 +17,11 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@ax-llm/ax": "^22.0.7",
     "hono": "^4.6.3"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "wrangler": "^4.20.0"
   },
   "license": "GPL-3.0"
