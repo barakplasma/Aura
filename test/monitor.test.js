@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   buildDetectionPrompt,
   buildActionPrompt,
+  buildWebhookActionPrompt,
   parseDetection,
   normalizeDetection,
   parseAction,
+  parseWebhookAction,
   normalizeUsage,
   scan,
 } from '../lib/monitor.js';
@@ -43,6 +45,20 @@ test('parseAction extracts and defaults the message', () => {
   assert.ok(parseAction('{"message":""}').message.length > 0);
 });
 
+test('buildWebhookActionPrompt embeds action, reason, and optional schema', () => {
+  const p = buildWebhookActionPrompt('send details', 'intruder detected');
+  assert.match(p, /send details/);
+  assert.match(p, /intruder detected/);
+  const withSchema = buildWebhookActionPrompt('send details', 'intruder detected', { type: 'object', properties: { alert: { type: 'string' } } });
+  assert.match(withSchema, /JSON Schema/);
+  assert.match(withSchema, /"alert"/);
+});
+
+test('parseWebhookAction extracts and defaults the message', () => {
+  assert.equal(parseWebhookAction('{"message":"Alert: intruder"}').message, 'Alert: intruder');
+  assert.ok(parseWebhookAction('{"message":""}').message.length > 0);
+});
+
 test('normalizeUsage derives total tokens', () => {
   assert.deepEqual(normalizeUsage({ prompt_tokens: 560, completion_tokens: 40 }), {
     prompt_tokens: 560,
@@ -52,7 +68,7 @@ test('normalizeUsage derives total tokens', () => {
 });
 
 test('scan mock fires on schedule and respects the threshold', async () => {
-  const args = { mission: 'watch the door', action: 'say hi', image: 'x'.repeat(64), env: {} };
+  const args = { mission: 'watch the door', action: 'say hi', webhookAction: 'notify', image: 'x'.repeat(64), env: {} };
 
   // The mock fires every 3rd cycle. Within a few cycles we should see both a
   // non-triggered and a triggered result, each with usage.
@@ -66,8 +82,10 @@ test('scan mock fires on schedule and respects the threshold', async () => {
     if (r.triggered) {
       sawTriggered = true;
       assert.ok(r.message.length > 0); // action ran → announcement present
+      assert.ok(r.webhookMessage.length > 0); // webhookAction ran → webhook message present
     } else {
       sawClear = true;
+      assert.equal(r.webhookMessage, '');
     }
   }
   assert.ok(sawTriggered && sawClear);

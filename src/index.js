@@ -22,8 +22,9 @@ app.get('/api/health', (c) => {
 });
 
 // Monitoring scan.
-// Body: { mission: string, action: string, image: string, threshold?: number }
-// Response: { triggered, confidence, reason, message, latencyMs, mode, usage }
+// Body: { mission: string, action: string, image: string, threshold?: number,
+//         webhookAction?: string, webhookSchema?: object }
+// Response: { triggered, confidence, reason, message, webhookMessage, latencyMs, mode, usage }
 app.post('/api/scan', async (c) => {
   const started = Date.now();
 
@@ -34,7 +35,7 @@ app.post('/api/scan', async (c) => {
     return c.json({ error: 'Invalid JSON body.' }, 400);
   }
 
-  const { mission, action, image, threshold } = payload || {};
+  const { mission, action, image, threshold, webhookAction, webhookSchema } = payload || {};
   if (typeof image !== 'string' || image.length < 32) {
     return c.json({ error: 'Missing "image" data.' }, 400);
   }
@@ -45,6 +46,8 @@ app.post('/api/scan', async (c) => {
       action: typeof action === 'string' ? action : '',
       image,
       threshold: Number.isFinite(threshold) ? threshold : 60,
+      webhookAction: typeof webhookAction === 'string' ? webhookAction : '',
+      webhookSchema: webhookSchema && typeof webhookSchema === 'object' ? webhookSchema : undefined,
       env: c.env,
     });
     return c.json({ ...result, latencyMs: Date.now() - started });

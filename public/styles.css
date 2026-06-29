@@ -261,6 +261,77 @@ input[type='range'] {
   color: var(--fg);
 }
 
+/* --- Section divider --- */
+.section-divider {
+  border: none;
+  border-top: 1px solid #232333;
+  margin: 1rem 0;
+}
+
+/* --- Webhook row --- */
+.webhook-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.webhook-input {
+  flex: 1;
+  font-size: 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 12px;
+  border: 2px solid #2a2a3a;
+  background: #0e0e18;
+  color: var(--fg);
+  font-family: inherit;
+  min-width: 0;
+}
+.webhook-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.webhook-input::placeholder {
+  color: #555;
+}
+
+.webhook-config-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.9rem;
+}
+.webhook-method-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+.webhook-select {
+  font-size: 0.95rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 10px;
+  border: 2px solid #2a2a3a;
+  background: #0e0e18;
+  color: var(--fg);
+  font-family: inherit;
+  cursor: pointer;
+}
+.webhook-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.textarea-code {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", monospace;
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+
+#webhook-status {
+  display: inline;
+  margin: 0;
+}
+
 .telemetry {
   display: flex;
   flex-wrap: wrap;

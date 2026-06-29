@@ -1,9 +1,9 @@
-// Aura monitor client — turn the camera into an automated detect→act loop.
+// Aura monitor client — turn the camera into an automated detect→act→webhook loop.
 //
 //   getUserMedia -> hidden <canvas> (640x480, JPEG q~0.4)
-//     -> POST /api/scan { mission, action, image, threshold }
-//       -> { triggered, confidence, reason, message }
-//         -> on alert: speak the announcement + vibrate + log
+//     -> POST /api/scan { mission, action, image, threshold, webhookAction, webhookSchema }
+//       -> { triggered, confidence, reason, message, webhookMessage }
+//         -> on alert: speak the announcement + vibrate + log + fire webhook
 //
 // One request is in flight at a time; the next scan is scheduled after the
 // configured interval. Any result that resolves after Stop is discarded.
@@ -31,6 +31,13 @@ const els = {
   vibeTest: document.getElementById('vibe-test'),
   vibeStatus: document.getElementById('vibe-status'),
   rate: document.getElementById('rate'),
+  webhookUrl: document.getElementById('webhook-url'),
+  webhookMethod: document.getElementById('webhook-method'),
+  webhookHeaders: document.getElementById('webhook-headers'),
+  webhookAction: document.getElementById('webhook-action'),
+  webhookSchema: document.getElementById('webhook-schema'),
+  webhookTest: document.getElementById('webhook-test'),
+  webhookStatus: document.getElementById('webhook-status'),
   latency: document.getElementById('latency'),
   confidence: document.getElementById('confidence'),
   mode: document.getElementById('mode'),
@@ -88,11 +95,15 @@ async function tick() {
     state.inFlight = true;
     const started = performance.now();
     try {
+      const whAction = els.webhookAction.value.trim();
+      const whSchema = parseWebhookSchema();
       const result = await postScan({
         mission: els.mission.value.trim(),
         action: els.action.value.trim(),
         image: captureFrame(),
         threshold: state.threshold,
+        webhookAction: whAction || undefined,
+        webhookSchema: whSchema || undefined,
       });
       if (!state.running) return; // discard results that land after Stop
       const rtt = Math.round(performance.now() - started);
@@ -136,6 +147,9 @@ function handleResult(result) {
       speech: els.speechToggle.checked,
       haptics: els.hapticsToggle.checked,
     });
+    if (result.webhookMessage) {
+      sendWebhook(result.webhookMessage);
+    }
   } else {
     els.status.textContent = `Watching — ${result.reason}`;
   }
@@ -144,6 +158,72 @@ function handleResult(result) {
 function flashAlert() {
   els.flash.classList.add('on');
   setTimeout(() => els.flash.classList.remove('on'), 700);
+}
+
+function sendWebhook(body) {
+  const url = els.webhookUrl.value.trim();
+  if (!url) return;
+
+  let parsedBody = body;
+  let schemaOk = true;
+  const schema = parseWebhookSchema();
+  if (schema) {
+    try {
+      const obj = typeof body === 'string' ? JSON.parse(body) : body;
+      schemaOk = validateAgainstSchema(obj, schema);
+    } catch {}
+  }
+
+  let headers = { 'Content-Type': 'application/json' };
+  try {
+    const custom = JSON.parse(els.webhookHeaders.value.trim() || '{}');
+    if (custom && typeof custom === 'object') {
+      headers = { ...headers, ...custom };
+    }
+  } catch {}
+
+  const method = els.webhookMethod.value;
+
+  fetch(url, {
+    method,
+    headers,
+    body: method === 'GET' || method === 'HEAD' ? undefined : parsedBody,
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => {});
+}
+
+function parseWebhookSchema() {
+  const raw = els.webhookSchema.value.trim();
+  if (!raw) return null;
+  try {
+    const s = JSON.parse(raw);
+    return s && typeof s === 'object' ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function validateAgainstSchema(obj, schema) {
+  if (!schema || typeof schema !== 'object') return true;
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  for (const key of required) {
+    if (!(key in obj)) return false;
+  }
+  if (schema.type === 'object' && schema.properties) {
+    for (const [key, def] of Object.entries(schema.properties)) {
+      if (key in obj && def.type) {
+        const val = obj[key];
+        const t = typeof val;
+        if (def.type === 'string' && t !== 'string' && t !== 'undefined') return false;
+        if (def.type === 'number' && t !== 'number') return false;
+        if (def.type === 'boolean' && t !== 'boolean') return false;
+        if (def.type === 'object' && (t !== 'object' || val === null)) return false;
+        if (def.type === 'array' && !Array.isArray(val)) return false;
+        if (def.type === 'integer' && (!Number.isInteger(val))) return false;
+      }
+    }
+  }
+  return true;
 }
 
 function logAlert(message, confidence) {
@@ -258,6 +338,43 @@ function setupControls() {
       els.vibeStatus.textContent = 'Buzzing now — feel that?';
     });
   }
+
+  // --- Webhook settings ---------------------------------------------------
+
+  const savedWhUrl = localStorage.getItem('aura.webhookUrl');
+  if (savedWhUrl !== null) els.webhookUrl.value = savedWhUrl;
+  const savedWhMethod = localStorage.getItem('aura.webhookMethod');
+  if (savedWhMethod !== null) els.webhookMethod.value = savedWhMethod;
+  const savedWhHeaders = localStorage.getItem('aura.webhookHeaders');
+  if (savedWhHeaders !== null) els.webhookHeaders.value = savedWhHeaders;
+  const savedWhAction = localStorage.getItem('aura.webhookAction');
+  if (savedWhAction !== null) els.webhookAction.value = savedWhAction;
+  const savedWhSchema = localStorage.getItem('aura.webhookSchema');
+  if (savedWhSchema !== null) els.webhookSchema.value = savedWhSchema;
+
+  els.webhookUrl.addEventListener('input', () =>
+    localStorage.setItem('aura.webhookUrl', els.webhookUrl.value)
+  );
+  els.webhookMethod.addEventListener('change', () =>
+    localStorage.setItem('aura.webhookMethod', els.webhookMethod.value)
+  );
+  els.webhookHeaders.addEventListener('input', () =>
+    localStorage.setItem('aura.webhookHeaders', els.webhookHeaders.value)
+  );
+  els.webhookAction.addEventListener('input', () =>
+    localStorage.setItem('aura.webhookAction', els.webhookAction.value)
+  );
+  els.webhookSchema.addEventListener('input', () =>
+    localStorage.setItem('aura.webhookSchema', els.webhookSchema.value)
+  );
+
+  els.webhookTest.addEventListener('click', async () => {
+    els.webhookStatus.textContent = 'Sending test…';
+    const body = JSON.stringify({ event: 'test', timestamp: new Date().toISOString(), message: 'Aura webhook test.' });
+    sendWebhook(body);
+    els.webhookStatus.textContent = 'Test sent.';
+    setTimeout(() => { if (els.webhookStatus.textContent === 'Test sent.') els.webhookStatus.textContent = ''; }, 3000);
+  });
 }
 
 // --- Init -----------------------------------------------------------------

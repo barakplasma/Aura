@@ -87,6 +87,56 @@
             <input id="rate" type="number" min="0" step="0.01" value="0.10" />
           </label>
         </div>
+
+        <hr class="section-divider" />
+        <h2 class="log-title">Webhook</h2>
+
+        <label for="webhook-url" class="field-label">URL</label>
+        <input
+          id="webhook-url"
+          class="webhook-input"
+          type="url"
+          placeholder="https://ntfy.sh/mytopic"
+          autocomplete="off"
+        />
+
+        <div class="webhook-config-row">
+          <label class="field-label webhook-method-label">
+            Method
+            <select id="webhook-method" class="webhook-select">
+              <option value="POST">POST</option>
+              <option value="GET">GET</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+            </select>
+          </label>
+          <button id="webhook-test" class="btn btn-secondary" type="button">Test</button>
+          <span id="webhook-status" class="hint" role="status" aria-live="polite"></span>
+        </div>
+
+        <label for="webhook-headers" class="field-label">Headers (JSON)</label>
+        <textarea
+          id="webhook-headers"
+          class="textarea textarea-code"
+          rows="3"
+          placeholder='{"Authorization": "Bearer tk_xxxx", "Title": "Aura Alert", "Tags": "warning"}'
+        ></textarea>
+
+        <label for="webhook-action" class="field-label">Action — what context to include in the body</label>
+        <textarea
+          id="webhook-action"
+          class="textarea"
+          rows="2"
+          placeholder="e.g. Include the alert reason, confidence level, and a timestamp."
+        ></textarea>
+
+        <label for="webhook-schema" class="field-label">Body JSON Schema (optional)</label>
+        <textarea
+          id="webhook-schema"
+          class="textarea textarea-code"
+          rows="4"
+          placeholder='{"type": "object", "required": ["message"], "properties": {"message": {"type": "string"}}}'
+        ></textarea>
         <p id="vibe-status" class="hint" role="status" aria-live="polite"></p>
 
         <dl class="telemetry" aria-label="Telemetry">
