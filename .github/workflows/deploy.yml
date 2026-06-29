@@ -39,6 +39,9 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Match the project's wrangler (v4): the action's bundled v3 doesn't
+          # understand assets.run_worker_first and warns/ignores it.
+          wranglerVersion: "4"
 
       # Sync the Cerebras key as a Worker secret AFTER deploy, so the script
       # exists when `secret put` runs (avoids a first-deploy ordering failure).
