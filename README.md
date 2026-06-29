@@ -56,15 +56,19 @@ wrangler.toml             Worker + static-assets config (serves /public, run_wor
 public/index.html         Accessible, large-tap-target UI
 public/app.js             Camera capture + inference loop + telemetry
 public/feedback.js        Web Vibration + Web Speech driver (throttled/de-duped)
-public/sw.js              Service worker (app-shell cache; PWA / install-free)
-public/manifest.webmanifest
+public/manifest.webmanifest  Web app manifest (installable on Android Chrome)
 scripts/gen-icons.js      Regenerates PWA icons (no image deps)
+.github/workflows/deploy.yml  CI deploy via cloudflare/wrangler-action
 test/locator.test.js      Unit tests for the locator (node --test)
 ```
 
-Aura runs on **Cloudflare Workers** with **Hono**. The PWA client in `/public`
-is served by Workers Static Assets; `run_worker_first = ["/api/*"]` routes only
-API calls to the Hono Worker, which is the Cerebras orchestration layer.
+Aura runs on **Cloudflare Workers** with **Hono**. The client in `/public` is
+served by Workers Static Assets; `run_worker_first = ["/api/*"]` routes only API
+calls to the Hono Worker, which is the Cerebras orchestration layer.
+
+There is no service worker / offline cache: the app is non-functional without
+network (every frame needs inference), so offline support would be pointless.
+The web manifest is kept so it's still installable on Android Chrome.
 
 ## Run it
 
@@ -72,13 +76,13 @@ API calls to the Hono Worker, which is the Cerebras orchestration layer.
 npm install
 
 # Local dev (Workers runtime via Miniflare). Mock mode unless a key is set —
-# the locator returns a converging spiral so the full UX works offline.
+# the locator returns a converging spiral so the full UX works without a key.
 npm run dev            # wrangler dev → http://localhost:8787
 
 # Live Cerebras inference locally: put CEREBRAS_API_KEY in .dev.vars
 cp .dev.vars.example .dev.vars   # then set CEREBRAS_API_KEY
 
-# Deploy to Cloudflare:
+# Manual deploy to Cloudflare:
 npx wrangler deploy
 # Then set the secret for live inference (otherwise mock mode):
 npx wrangler secret put CEREBRAS_API_KEY
@@ -86,6 +90,22 @@ npx wrangler secret put CEREBRAS_API_KEY
 
 The camera, Vibration, and Speech APIs require a **secure context** —
 `localhost` in dev, or the `https://*.workers.dev` URL once deployed.
+
+### Continuous deployment (GitHub Actions)
+
+`.github/workflows/deploy.yml` deploys on every push to `main` (and on manual
+dispatch) via [`cloudflare/wrangler-action`](https://github.com/cloudflare/wrangler-action).
+Add one repository secret:
+
+- **`CLOUDFLARE_API_TOKEN`** — a token with *Workers Scripts: Edit*
+  (the "Edit Cloudflare Workers" template works).
+- *(optional)* `CLOUDFLARE_ACCOUNT_ID` — only if the token can see more than one
+  account; an account-scoped token is auto-detected.
+
+To also push the Cerebras key as a Worker secret from CI, add a
+`CEREBRAS_API_KEY` repo secret and uncomment the `secrets:`/`env:` block in the
+workflow. Left commented, the deploy runs in mock mode until you set the secret
+with `wrangler secret put`.
 
 ### Configuration
 

@@ -1,0 +1,49 @@
+name: Deploy
+
+# Deploys the Worker to Cloudflare with cloudflare/wrangler-action.
+#
+# Required repository secret:
+#   CLOUDFLARE_API_TOKEN  — a token with the "Workers Scripts: Edit" permission
+#                           (the "Edit Cloudflare Workers" template works).
+# Optional repository secret:
+#   CLOUDFLARE_ACCOUNT_ID — only needed if the token can see more than one
+#                           account; an account-scoped token is auto-detected.
+#
+# Runs on pushes to main and on manual dispatch.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare Workers
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Install deps so wrangler can bundle the Worker (resolves `hono`).
+      - run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Default command is `deploy`. To also sync the Cerebras key as a
+          # Worker secret, add CEREBRAS_API_KEY to the repo secrets and
+          # uncomment the `secrets:` block + the env below. Leave it commented
+          # to deploy in mock mode (no key) without setting an empty secret.
+          # secrets: |
+          #   CEREBRAS_API_KEY
+        # env:
+        #   CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}

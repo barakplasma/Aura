@@ -269,7 +269,3 @@ fetch('/api/health')
   .then((r) => r.json())
   .then((h) => (els.mode.textContent = h.mode))
   .catch(() => {});
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
