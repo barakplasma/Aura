@@ -1,95 +1,116 @@
 # Aura
 
-**Team Members:** <@352130433745551383>
-
 **GitHub Repository:** [github.com/barakplasma/Aura](https://github.com/barakplasma/Aura)
 
-Aura turns any phone or laptop with a webcam into an automated visual monitor in your environment powered by Gemma 4 vision using a simple webapp (on Cerebras for near-realtime detections and actions). The user sets a mission prompt (what to watch for) and an action prompt (what to say via text to speech, or what to send via webhook), and Aura runs a two-stage detect→act loop: frame → detection call → if triggered, action call → speaks alert aloud, vibrates, flashes, fires webhook. Built with history so that it can say or do anything according to mission parameters. Built on Cloudflare Workers + Hono, with a vanilla-JS PWA client served by Workers Static Assets for minimum latency globally.
+Aura turns any phone or laptop with a webcam into an automated visual monitor. You provide your own API key and model from any OpenAI-compatible provider (Cerebras, OpenAI, Groq, Together, etc.). Set a mission prompt (what to watch for) and an action prompt (what to say via text-to-speech or send via webhook), and Aura runs a two-stage detect→act loop in your browser.
 
----
-
-## How it works
+**No backend required.** This is a pure static PWA — your API key is stored in your browser's localStorage and sent directly to the provider. Nothing is proxied through a server.
 
 ```
-[ camera frame ] -> [ 640x480 JPEG (~40%) ] -> POST /api/scan { mission, action, threshold }
-                                                        |
-                                          DETECTION call (Gemma 4 on Cerebras)
-                                          {triggered, confidence, reason}
-                                                        |
-                              triggered AND confidence >= threshold ?
-                                       no |                 | yes
-                                          v                 v
-                                   "Watching…"        ACTION call (Gemma 4)
-                                                      {message}  -> speak + vibrate + flash + webhook
+[ camera frame ] → 640x480 JPEG → detection call (your provider + model)
+                                       |
+                          triggered AND confidence ≥ threshold ?
+                           no |                       | yes
+                              ▼                       ▼
+                        "Watching…"              action call (your provider)
+                                                 → speak + vibrate + flash + webhook
 ```
 
-Most cycles are detection-only; the second (action) call happens only on a real
-alert, so steady-state cost stays low. Detection history is carried forward so
-Gemma can act on temporal context — not just a single frame.
+Most cycles are detection-only; the second call happens only on a real alert.
+
+## Quick start
+
+### 1. Host the app
+
+Serve the `public/` directory with any static server:
+
+```bash
+npm install
+npm run build
+npx serve public
+# → http://localhost:3000
+```
+
+### 2. Configure a provider
+
+Open the app, then:
+
+1. **Base URL** — the OpenAI-compatible API endpoint, e.g. `https://api.cerebras.ai/v1`
+2. **API Key** — your provider key (stored in localStorage, never sent anywhere else)
+3. **Model** — click **Fetch Models** to list available models, or type one manually
+
+Supported providers include Cerebras, OpenAI, Groq, Together, Fireworks, and any API that implements the OpenAI `/v1/chat/completions` format with vision support.
+
+### 3. Start monitoring
+
+Enter a **Mission** (what to watch for) and **Action** (what to announce on alert), adjust sensitivity, and press **Start**. The first scan fires on the next tick.
+
+### Features
+
+| Feature | How |
+|---|---|
+| **Provider config** | Base URL, API key, model — any OpenAI-compatible vision model |
+| **Model discovery** | Fetches available models from `GET /v1/models` |
+| **Alert sensitivity** | Slider (10–95% confidence threshold) |
+| **Scan interval** | 2–30 seconds |
+| **Text-to-speech** | Built-in Web Speech API |
+| **Vibration** | Web Vibration API (not available on iOS Safari) |
+| **Webhook** | POST/GET/PUT/PATCH to any URL with custom headers and JSON body |
+| **Training** | Add detection/action examples, optimize with ax/GEPA |
+| **Cost tracking** | Cumulative token count and estimated cost |
+| **PWA** | Installable on mobile home screen |
+
+### No API key? No problem.
+
+With no API key, Aura runs in **mock mode** — it cycles between normal/alert states so you can test the camera, speech, vibration, webhook, and alert log without any backend calls.
 
 ## Project layout
 
 ```
-src/index.js              Cloudflare Worker (Hono): POST /api/scan + /api/health
-lib/monitor.js            Detection + action prompts, Cerebras calls, parsing, mock
-public/index.html         Mission/action/webhook prompts, sensitivity + cadence, alert log
-public/app.js             Camera capture + scan loop + alert delivery + webhook dispatch
-public/feedback.js        Web Speech announcement + Web Vibration alert
-public/manifest.webmanifest
-scripts/gen-icons.js      Regenerates PWA icons (no image deps)
-.github/workflows/deploy.yml  CI deploy via cloudflare/wrangler-action
-test/monitor.test.js      Unit tests for the monitor engine (node --test)
+public/                   Static site (deploy this directory)
+  index.html              MD3 UI with material web components
+  app.js                  Camera capture + scan loop + alert delivery
+  aura.bundle.js          Bundled engine (scanClient, training)
+  material.bundle.js      Bundled @material/web components
+  material-theme.css      MD3 dark theme + custom styles
+  feedback.js             Speech + vibration feedback
+  manifest.webmanifest    PWA manifest
+  icons/                  Generated PWA icons
+lib/
+  aura.js                 Browser engine: scanClient(), fetchModels()
+  monitor.js              Pure functions used by aura.js (prompts, parsers) + tests
+  training.js             ax/GEPA example management and optimization
+scripts/
+  build-aura.js           esbuild: lib/aura.js → public/aura.bundle.js
+  build-material.js       esbuild: @material/web → public/material.bundle.js
+  gen-icons.js            Generate PWA icons (run manually if needed)
+test/
+  monitor.test.js         Unit tests (node --test)
 ```
 
-Aura runs on **Cloudflare Workers** with **Hono**. The client in `/public` is
-served by Workers Static Assets; `run_worker_first = ["/api/*"]` routes only API
-calls to the Worker. The Cerebras API key stays server-side as a Worker secret.
-
-## Run it
+## Scripts
 
 ```bash
-npm install
-npm run dev            # wrangler dev → http://localhost:8787 (mock mode without a key)
-
-# Live inference:
-cp .dev.vars.example .dev.vars   # set CEREBRAS_API_KEY
-npm run dev
-
-# Deploy:
-npx wrangler deploy
-npx wrangler secret put CEREBRAS_API_KEY
+npm run build             # Build material bundle + aura bundle
+npm run dev               # Serve public/ locally
+npm test                  # Unit tests
+npm run deploy            # Build + push to gh-pages branch
 ```
 
-With no `CEREBRAS_API_KEY`, the monitor runs in **mock mode** — it cycles between
-"normal" and "alert" so you can see the speech, vibration, and alert log working
-offline. The camera, Vibration, and Speech APIs need a **secure context**
-(`localhost` in dev, or the `https://*.workers.dev` URL once deployed).
+## Deploy to GitHub Pages
 
-## Runtime controls
+Push to `main` → the included GitHub Actions workflow builds and deploys `public/` to GitHub Pages automatically.
 
-- **Mission** / **Action** prompts (free-form, persisted).
-- **Webhook URL, method, headers, action prompt, and body JSON schema** for
-  sending alerts to any endpoint (ntfy.sh, custom APIs, etc.).
-- **Alert sensitivity** (10–95%): the confidence the detection must reach to fire.
-  Higher = fewer false alarms.
-- **Scan every N seconds** (2–30 s): cadence, and your main cost dial.
-- **Speak alerts** / **Vibrate on alert** toggles; a **Test vibration** button
-  (note: iOS Safari has no Vibration API — it's disabled there).
-- **Live cost**: each scan reports Cerebras token `usage`; telemetry shows
-  cumulative **Tokens** and **Est. cost** from an editable **$/1M tokens** rate.
-
-### Tests
-
+Or deploy manually:
 ```bash
-npm test
+npm run deploy
 ```
+
+Then enable **GitHub Pages → Source: gh-pages branch** in your repo settings.
 
 ## A note on responsible use
 
-Aura points a camera at people and reacts automatically. Use it only where you're
-allowed to record, tell people they're being monitored, and don't rely on it for
-safety-critical enforcement — it's an LLM making best-effort judgements from a
-single frame, and it will sometimes be wrong in both directions.
+Aura points a camera at people and reacts automatically. Use it only where you're allowed to record, tell people they're being monitored, and don't rely on it for safety-critical enforcement — it's an LLM making best-effort judgements from a single frame.
 
 ## License
 

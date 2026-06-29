@@ -1,72 +1,72 @@
-// Aura monitor client — turn the camera into an automated detect→act→webhook loop.
-//
-//   getUserMedia -> hidden <canvas> (640x480, JPEG q~0.4)
-//     -> POST /api/scan { mission, action, image, threshold, webhookAction, webhookSchema }
-//       -> { triggered, confidence, reason, message, webhookMessage }
-//         -> on alert: speak the announcement + vibrate + log + fire webhook
-//
-// One request is in flight at a time; the next scan is scheduled after the
-// configured interval. Any result that resolves after Stop is discarded.
-
 import { alert as alertOut, resetFeedback, testVibration, canVibrate } from './feedback.js';
 import {
+  scanClient,
+  fetchModels,
   getExamples, addExample, removeExample, clearExamples,
   getOptimizedArtifact,
   runDetectionOptimization, runActionOptimization,
-} from './training.bundle.js';
+} from './aura.bundle.js';
 
 const CAPTURE_W = 640;
 const CAPTURE_H = 480;
 const JPEG_QUALITY = 0.4;
 
+const $ = (id) => document.getElementById(id);
+
 const els = {
-  video: document.getElementById('video'),
-  canvas: document.getElementById('canvas'),
-  flash: document.getElementById('flash'),
-  status: document.getElementById('status'),
-  mission: document.getElementById('mission'),
-  action: document.getElementById('action'),
-  toggle: document.getElementById('toggle'),
-  thresholdRange: document.getElementById('threshold-range'),
-  thresholdVal: document.getElementById('threshold-val'),
-  scanRange: document.getElementById('scan-range'),
-  scanVal: document.getElementById('scan-val'),
-  speechToggle: document.getElementById('speech-toggle'),
-  hapticsToggle: document.getElementById('haptics-toggle'),
-  vibeTest: document.getElementById('vibe-test'),
-  vibeStatus: document.getElementById('vibe-status'),
-  rate: document.getElementById('rate'),
-  webhookUrl: document.getElementById('webhook-url'),
-  webhookMethod: document.getElementById('webhook-method'),
-  webhookHeaders: document.getElementById('webhook-headers'),
-  webhookAction: document.getElementById('webhook-action'),
-  webhookSchema: document.getElementById('webhook-schema'),
-  webhookTest: document.getElementById('webhook-test'),
-  webhookStatus: document.getElementById('webhook-status'),
-  trainType: document.getElementById('train-type'),
-  trainMission: document.getElementById('train-mission'),
-  trainScene: document.getElementById('train-scene'),
-  trainTriggered: document.getElementById('train-triggered'),
-  trainConfidence: document.getElementById('train-confidence'),
-  trainReason: document.getElementById('train-reason'),
-  trainInstruction: document.getElementById('train-instruction'),
-  trainContext: document.getElementById('train-context'),
-  trainMessage: document.getElementById('train-message'),
-  trainAddBtn: document.getElementById('train-add-btn'),
-  trainExampleList: document.getElementById('train-example-list'),
-  trainApikey: document.getElementById('train-apikey'),
-  trainOptDetection: document.getElementById('train-opt-detection'),
-  trainOptAction: document.getElementById('train-opt-action'),
-  trainStatus: document.getElementById('train-status'),
-  trainClearBtn: document.getElementById('train-clear-btn'),
-  trainDetectionFields: document.getElementById('train-detection-fields'),
-  trainActionFields: document.getElementById('train-action-fields'),
-  latency: document.getElementById('latency'),
-  confidence: document.getElementById('confidence'),
-  mode: document.getElementById('mode'),
-  tokens: document.getElementById('tokens'),
-  cost: document.getElementById('cost'),
-  alertLog: document.getElementById('alert-log'),
+  video: $('video'),
+  canvas: $('canvas'),
+  flash: $('flash'),
+  status: $('status'),
+  statusDot: $('status-dot'),
+  mission: $('mission'),
+  action: $('action'),
+  toggle: $('toggle'),
+  thresholdRange: $('threshold-range'),
+  thresholdVal: $('threshold-val'),
+  scanRange: $('scan-range'),
+  scanVal: $('scan-val'),
+  speechToggle: $('speech-toggle'),
+  hapticsToggle: $('haptics-toggle'),
+  vibeTest: $('vibe-test'),
+  vibeStatus: $('vibe-status'),
+  rate: $('rate'),
+  providerBaseUrl: $('provider-baseurl'),
+  providerApiKey: $('provider-apikey'),
+  providerModel: $('provider-model'),
+  modelSelect: $('model-select'),
+  fetchModelsBtn: $('fetch-models-btn'),
+  webhookUrl: $('webhook-url'),
+  webhookMethod: $('webhook-method'),
+  webhookHeaders: $('webhook-headers'),
+  webhookAction: $('webhook-action'),
+  webhookSchema: $('webhook-schema'),
+  webhookTest: $('webhook-test'),
+  webhookStatus: $('webhook-status'),
+  trainType: $('train-type'),
+  trainMission: $('train-mission'),
+  trainScene: $('train-scene'),
+  trainTriggered: $('train-triggered'),
+  trainConfidence: $('train-confidence'),
+  trainReason: $('train-reason'),
+  trainInstruction: $('train-instruction'),
+  trainContext: $('train-context'),
+  trainMessage: $('train-message'),
+  trainAddBtn: $('train-add-btn'),
+  trainExampleList: $('train-example-list'),
+  trainApikey: $('train-apikey'),
+  trainOptDetection: $('train-opt-detection'),
+  trainOptAction: $('train-opt-action'),
+  trainStatus: $('train-status'),
+  trainClearBtn: $('train-clear-btn'),
+  trainDetectionFields: $('train-detection-fields'),
+  trainActionFields: $('train-action-fields'),
+  latency: $('latency'),
+  confidence: $('confidence'),
+  mode: $('mode'),
+  tokens: $('tokens'),
+  cost: $('cost'),
+  alertLog: $('alert-log'),
 };
 
 const ctx = els.canvas.getContext('2d', { willReadFrequently: true });
@@ -122,7 +122,10 @@ async function tick() {
       const whSchema = parseWebhookSchema();
       const examples = getExamples();
       const artifact = getOptimizedArtifact();
-      const result = await postScan({
+      const result = await scanClient({
+        baseUrl: els.providerBaseUrl.value.trim() || undefined,
+        model: getModelName(),
+        apiKey: els.providerApiKey.value.trim() || undefined,
         mission: els.mission.value.trim(),
         action: els.action.value.trim(),
         image: captureFrame(),
@@ -132,10 +135,11 @@ async function tick() {
         examples: examples.length > 0 ? examples : undefined,
         optimizedInstruction: artifact?.program?.instruction || undefined,
       });
-      if (!state.running) return; // discard results that land after Stop
+      if (!state.running) return;
       const rtt = Math.round(performance.now() - started);
       els.latency.textContent = String(result.latencyMs ?? rtt);
       els.mode.textContent = result.mode || '—';
+      els.statusDot.className = `status-dot ${result.mode === 'live' ? 'live' : result.mode === 'mock' ? 'mock' : 'off'}`;
       els.confidence.textContent =
         Number.isFinite(result.confidence) ? String(Math.round(result.confidence)) : '—';
       recordUsage(result.usage);
@@ -152,17 +156,11 @@ async function tick() {
   }
 }
 
-async function postScan(body) {
-  const resp = await fetch('/api/scan', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const b = await resp.json().catch(() => ({}));
-    throw new Error(b.error || `HTTP ${resp.status}`);
+function getModelName() {
+  if (els.modelSelect.style.display !== 'none' && els.modelSelect.value) {
+    return els.modelSelect.value;
   }
-  return resp.json();
+  return els.providerModel.value.trim() || undefined;
 }
 
 function handleResult(result) {
@@ -171,8 +169,8 @@ function handleResult(result) {
     flashAlert();
     logAlert(result.message || result.reason, result.confidence);
     alertOut(result.message || result.reason, {
-      speech: els.speechToggle.checked,
-      haptics: els.hapticsToggle.checked,
+      speech: els.speechToggle.selected,
+      haptics: els.hapticsToggle.selected,
     });
     if (result.webhookMessage) {
       sendWebhook(result.webhookMessage);
@@ -273,7 +271,7 @@ function recordUsage(usage) {
 }
 
 function renderCost() {
-  const rate = parseFloat(els.rate.value); // $ per 1M tokens
+  const rate = parseFloat(els.rate.value);
   const cost = (state.totalTokens / 1e6) * (Number.isFinite(rate) && rate >= 0 ? rate : 0);
   els.cost.textContent = cost.toFixed(4);
 }
@@ -294,9 +292,9 @@ async function start() {
     return;
   }
   state.running = true;
-  els.toggle.textContent = 'Stop monitoring';
-  els.toggle.classList.add('active');
+  els.toggle.innerHTML = '<md-icon slot="icon">stop</md-icon> Stop Monitoring';
   els.toggle.setAttribute('aria-pressed', 'true');
+  els.toggle.style.setProperty('--md-filled-button-container-color', 'var(--color-danger)');
   els.status.textContent = 'Monitoring…';
   resetFeedback();
   tick();
@@ -307,17 +305,76 @@ function stop() {
   clearTimeout(state.loopTimer);
   stopCamera();
   resetFeedback();
-  els.toggle.textContent = 'Start monitoring';
-  els.toggle.classList.remove('active');
+  els.toggle.innerHTML = '<md-icon slot="icon">play_arrow</md-icon> Start Monitoring';
   els.toggle.setAttribute('aria-pressed', 'false');
+  els.toggle.style.removeProperty('--md-filled-button-container-color');
   els.status.textContent = 'Stopped.';
+  els.statusDot.className = 'status-dot off';
 }
 
 els.toggle.addEventListener('click', () => (state.running ? stop() : start()));
 
+// --- Provider model fetching ----------------------------------------------
+
+async function handleFetchModels() {
+  const baseUrl = els.providerBaseUrl.value.trim();
+  const apiKey = els.providerApiKey.value.trim();
+  if (!baseUrl) { els.status.textContent = 'Enter a Base URL first.'; return; }
+  if (!apiKey) { els.status.textContent = 'Enter an API key first.'; return; }
+
+  els.fetchModelsBtn.innerHTML = 'Fetching…';
+  els.fetchModelsBtn.disabled = true;
+  try {
+    const models = await fetchModels(baseUrl, apiKey);
+    if (!state.running) {
+      populateModelSelect(models);
+      els.modelSelect.style.display = 'block';
+      const current = els.providerModel.value.trim();
+      if (current && models.includes(current)) {
+        els.modelSelect.value = current;
+      } else if (models.length > 0) {
+        els.modelSelect.value = models[0];
+      }
+      els.status.textContent = `Found ${models.length} models.`;
+    }
+  } catch (err) {
+    els.status.textContent = `Fetch failed: ${err.message}. You can type a model name manually.`;
+    els.modelSelect.style.display = 'none';
+  } finally {
+    els.fetchModelsBtn.innerHTML = 'Fetch Models';
+    els.fetchModelsBtn.disabled = false;
+  }
+}
+
+function populateModelSelect(models) {
+  els.modelSelect.innerHTML = '';
+  for (const m of models) {
+    const opt = document.createElement('md-select-option');
+    opt.value = m;
+    opt.textContent = m;
+    els.modelSelect.appendChild(opt);
+  }
+}
+
+els.fetchModelsBtn.addEventListener('click', handleFetchModels);
+
+// When model text field changes, hide the select if user is typing manually
+els.providerModel.addEventListener('input', () => {
+  if (els.providerModel.value.trim()) {
+    els.modelSelect.style.display = 'none';
+  }
+});
+
 // --- Settings -------------------------------------------------------------
 
 function setupControls() {
+  const savedBaseUrl = localStorage.getItem('aura.baseUrl');
+  if (savedBaseUrl !== null) els.providerBaseUrl.value = savedBaseUrl;
+  const savedApiKey = localStorage.getItem('aura.apiKey');
+  if (savedApiKey !== null) els.providerApiKey.value = savedApiKey;
+  const savedModel = localStorage.getItem('aura.model');
+  if (savedModel !== null) els.providerModel.value = savedModel;
+
   const savedThreshold = parseInt(localStorage.getItem('aura.threshold'), 10);
   if (savedThreshold >= 10 && savedThreshold <= 95) state.threshold = savedThreshold;
   const savedScan = parseInt(localStorage.getItem('aura.scanEvery'), 10);
@@ -331,6 +388,17 @@ function setupControls() {
   els.thresholdVal.textContent = String(state.threshold);
   els.scanRange.value = String(state.scanEverySec);
   els.scanVal.textContent = String(state.scanEverySec);
+
+  // Provider persistence
+  els.providerBaseUrl.addEventListener('input', () =>
+    localStorage.setItem('aura.baseUrl', els.providerBaseUrl.value)
+  );
+  els.providerApiKey.addEventListener('input', () =>
+    localStorage.setItem('aura.apiKey', els.providerApiKey.value)
+  );
+  els.providerModel.addEventListener('input', () =>
+    localStorage.setItem('aura.model', els.providerModel.value)
+  );
 
   els.thresholdRange.addEventListener('input', () => {
     state.threshold = parseInt(els.thresholdRange.value, 10) || 60;
@@ -355,8 +423,7 @@ function setupControls() {
 
   if (!canVibrate) {
     els.vibeTest.disabled = true;
-    els.hapticsToggle.checked = false;
-    els.hapticsToggle.disabled = true;
+    els.hapticsToggle.selected = false;
     els.vibeStatus.textContent =
       'Vibration is not supported on this browser/device (e.g. iOS Safari).';
   } else {
@@ -417,7 +484,7 @@ function setupControls() {
         type: 'detection',
         mission: els.trainMission.value.trim(),
         sceneDescription: els.trainScene.value.trim(),
-        triggered: els.trainTriggered.checked,
+        triggered: els.trainTriggered.selected,
         confidence: parseInt(els.trainConfidence.value, 10) || 0,
         reason: els.trainReason.value.trim(),
       };
@@ -433,7 +500,7 @@ function setupControls() {
   function clearTrainForm() {
     els.trainMission.value = '';
     els.trainScene.value = '';
-    els.trainTriggered.checked = false;
+    els.trainTriggered.selected = false;
     els.trainConfidence.value = '80';
     els.trainReason.value = '';
     els.trainInstruction.value = '';
@@ -514,8 +581,3 @@ function setupControls() {
 // --- Init -----------------------------------------------------------------
 
 setupControls();
-
-fetch('/api/health')
-  .then((r) => r.json())
-  .then((h) => (els.mode.textContent = h.mode))
-  .catch(() => {});

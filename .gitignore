@@ -3,9 +3,10 @@ node_modules/
 .env
 .env.local
 .dev.vars
-.wrangler/
 dist/
-public/training.bundle.js
-public/training.bundle.js.map
+public/aura.bundle.js
+public/aura.bundle.js.map
+public/material.bundle.js
+public/material.bundle.js.map
 npm-debug.log*
 .DS_Store
