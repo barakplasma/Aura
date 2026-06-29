@@ -33,7 +33,9 @@
           <div id="reticle" class="reticle"></div>
         </div>
 
-        <div id="status" class="status" role="status" aria-live="polite">
+        <!-- Not a live region: this updates at the frame rate (~8Hz), which
+             would flood screen readers. Spoken guidance is the a11y channel. -->
+        <div id="status" class="status">
           Enter a target and press Start.
         </div>
       </section>

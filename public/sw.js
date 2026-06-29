@@ -41,8 +41,18 @@ self.addEventListener('fetch', (event) => {
   // Never cache inference / health calls.
   if (url.pathname.startsWith('/api/')) return;
 
-  // Cache-first for the app shell, falling back to network.
+  // Network-first for the app shell: always pick up the latest version when
+  // online (avoids the "stuck on an old cache" trap), and fall back to the
+  // cached shell when offline. Successful responses refresh the cache.
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request))
+    fetch(request)
+      .then((response) => {
+        if (response && response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request))
   );
 });

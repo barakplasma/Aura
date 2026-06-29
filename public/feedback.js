@@ -17,7 +17,8 @@ const SPEECH_PHRASES = {
   hold_center: 'Hold. Reach now.',
 };
 
-const SPEECH_MIN_INTERVAL_MS = 900; // floor between spoken cues
+const SPEECH_MIN_INTERVAL_MS = 900; // floor between spoken cues (same action)
+const SPEECH_CHANGE_FLOOR_MS = 400; // hard floor even when the action changes
 const HOLD_PULSE_INTERVAL_MS = 500; // cadence of the "locked" solid pulse
 
 let lastAction = null;
@@ -90,9 +91,12 @@ function driveHaptics(result, now) {
 
 function driveSpeech(result, now, actionChanged) {
   if (!canSpeak) return;
-  // Speak immediately on a direction change; otherwise respect the floor so we
-  // don't chatter on every frame.
-  if (!actionChanged && now - lastSpeechAt < SPEECH_MIN_INTERVAL_MS) return;
+  // A direction change speaks promptly, but always honor a small absolute floor
+  // so rapidly flipping actions can't fire cancel()/speak() fast enough to
+  // stutter or permanently lock the synthesis queue (notably iOS Safari).
+  // Unchanged actions respect the longer anti-chatter floor.
+  const minInterval = actionChanged ? SPEECH_CHANGE_FLOOR_MS : SPEECH_MIN_INTERVAL_MS;
+  if (now - lastSpeechAt < minInterval) return;
   const phrase = SPEECH_PHRASES[result.action];
   if (!phrase) return;
   speak(phrase);

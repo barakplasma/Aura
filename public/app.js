@@ -220,22 +220,38 @@ function setupVoiceInput() {
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
 
+  // Drive UI state from the official recognition events rather than the click,
+  // so it can't desync if start() throws or the engine stops on its own. A
+  // second tap stops/submits early.
+  let recording = false;
+
   els.mic.addEventListener('click', () => {
+    if (recording) {
+      recognition.stop();
+      return;
+    }
     try {
       recognition.start();
-      els.mic.classList.add('recording');
-      els.status.textContent = 'Listening for target…';
     } catch {
-      /* already started */
+      /* start() throws if already starting; the start event will sync state */
     }
+  });
+  recognition.addEventListener('start', () => {
+    recording = true;
+    els.mic.classList.add('recording');
+    els.status.textContent = 'Listening for target…';
   });
   recognition.addEventListener('result', (e) => {
     const said = e.results[0][0].transcript.trim().replace(/[.!?]+$/, '');
     els.target.value = said;
     els.status.textContent = `Target set: ${said}`;
   });
-  recognition.addEventListener('end', () => els.mic.classList.remove('recording'));
+  recognition.addEventListener('end', () => {
+    recording = false;
+    els.mic.classList.remove('recording');
+  });
   recognition.addEventListener('error', () => {
+    recording = false;
     els.mic.classList.remove('recording');
     els.status.textContent = 'Could not hear that — please type the target.';
   });

@@ -25,6 +25,13 @@ test('parseSpatialJson recovers JSON embedded in prose', () => {
   assert.equal(r.action, 'steer_up');
 });
 
+test('parseSpatialJson recovers JSON with trailing prose/punctuation', () => {
+  const r = parseSpatialJson('{"found":true,"x":10,"y":20,"action":"steer_right"} done.');
+  assert.equal(r.found, true);
+  assert.equal(r.x, 10);
+  assert.equal(r.action, 'steer_right');
+});
+
 test('parseSpatialJson throws on non-JSON', () => {
   assert.throws(() => parseSpatialJson('no json here'));
 });
