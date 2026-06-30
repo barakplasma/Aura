@@ -1,10 +1,10 @@
 {
   "name": "aura",
   "version": "2.0.0",
-  "description": "Aura — turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model. Bring your own API key + model. Pure static PWA, no backend required.",
+  "description": "Aura \u2014 turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model. Bring your own API key + model. Pure static PWA, no backend required.",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-material.js && node scripts/build-aura.js",
+    "build": "node scripts/build-react.js",
     "predev": "node scripts/gen-icons.js && npm run build",
     "dev": "npx serve public",
     "predeploy": "npm run build",
@@ -16,7 +16,9 @@
   },
   "dependencies": {
     "@ax-llm/ax": "^22.0.7",
-    "@material/web": "^2.4.1"
+    "@uidotdev/usehooks": "^2.4.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",
