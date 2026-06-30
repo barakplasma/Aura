@@ -2,118 +2,90 @@
 
 **Team Members:** @barakplasma
 
+**Live app:** [barakplasma.github.io/Aura](https://barakplasma.github.io/Aura/) &nbsp;·&nbsp; **Repo:** [github.com/barakplasma/Aura](https://github.com/barakplasma/Aura)
 
-**GitHub Repository:** [github.com/barakplasma/Aura](https://github.com/barakplasma/Aura)
-
-Aura turns any phone or laptop with a webcam into an automated visual monitor. You provide your own API key and model from any OpenAI-compatible provider (Cerebras, OpenAI, Groq, Together, etc.). Set a mission prompt (what to watch for) and an action prompt (what to say via text-to-speech or send via webhook), and Aura runs a two-stage detect→act loop in your browser.
-
-**No backend required.** This is a pure static PWA — your API key is stored in your browser's localStorage and sent directly to the provider. Nothing is proxied through a server.
+Aura turns any phone or laptop webcam into an automated visual monitor. Bring your own API key from any OpenAI-compatible vision provider (Cerebras, OpenAI, Groq, Together, etc.) and set a mission — what to watch for. Aura runs a two-stage detect→act loop entirely in the browser.
 
 ```
-[ camera frame ] → 640x480 JPEG → detection call (your provider + model)
-                                       |
-                          triggered AND confidence ≥ threshold ?
-                           no |                       | yes
-                              ▼                       ▼
-                        "Watching…"              action call (your provider)
-                                                 → speak + vibrate + flash + webhook
+camera frame → 640×480 JPEG → detection call (your provider + model)
+                                      |
+                               triggered ?
+                           no  |         |  yes
+                               ▼         ▼
+                         "Watching…"   action call → speak + vibrate + flash + webhook
 ```
 
-Most cycles are detection-only; the second call happens only on a real alert.
+No backend. Your API key stays in localStorage and goes directly to the provider.
 
 ## Quick start
 
-### 1. Host the app
-
-Serve the `public/` directory with any static server:
-
 ```bash
-npm install
-npm run build
-npx serve public
-# → http://localhost:3000
+npm install && npm run build
+npx serve public        # → http://localhost:3000
 ```
 
-### 2. Configure a provider
+Or just open the [live app](https://barakplasma.github.io/Aura/) — no install needed.
 
-Open the app, then:
+## Usage
 
-1. **Base URL** — the OpenAI-compatible API endpoint, e.g. `https://api.cerebras.ai/v1`
-2. **API Key** — your provider key (stored in localStorage, never sent anywhere else)
-3. **Model** — click **Fetch Models** to list available models, or type one manually
+1. **Settings** — enter Base URL (e.g. `https://api.cerebras.ai/v1`), API key, and model (or click Fetch Models)
+2. **Mission** — describe what to watch for and what to announce on alert
+3. **Monitor** → press **ARM SENTRY** — camera starts, scan loop runs
 
-Supported providers include Cerebras, OpenAI, Groq, Together, Fireworks, and any API that implements the OpenAI `/v1/chat/completions` format with vision support.
+No API key → mock mode cycles through normal/alert states so you can test speech, vibration, webhook, and history without any backend.
 
-### 3. Start monitoring
+## Features
 
-Enter a **Mission** (what to watch for) and **Action** (what to announce on alert), adjust sensitivity, and press **Start**. The first scan fires on the next tick.
-
-### Features
-
-| Feature | How |
+| | |
 |---|---|
-| **Provider config** | Base URL, API key, model — any OpenAI-compatible vision model |
-| **Model discovery** | Fetches available models from `GET /v1/models` |
-| **Alert sensitivity** | Slider (10–95% confidence threshold) |
-| **Scan interval** | 2–30 seconds |
-| **Text-to-speech** | Built-in Web Speech API |
-| **Vibration** | Web Vibration API (not available on iOS Safari) |
-| **Webhook** | POST/GET/PUT/PATCH to any URL with custom headers and JSON body |
-| **Training** | Add detection/action examples, optimize with ax/GEPA |
+| **Any vision provider** | OpenAI-compatible `/v1/chat/completions` — Cerebras, Groq, Together, Fireworks, OpenAI, etc. |
+| **Model discovery** | Fetches model list from `GET /v1/models` |
+| **Example-driven triggers** | Add detection examples in Optimize; the model learns when to fire — no manual threshold tuning |
+| **ax/GEPA optimization** | Optimize detection/action prompts from your examples with one click |
+| **Text-to-speech** | Web Speech API — speaks the action prompt aloud on alert |
+| **Vibration** | Web Vibration API (disabled on iOS Safari) |
+| **Webhook** | POST/GET/PUT/PATCH to any URL with custom headers and JSON schema |
+| **Alert history** | Last 20 alerts with timestamp and confidence |
 | **Cost tracking** | Cumulative token count and estimated cost |
-| **PWA** | Installable on mobile home screen |
-
-### No API key? No problem.
-
-With no API key, Aura runs in **mock mode** — it cycles between normal/alert states so you can test the camera, speech, vibration, webhook, and alert log without any backend calls.
+| **PWA** | Installable on mobile home screen, works offline in mock mode |
 
 ## Project layout
 
 ```
-public/                   Static site (deploy this directory)
-  index.html              MD3 UI with material web components
-  app.js                  Camera capture + scan loop + alert delivery
-  aura.bundle.js          Bundled engine (scanClient, training)
-  material.bundle.js      Bundled @material/web components
-  material-theme.css      MD3 dark theme + custom styles
-  feedback.js             Speech + vibration feedback
-  manifest.webmanifest    PWA manifest
-  icons/                  Generated PWA icons
+src/                        React source
+  App.jsx                   Root — settings state + screen routing
+  main.jsx                  Entry point
+  aura.css                  DC dark theme (IBM Plex Mono, amber/green palette)
+  hooks/useMonitor.js       Camera, scan loop, alert delivery
+  components/               TopBar, NavRail
+  screens/                  Mission / Monitor / History / Optimize / Settings
 lib/
-  aura.js                 Browser engine: scanClient(), fetchModels()
-  monitor.js              Pure functions used by aura.js (prompts, parsers) + tests
-  training.js             ax/GEPA example management and optimization
+  aura.js                   scanClient(), fetchModels() — browser AI engine
+  monitor.js                Pure functions: prompt builders, parsers, normalizers
+  training.js               ax/GEPA example management and optimization
+public/                     Static site (what gets deployed)
+  index.html                React host page
+  app.bundle.js             Built React app
+  aura.css                  Dark theme
+  feedback.js               Speech + vibration (Web APIs)
 scripts/
-  build-aura.js           esbuild: lib/aura.js → public/aura.bundle.js
-  build-material.js       esbuild: @material/web → public/material.bundle.js
-  gen-icons.js            Generate PWA icons (run manually if needed)
+  build-react.js            esbuild: src/main.jsx → public/app.bundle.js
 test/
-  monitor.test.js         Unit tests (node --test)
+  monitor.test.js           Unit tests (node --test)
 ```
 
 ## Scripts
 
 ```bash
-npm run build             # Build material bundle + aura bundle
-npm run dev               # Serve public/ locally
-npm test                  # Unit tests
-npm run deploy            # Build + push to gh-pages branch
+npm run build     # esbuild → public/app.bundle.js
+npm run dev       # build + serve public/
+npm test          # unit tests
+npm run deploy    # build + push to gh-pages
 ```
 
-## Deploy to GitHub Pages
+## Responsible use
 
-Push to `main` → the included GitHub Actions workflow builds and deploys `public/` to GitHub Pages automatically.
-
-Or deploy manually:
-```bash
-npm run deploy
-```
-
-Then enable **GitHub Pages → Source: gh-pages branch** in your repo settings.
-
-## A note on responsible use
-
-Aura points a camera at people and reacts automatically. Use it only where you're allowed to record, tell people they're being monitored, and don't rely on it for safety-critical enforcement — it's an LLM making best-effort judgements from a single frame.
+Aura points a camera at people. Only use it where you're authorised to record, inform people they're being monitored, and don't rely on it for safety-critical enforcement — it's an LLM making best-effort judgements from a single frame.
 
 ## License
 
