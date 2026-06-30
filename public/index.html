@@ -2,156 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
-    />
-    <meta name="theme-color" content="#0b0b14" />
-    <meta
-      name="description"
-      content="Aura — turn any phone camera into an automated visual monitor powered by Gemma vision."
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#07090b" />
+    <meta name="description" content="Aura — turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model." />
     <title>Aura — Visual Monitor</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <link rel="stylesheet" href="aura.css" />
+    <base href="./" />
   </head>
   <body>
-    <a class="skip-link" href="#controls">Skip to controls</a>
-
-    <main>
-      <h1 class="visually-hidden">Aura visual monitor</h1>
-
-      <section class="viewport" aria-label="Camera view">
-        <video id="video" playsinline muted autoplay></video>
-        <canvas id="canvas" width="640" height="480" hidden></canvas>
-        <div id="flash" class="flash" aria-hidden="true"></div>
-
-        <div id="status" class="status" role="status" aria-live="polite">
-          Set a mission and press Start.
-        </div>
-      </section>
-
-      <section id="controls" class="controls" aria-label="Controls">
-        <label for="mission" class="field-label">Mission — what to watch for</label>
-        <textarea
-          id="mission"
-          class="textarea"
-          rows="2"
-          placeholder="e.g. Alert if someone is loitering near the front door or doing something suspicious."
-        ></textarea>
-
-        <label for="action" class="field-label">Action — what to announce on alert</label>
-        <textarea
-          id="action"
-          class="textarea"
-          rows="2"
-          placeholder="e.g. Firmly tell the person they are being recorded and to leave the area."
-        ></textarea>
-
-        <button id="toggle" class="btn btn-primary" type="button" aria-pressed="false">
-          Start monitoring
-        </button>
-
-        <div class="slider-row">
-          <label for="threshold-range">
-            Alert sensitivity: <strong>fire at ≥ <span id="threshold-val">60</span>% confidence</strong>
-          </label>
-          <input id="threshold-range" type="range" min="10" max="95" step="5" value="60" />
-          <p class="hint">Higher = fewer false alarms; lower = more sensitive.</p>
-        </div>
-
-        <div class="slider-row">
-          <label for="scan-range">
-            Scan every: <strong><span id="scan-val">5</span> s</strong>
-          </label>
-          <input id="scan-range" type="range" min="2" max="30" step="1" value="5" />
-          <p class="hint">Slower = fewer inferences = lower cost.</p>
-        </div>
-
-        <div class="settings">
-          <label class="switch">
-            <input id="speech-toggle" type="checkbox" checked />
-            <span>Speak alerts</span>
-          </label>
-          <label class="switch">
-            <input id="haptics-toggle" type="checkbox" checked />
-            <span>Vibrate on alert</span>
-          </label>
-        </div>
-
-        <div class="inline-row">
-          <button id="vibe-test" class="btn btn-secondary" type="button">Test vibration</button>
-          <label for="rate" class="rate-label">
-            $/1M tokens
-            <input id="rate" type="number" min="0" step="0.01" value="0.10" />
-          </label>
-        </div>
-
-        <hr class="section-divider" />
-        <h2 class="log-title">Webhook</h2>
-
-        <label for="webhook-url" class="field-label">URL</label>
-        <input
-          id="webhook-url"
-          class="webhook-input"
-          type="url"
-          placeholder="https://ntfy.sh/mytopic"
-          autocomplete="off"
-        />
-
-        <div class="webhook-config-row">
-          <label class="field-label webhook-method-label">
-            Method
-            <select id="webhook-method" class="webhook-select">
-              <option value="POST">POST</option>
-              <option value="GET">GET</option>
-              <option value="PUT">PUT</option>
-              <option value="PATCH">PATCH</option>
-            </select>
-          </label>
-          <button id="webhook-test" class="btn btn-secondary" type="button">Test</button>
-          <span id="webhook-status" class="hint" role="status" aria-live="polite"></span>
-        </div>
-
-        <label for="webhook-headers" class="field-label">Headers (JSON)</label>
-        <textarea
-          id="webhook-headers"
-          class="textarea textarea-code"
-          rows="3"
-          placeholder='{"Authorization": "Bearer tk_xxxx", "Title": "Aura Alert", "Tags": "warning"}'
-        ></textarea>
-
-        <label for="webhook-action" class="field-label">Action — what context to include in the body</label>
-        <textarea
-          id="webhook-action"
-          class="textarea"
-          rows="2"
-          placeholder="e.g. Include the alert reason, confidence level, and a timestamp."
-        ></textarea>
-
-        <label for="webhook-schema" class="field-label">Body JSON Schema (optional)</label>
-        <textarea
-          id="webhook-schema"
-          class="textarea textarea-code"
-          rows="4"
-          placeholder='{"type": "object", "required": ["message"], "properties": {"message": {"type": "string"}}}'
-        ></textarea>
-        <p id="vibe-status" class="hint" role="status" aria-live="polite"></p>
-
-        <dl class="telemetry" aria-label="Telemetry">
-          <div><dt>Latency</dt><dd><span id="latency">—</span> ms</dd></div>
-          <div><dt>Confidence</dt><dd><span id="confidence">—</span>%</dd></div>
-          <div><dt>Engine</dt><dd><span id="mode">—</span></dd></div>
-          <div><dt>Tokens</dt><dd><span id="tokens">0</span></dd></div>
-          <div><dt>Est. cost</dt><dd>$<span id="cost">0.0000</span></dd></div>
-        </dl>
-
-        <h2 class="log-title">Alerts</h2>
-        <ul id="alert-log" class="alert-log" aria-live="polite"></ul>
-      </section>
-    </main>
-
-    <script src="/app.js" type="module"></script>
+    <div id="root"></div>
+    <script type="module" src="app.bundle.js"></script>
   </body>
 </html>

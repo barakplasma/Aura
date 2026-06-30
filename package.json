@@ -1,25 +1,29 @@
 {
   "name": "aura",
-  "version": "1.0.0",
-  "description": "Aura — an automated visual monitoring platform. Give a phone camera a mission and an action prompt; Gemma vision (on Cerebras) decides each scan cycle whether to alert and announces the response. Runs on Cloudflare Workers (Hono).",
+  "version": "2.0.0",
+  "description": "Aura \u2014 turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model. Bring your own API key + model. Pure static PWA, no backend required.",
   "type": "module",
-  "main": "src/index.js",
   "scripts": {
-    "predev": "node scripts/gen-icons.js",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "predeploy": "node scripts/gen-icons.js",
-    "deploy": "wrangler deploy",
+    "build": "node scripts/build-react.js",
+    "predev": "node scripts/gen-icons.js && npm run build",
+    "dev": "npx serve public",
+    "predeploy": "npm run build",
+    "deploy": "npx gh-pages -d public -m \"deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ)\"",
     "test": "node --test"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "hono": "^4.6.3"
+    "@ax-llm/ax": "^22.0.7",
+    "@uidotdev/usehooks": "^2.4.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
-    "wrangler": "^4.20.0"
+    "esbuild": "^0.28.1",
+    "gh-pages": "^6.1.1",
+    "serve": "^14.2.3"
   },
   "license": "GPL-3.0"
 }
