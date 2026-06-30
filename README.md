@@ -1,5 +1,8 @@
 # Aura
 
+**Team Members:** @barakplasma
+
+
 **GitHub Repository:** [github.com/barakplasma/Aura](https://github.com/barakplasma/Aura)
 
 Aura turns any phone or laptop with a webcam into an automated visual monitor. You provide your own API key and model from any OpenAI-compatible provider (Cerebras, OpenAI, Groq, Together, etc.). Set a mission prompt (what to watch for) and an action prompt (what to say via text-to-speech or send via webhook), and Aura runs a two-stage detect→act loop in your browser.
