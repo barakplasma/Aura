@@ -7,6 +7,7 @@ export default function SettingsScreen({
   apiKey, setApiKey,
   model, setModel,
   scanEvery, setScanEvery,
+  requestTimeout, setRequestTimeout,
   rate, setRate,
   webhookUrl, setWebhookUrl,
   webhookMethod, setWebhookMethod,
@@ -112,6 +113,11 @@ export default function SettingsScreen({
           <label className="field-label">SCAN EVERY <span className="amber">{scanEvery}s</span></label>
           <input id="scan-range" type="range" className="dc-slider" min="2" max="30" step="1" value={scanEvery} onChange={e => setScanEvery(Number(e.target.value))} />
           <div className="field-hint">Slower = fewer inferences = lower cost</div>
+        </div>
+        <div className="form-group">
+          <label className="field-label">REQUEST TIMEOUT <span className="amber">{requestTimeout}s</span></label>
+          <input id="timeout-range" type="range" className="dc-slider" min="5" max="120" step="5" value={requestTimeout} onChange={e => setRequestTimeout(Number(e.target.value))} />
+          <div className="field-hint">Raise for slow local models (e.g. Ollama); hosted providers rarely need more than the default</div>
         </div>
         <div className="form-group">
           <label className="field-label">COST RATE ($/1M tokens)</label>

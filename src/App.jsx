@@ -26,6 +26,7 @@ export default function App() {
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanEvery, setScanEvery] = useLocalStorage('aura.scanEvery', 5);
+  const [requestTimeout, setRequestTimeout] = useLocalStorage('aura.requestTimeout', 30);
   const [rate, setRate] = useLocalStorage('aura.rate', '0.10');
   const [speech, setSpeech] = useLocalStorage('aura.speech', true);
   const [haptics, setHaptics] = useLocalStorage('aura.haptics', true);
@@ -39,7 +40,7 @@ export default function App() {
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
-    threshold: 0, scanEvery, rate,
+    threshold: 0, scanEvery, requestTimeout, rate,
     speech, haptics, demo: demoMode,
     webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
   };
@@ -132,6 +133,7 @@ export default function App() {
               apiKey={apiKey} setApiKey={setApiKey}
               model={model} setModel={setModel}
               scanEvery={scanEvery} setScanEvery={setScanEvery}
+              requestTimeout={requestTimeout} setRequestTimeout={setRequestTimeout}
               rate={rate} setRate={setRate}
               webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
               webhookMethod={webhookMethod} setWebhookMethod={setWebhookMethod}

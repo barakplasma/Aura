@@ -73,3 +73,60 @@ test('scanClient refuses to run without an API key (no silent mock)', async () =
     /API key/
   );
 });
+
+test('scanClient surfaces a clear message when a slow provider times out', async () => {
+  const realFetch = globalThis.fetch;
+  // Simulate a provider that never responds before the request signal aborts,
+  // rejecting the way fetch does on abort (name === 'AbortError').
+  globalThis.fetch = (_url, opts) =>
+    new Promise((_resolve, reject) => {
+      opts.signal.addEventListener('abort', () => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    });
+  try {
+    await assert.rejects(
+      scanClient({
+        baseUrl: 'http://localhost:11434/v1',
+        model: 'gemma',
+        apiKey: 'k',
+        mission: 'watch the door',
+        image: 'x'.repeat(64),
+        requestTimeout: 0.05,
+      }),
+      /timed out after 0\.05s/
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('scanClient propagates an external abort (Stop) without the timeout message', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (_url, opts) =>
+    new Promise((_resolve, reject) => {
+      opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
+    });
+  const ac = new AbortController();
+  try {
+    const pending = scanClient({
+      baseUrl: 'http://localhost:11434/v1',
+      model: 'gemma',
+      apiKey: 'k',
+      mission: 'watch the door',
+      image: 'x'.repeat(64),
+      requestTimeout: 30,
+      signal: ac.signal,
+    });
+    ac.abort();
+    await assert.rejects(pending, (err) => {
+      assert.equal(err.name, 'AbortError');
+      assert.doesNotMatch(err.message, /timed out/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
