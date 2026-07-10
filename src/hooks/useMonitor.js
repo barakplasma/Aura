@@ -16,7 +16,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const [telemetry, setTelemetry] = useState({ latency: '—', confidence: '—', mode: '—', tokens: '0', cost: '0.0000' });
   const [alerts, setAlerts] = useState([]);
 
-  const internalRef = useRef({ stream: null, inFlight: false, loopTimer: null, totalTokens: 0, running: false });
+  const internalRef = useRef({ stream: null, inFlight: false, loopTimer: null, totalTokens: 0, running: false, abort: null });
   const ctxRef = useRef(null);
 
   const captureFrame = useCallback(() => {
@@ -81,6 +81,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     if (!internalRef.current.inFlight && ready) {
       internalRef.current.inFlight = true;
       const started = performance.now();
+      // One controller per scan so Stop can cancel the request in flight.
+      const abort = new AbortController();
+      internalRef.current.abort = abort;
       try {
         // Read training data once per scan (not per render — parsing
         // localStorage on the render path was wasted work).
@@ -101,6 +104,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
               examples: examples.length > 0 ? examples : undefined,
               optimizedInstruction: optimizedInstruction || undefined,
               requestTimeout: s.requestTimeout,
+              signal: abort.signal,
             });
         if (!internalRef.current.running) return;
         const rtt = Math.round(performance.now() - started);
@@ -134,9 +138,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
           setStatus(`Watching — ${result.reason}`);
         }
       } catch (err) {
-        if (internalRef.current.running) setStatus(`Error: ${err.message}`);
+        // A Stop mid-scan aborts the request; that's expected, not an error.
+        if (internalRef.current.running && err.name !== 'AbortError') setStatus(`Error: ${err.message}`);
       } finally {
         internalRef.current.inFlight = false;
+        internalRef.current.abort = null;
       }
     }
     if (internalRef.current.running) {
@@ -182,6 +188,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const stop = useCallback(() => {
     internalRef.current.running = false;
     clearTimeout(internalRef.current.loopTimer);
+    if (internalRef.current.abort) internalRef.current.abort.abort();
     if (internalRef.current.stream) {
       internalRef.current.stream.getTracks().forEach(t => t.stop());
       internalRef.current.stream = null;

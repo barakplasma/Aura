@@ -102,3 +102,31 @@ test('scanClient surfaces a clear message when a slow provider times out', async
     globalThis.fetch = realFetch;
   }
 });
+
+test('scanClient propagates an external abort (Stop) without the timeout message', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (_url, opts) =>
+    new Promise((_resolve, reject) => {
+      opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
+    });
+  const ac = new AbortController();
+  try {
+    const pending = scanClient({
+      baseUrl: 'http://localhost:11434/v1',
+      model: 'gemma',
+      apiKey: 'k',
+      mission: 'watch the door',
+      image: 'x'.repeat(64),
+      requestTimeout: 30,
+      signal: ac.signal,
+    });
+    ac.abort();
+    await assert.rejects(pending, (err) => {
+      assert.equal(err.name, 'AbortError');
+      assert.doesNotMatch(err.message, /timed out/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
