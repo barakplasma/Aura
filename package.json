@@ -1,7 +1,7 @@
 {
   "name": "aura",
   "version": "2.0.0",
-  "description": "Aura \u2014 turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model. Bring your own API key + model. Pure static PWA, no backend required.",
+  "description": "Aura — turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model. Bring your own API key + model. Pure static PWA, no backend required.",
   "type": "module",
   "scripts": {
     "build": "node scripts/build-react.js",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@ax-llm/ax": "^22.0.7",
+    "@sentry/browser": "^10.65.0",
     "@uidotdev/usehooks": "^2.4.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
