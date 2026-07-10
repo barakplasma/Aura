@@ -29,6 +29,7 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `src/screens/` | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen (lazy-loaded), SettingsScreen |
 | `src/hooks/useMonitor.js` | Camera capture + scan loop + alert delivery + telemetry |
 | `src/aura.css` | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints) |
+| `src/monitoring.js` | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx` |
 | `public/index.html` | Tiny shell: mounts `#root`, loads `assets/app.js` |
 | `public/feedback.js` | Web Speech + Web Vibration |
 | `lib/aura.js` | Browser engine: `scanClient()` calls provider directly, `fetchModels()` lists models |

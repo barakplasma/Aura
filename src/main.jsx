@@ -1,3 +1,5 @@
+// Initialize error tracking before anything else so early failures are caught.
+import './monitoring.js';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
