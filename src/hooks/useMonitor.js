@@ -100,6 +100,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
               webhookSchema: parseWebhookSchema() || undefined,
               examples: examples.length > 0 ? examples : undefined,
               optimizedInstruction: optimizedInstruction || undefined,
+              requestTimeout: s.requestTimeout,
             });
         if (!internalRef.current.running) return;
         const rtt = Math.round(performance.now() - started);
