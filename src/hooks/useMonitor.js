@@ -1,12 +1,28 @@
 import { useState, useRef, useCallback } from 'react';
 import { scanClient } from '../../lib/aura.js';
 import { demoScan } from '../../lib/demo.js';
-import { getExamples, getOptimizedArtifact } from '../../lib/training-store.js';
+import { getExamples, getOptimizedArtifact, addExample } from '../../lib/training-store.js';
+import { recordLatency, percentile, tunedTimeoutMs } from '../../lib/stats.js';
 import { alert as alertOut, resetFeedback } from '../../public/feedback.js';
 
 const CAPTURE_W = 640;
 const CAPTURE_H = 480;
 const JPEG_QUALITY = 0.4;
+
+// Self-tuning timeout never dips below this, so ordinary latency variance
+// doesn't kill a scan mid-flight. The ceiling is the operator's REQUEST TIMEOUT.
+const TIMEOUT_FLOOR_MS = 4000;
+const TIMEOUT_MIN_SAMPLES = 5;
+// How many recent non-alert frames to keep for false-negative review, and how
+// far apart to sample them (they're near-duplicates otherwise).
+const MISSED_MAX = 4;
+const MISSED_SPACING_MS = 15000;
+// Progress ticker cadence — drives the countdown + fill smoothly without
+// re-rendering the tree on every animation frame.
+const PROGRESS_INTERVAL_MS = 250;
+
+const IDLE_PROGRESS = { phase: 'idle', pct: null, etaMs: null, estimateMs: null };
+const EMPTY_STATS = { p50: null, p90: null, timeoutMs: null, count: 0 };
 
 export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const [running, setRunning] = useState(false);
@@ -15,8 +31,17 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const [flashActive, setFlashActive] = useState(false);
   const [telemetry, setTelemetry] = useState({ latency: '—', confidence: '—', mode: '—', tokens: '0', cost: '0.0000' });
   const [alerts, setAlerts] = useState([]);
+  const [missed, setMissed] = useState([]);
+  const [progress, setProgress] = useState(IDLE_PROGRESS);
+  const [stats, setStats] = useState(EMPTY_STATS);
+  const [markedIds, setMarkedIds] = useState({});
 
-  const internalRef = useRef({ stream: null, inFlight: false, loopTimer: null, totalTokens: 0, running: false, abort: null });
+  const internalRef = useRef({
+    stream: null, inFlight: false, loopTimer: null, totalTokens: 0, running: false, abort: null,
+    // latency samples + current scan-cycle phase, read by the progress ticker.
+    samples: [], phase: 'idle', phaseStart: 0, phaseEstimate: 0,
+    progressTimer: null, lastMissedAt: 0,
+  });
   const ctxRef = useRef(null);
 
   const captureFrame = useCallback(() => {
@@ -30,13 +55,42 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
   }, [canvasRef, videoRef]);
 
-  const logAlert = useCallback((message, confidence) => {
+  const logAlert = useCallback((message, confidence, image, reason) => {
     const time = new Date().toLocaleTimeString();
     const conf = Number.isFinite(confidence) ? Math.round(confidence) : null;
     setAlerts(prev => {
-      const next = [{ id: Date.now(), time, conf, message }, ...prev];
+      const next = [{ id: Date.now(), time, conf, message, reason: reason || '', image: image || null }, ...prev];
       return next.slice(0, 20);
     });
+  }, []);
+
+  // Keep a handful of recent non-alert frames, spaced out in time, so the
+  // operator can spot a miss and mark it a false negative. Frames are only
+  // available in live mode (demo has no camera capture).
+  const recordMissed = useCallback((image, reason, confidence) => {
+    if (!image) return;
+    const now = performance.now();
+    if (now - internalRef.current.lastMissedAt < MISSED_SPACING_MS) return;
+    internalRef.current.lastMissedAt = now;
+    const time = new Date().toLocaleTimeString();
+    const conf = Number.isFinite(confidence) ? Math.round(confidence) : null;
+    setMissed(prev => [{ id: Date.now(), time, reason: reason || '', conf, image }, ...prev].slice(0, MISSED_MAX));
+  }, []);
+
+  // Turn a reviewed frame into a training example. A false positive teaches the
+  // detector NOT to fire on that scene; a false negative teaches it to fire.
+  const markExample = useCallback((entry, kind) => {
+    const triggered = kind === 'false-negative';
+    addExample({
+      type: 'detection',
+      sceneDescription: entry.reason || entry.message || '',
+      triggered,
+      confidence: triggered ? 90 : 0,
+      reason: triggered
+        ? (entry.reason || 'Operator marked this as a missed alert.')
+        : 'Operator marked this alert as a false positive.',
+    });
+    setMarkedIds(prev => ({ ...prev, [entry.id]: kind }));
   }, []);
 
   const flashAlert = useCallback(() => {
@@ -71,6 +125,33 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     }).catch(() => {});
   }, [settingsRef]);
 
+  // Recompute the progress bar from the current phase on a fixed cadence.
+  // "processing" fills toward the median-latency estimate (capped at 95% since
+  // it's only an estimate); "waiting" counts down to the next capture.
+  const pumpProgress = useCallback(() => {
+    const st = internalRef.current;
+    if (!st.running) return;
+    const elapsed = performance.now() - st.phaseStart;
+    const est = st.phaseEstimate;
+    setProgress(prev => {
+      let next;
+      if (st.phase === 'processing') {
+        const pct = est > 0 ? Math.min(95, Math.round((elapsed / est) * 100)) : null;
+        const etaMs = est > 0 ? Math.max(0, Math.round((est - elapsed) / 100) * 100) : null;
+        next = { phase: 'processing', pct, etaMs, estimateMs: est || null };
+      } else if (st.phase === 'waiting') {
+        const pct = est > 0 ? Math.min(100, Math.round((elapsed / est) * 100)) : 100;
+        const etaMs = Math.max(0, Math.round((est - elapsed) / 100) * 100);
+        next = { phase: 'waiting', pct, etaMs, estimateMs: est || null };
+      } else {
+        next = IDLE_PROGRESS;
+      }
+      // Skip the re-render when nothing the UI shows has changed.
+      if (prev.phase === next.phase && prev.pct === next.pct && prev.etaMs === next.etaMs) return prev;
+      return next;
+    });
+  }, []);
+
   const tick = useCallback(async () => {
     if (!internalRef.current.running) return;
     const video = videoRef.current;
@@ -81,9 +162,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     if (!internalRef.current.inFlight && ready) {
       internalRef.current.inFlight = true;
       const started = performance.now();
+      // Enter the processing phase — the bar fills toward the median estimate.
+      const st = internalRef.current;
+      st.phase = 'processing';
+      st.phaseStart = started;
+      st.phaseEstimate = percentile(st.samples, 50) || 0;
       // One controller per scan so Stop can cancel the request in flight.
       const abort = new AbortController();
       internalRef.current.abort = abort;
+      // Capture once, up front, so the exact frame can be attached to an alert
+      // (or kept as a false-negative candidate) without re-drawing the canvas.
+      const frame = s.demo ? null : captureFrame();
+      // Self-tuning timeout: p90 × 1.5, bounded by the operator's setting.
+      const ceilMs = (parseInt(s.requestTimeout, 10) || 30) * 1000;
+      const effTimeoutMs = tunedTimeoutMs(st.samples, { floorMs: TIMEOUT_FLOOR_MS, ceilMs, minSamples: TIMEOUT_MIN_SAMPLES });
       try {
         // Read training data once per scan (not per render — parsing
         // localStorage on the render path was wasted work).
@@ -97,17 +189,24 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
               apiKey: s.apiKey || undefined,
               mission: s.mission,
               action: s.action,
-              image: captureFrame(),
+              image: frame,
               threshold: s.threshold ?? 0,
               webhookAction: s.webhookAction || undefined,
               webhookSchema: parseWebhookSchema() || undefined,
               examples: examples.length > 0 ? examples : undefined,
               optimizedInstruction: optimizedInstruction || undefined,
-              requestTimeout: s.requestTimeout,
+              requestTimeout: effTimeoutMs / 1000,
               signal: abort.signal,
             });
         if (!internalRef.current.running) return;
         const rtt = Math.round(performance.now() - started);
+        // Record the per-frame latency and refresh the percentile stats.
+        const measured = Number.isFinite(result.latencyMs) ? result.latencyMs : rtt;
+        st.samples = recordLatency(st.samples, measured);
+        const p50 = percentile(st.samples, 50);
+        const p90 = percentile(st.samples, 90);
+        const timeoutMs = tunedTimeoutMs(st.samples, { floorMs: TIMEOUT_FLOOR_MS, ceilMs, minSamples: TIMEOUT_MIN_SAMPLES });
+        setStats({ p50, p90, timeoutMs, count: st.samples.length });
         setDotClass(prev => {
           const next = result.mode === 'live' ? 'live' : result.mode === 'demo' ? 'demo' : 'off';
           return prev === next ? prev : next;
@@ -129,13 +228,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
         if (result.triggered) {
           setStatus(`⚠ ALERT — ${result.message || result.reason}`);
           flashAlert();
-          logAlert(result.message || result.reason, result.confidence);
+          logAlert(result.message || result.reason, result.confidence, frame, result.reason);
           alertOut(result.message || result.reason, { speech: s.speech, haptics: s.haptics });
           // Demo results never carry a webhookMessage, but guard anyway —
           // simulated alerts must never reach a real webhook.
           if (!s.demo && result.webhookMessage) sendWebhook(result.webhookMessage);
         } else {
           setStatus(`Watching — ${result.reason}`);
+          recordMissed(frame, result.reason, result.confidence);
         }
       } catch (err) {
         // A Stop mid-scan aborts the request; that's expected, not an error.
@@ -146,9 +246,15 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       }
     }
     if (internalRef.current.running) {
-      internalRef.current.loopTimer = setTimeout(tick, (parseInt(settingsRef.current.scanEvery, 10) || 5) * 1000);
+      const gapMs = (parseInt(settingsRef.current.scanEvery, 10) || 5) * 1000;
+      // Enter the waiting phase — the bar counts down to the next capture.
+      const st = internalRef.current;
+      st.phase = 'waiting';
+      st.phaseStart = performance.now();
+      st.phaseEstimate = gapMs;
+      internalRef.current.loopTimer = setTimeout(tick, gapMs);
     }
-  }, [captureFrame, flashAlert, logAlert, parseWebhookSchema, sendWebhook, settingsRef, videoRef]);
+  }, [captureFrame, flashAlert, logAlert, parseWebhookSchema, recordMissed, sendWebhook, settingsRef, videoRef]);
 
   const start = useCallback(async () => {
     const s = settingsRef.current;
@@ -179,15 +285,26 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     }
     internalRef.current.running = true;
     internalRef.current.totalTokens = 0;
+    // Fresh latency history each session — a new provider/model has its own
+    // performance profile.
+    internalRef.current.samples = [];
+    internalRef.current.phase = 'idle';
+    internalRef.current.lastMissedAt = 0;
+    setStats(EMPTY_STATS);
+    setProgress(IDLE_PROGRESS);
     setRunning(true);
     setStatus('Monitoring…');
     resetFeedback();
+    clearInterval(internalRef.current.progressTimer);
+    internalRef.current.progressTimer = setInterval(pumpProgress, PROGRESS_INTERVAL_MS);
     tick();
-  }, [settingsRef, tick, videoRef]);
+  }, [pumpProgress, settingsRef, tick, videoRef]);
 
   const stop = useCallback(() => {
     internalRef.current.running = false;
+    internalRef.current.phase = 'idle';
     clearTimeout(internalRef.current.loopTimer);
+    clearInterval(internalRef.current.progressTimer);
     if (internalRef.current.abort) internalRef.current.abort.abort();
     if (internalRef.current.stream) {
       internalRef.current.stream.getTracks().forEach(t => t.stop());
@@ -198,7 +315,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     setRunning(false);
     setStatus('Stopped.');
     setDotClass('off');
+    setProgress(IDLE_PROGRESS);
   }, [videoRef]);
 
-  return { running, status, dotClass, flashActive, telemetry, alerts, start, stop, sendWebhook };
+  return { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, start, stop, sendWebhook };
 }

@@ -1,3 +1,5 @@
+import ProgressBar, { progressLabel } from './ProgressBar.jsx';
+
 // The camera stage — always mounted at app level so the <video> keeps its
 // stream (and scanning keeps running) when the user navigates between tabs.
 // The stageMode class picks the presentation:
@@ -5,8 +7,9 @@
 //   stage-collapsed Monitor tab, preview hidden (thin status strip)
 //   stage-pip       other tab while armed — floating mini thumbnail
 //   stage-parked    other tab, idle — fully hidden (no capture running)
-export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActive, dotClass, status, collapsed, onToggleCollapse, onTap }) {
+export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActive, dotClass, status, progress, collapsed, onToggleCollapse, onTap }) {
   const pip = stageMode === 'stage-pip';
+  const showProgress = progress && progress.phase !== 'idle';
   return (
     <div
       className={`monitor-stage ${stageMode}`}
@@ -19,11 +22,16 @@ export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActi
       <div className={`flash-overlay ${flashActive ? 'on' : ''}`} />
       <div className="scan-line" />
       <div className="monitor-status-bar">
-        <span className={`status-dot ${dotClass}`} />
-        <span className="monitor-status-text" role="status" aria-live="polite">{status}</span>
-        <button className="preview-toggle" onClick={onToggleCollapse} aria-pressed={collapsed}>
-          {collapsed ? '▣ SHOW CAM' : '▢ HIDE CAM'}
-        </button>
+        <div className="status-row">
+          <span className={`status-dot ${dotClass}`} />
+          <span className="monitor-status-text" role="status" aria-live="polite">{status}</span>
+          <button className="preview-toggle" onClick={onToggleCollapse} aria-pressed={collapsed}>
+            {collapsed ? '▣ SHOW CAM' : '▢ HIDE CAM'}
+          </button>
+        </div>
+        {showProgress && (
+          <ProgressBar phase={progress.phase} pct={progress.pct} label={progressLabel(progress)} />
+        )}
       </div>
     </div>
   );

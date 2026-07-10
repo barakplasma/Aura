@@ -1,6 +1,15 @@
+import ProgressBar, { progressLabel } from '../components/ProgressBar.jsx';
+
+// ms → compact human string ("850ms" / "1.4s"), or "—" when unknown.
+function fmtMs(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
 // Controls panel for the monitor tab. The camera preview itself lives in
 // MonitorStage (mounted at app level) so it survives tab switches.
-export default function MonitorScreen({ running, telemetry, onToggle, hasApiKey, demoMode, onStartDemo, onOpenSettings }) {
+export default function MonitorScreen({ running, telemetry, progress, stats, onToggle, hasApiKey, demoMode, onStartDemo, onOpenSettings }) {
+  const showProgress = running && progress && progress.phase !== 'idle';
   return (
     <div className="screen-monitor">
       <div className="monitor-panel">
@@ -22,6 +31,34 @@ export default function MonitorScreen({ running, telemetry, onToggle, hasApiKey,
           <span className="panel-v">{telemetry.tokens}</span>
         </div>
       </div>
+
+      {showProgress && (
+        <div className="monitor-panel">
+          <div className="panel-label">SCAN CYCLE</div>
+          <ProgressBar phase={progress.phase} pct={progress.pct} label={progressLabel(progress)} />
+        </div>
+      )}
+
+      <div className="monitor-panel">
+        <div className="panel-label">FRAME TIMING</div>
+        <div className="panel-row">
+          <span className="panel-k">MEDIAN</span>
+          <span className="panel-v">{fmtMs(stats.p50)}</span>
+        </div>
+        <div className="panel-row">
+          <span className="panel-k">P90</span>
+          <span className="panel-v">{fmtMs(stats.p90)}</span>
+        </div>
+        <div className="panel-row">
+          <span className="panel-k" title="Auto-tuned to p90 × 1.5">TIMEOUT</span>
+          <span className="panel-v amber">{fmtMs(stats.timeoutMs)}</span>
+        </div>
+        <div className="panel-row">
+          <span className="panel-k">SAMPLES</span>
+          <span className="panel-v">{stats.count}</span>
+        </div>
+      </div>
+
       {!hasApiKey && !demoMode && !running && (
         <div className="setup-callout">
           <div className="panel-label">NO API KEY CONFIGURED</div>

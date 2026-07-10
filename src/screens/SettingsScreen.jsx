@@ -117,7 +117,7 @@ export default function SettingsScreen({
         <div className="form-group">
           <label className="field-label">REQUEST TIMEOUT <span className="amber">{requestTimeout}s</span></label>
           <input id="timeout-range" type="range" className="dc-slider" min="5" max="120" step="5" value={requestTimeout} onChange={e => setRequestTimeout(Number(e.target.value))} />
-          <div className="field-hint">Raise for slow local models (e.g. Ollama); hosted providers rarely need more than the default</div>
+          <div className="field-hint">Upper bound only — once a few frames are timed, Aura auto-tunes the live timeout to p90 × 1.5 (shown on the Monitor tab). Raise this ceiling for slow local models (e.g. Ollama).</div>
         </div>
         <div className="form-group">
           <label className="field-label">COST RATE ($/1M tokens)</label>
