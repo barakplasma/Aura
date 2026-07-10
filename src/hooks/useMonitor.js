@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { scanClient } from '../../lib/aura.js';
 import { demoScan } from '../../lib/demo.js';
 import { getExamples, getOptimizedArtifact, addExample } from '../../lib/training-store.js';
@@ -317,6 +317,10 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     setDotClass('off');
     setProgress(IDLE_PROGRESS);
   }, [videoRef]);
+
+  // On unmount, tear everything down — otherwise the camera track, the scan
+  // timeout, and the progress interval keep running in the background.
+  useEffect(() => stop, [stop]);
 
   return { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, start, stop, sendWebhook };
 }
