@@ -1,5 +1,5 @@
 export default function TopBar({ dotClass, telemetry, model }) {
-  const statusLabel = dotClass === 'live' ? 'ACTIVE' : dotClass === 'mock' ? 'MOCK' : 'STANDBY';
+  const statusLabel = dotClass === 'live' ? 'ACTIVE' : dotClass === 'demo' ? 'DEMO' : 'STANDBY';
   return (
     <header className="top-bar">
       <div className="top-bar-left">

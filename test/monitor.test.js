@@ -9,8 +9,8 @@ import {
   parseAction,
   parseWebhookAction,
   normalizeUsage,
-  scan,
 } from '../lib/monitor.js';
+import { scanClient } from '../lib/aura.js';
 
 test('buildDetectionPrompt embeds the mission and schema', () => {
   const p = buildDetectionPrompt('alert if a person is near the pool');
@@ -67,33 +67,9 @@ test('normalizeUsage derives total tokens', () => {
   });
 });
 
-test('scan mock fires on schedule and respects the threshold', async () => {
-  const args = { mission: 'watch the door', action: 'say hi', webhookAction: 'notify', image: 'x'.repeat(64), env: {} };
-
-  // The mock fires every 3rd cycle. Within a few cycles we should see both a
-  // non-triggered and a triggered result, each with usage.
-  let sawTriggered = false;
-  let sawClear = false;
-  for (let i = 0; i < 6; i++) {
-    const r = await scan({ ...args, threshold: 60 });
-    assert.equal(r.mode, 'mock');
-    assert.ok(r.usage.total_tokens > 0);
-    assert.equal(typeof r.reason, 'string');
-    if (r.triggered) {
-      sawTriggered = true;
-      assert.ok(r.message.length > 0); // action ran → announcement present
-      assert.ok(r.webhookMessage.length > 0); // webhookAction ran → webhook message present
-    } else {
-      sawClear = true;
-      assert.equal(r.webhookMessage, '');
-    }
-  }
-  assert.ok(sawTriggered && sawClear);
-});
-
-test('scan mock never fires when threshold exceeds mock confidence', async () => {
-  for (let i = 0; i < 6; i++) {
-    const r = await scan({ mission: 'm', action: 'a', image: 'x'.repeat(64), threshold: 95, env: {} });
-    assert.equal(r.triggered, false); // mock confidence caps at 82
-  }
+test('scanClient refuses to run without an API key (no silent mock)', async () => {
+  await assert.rejects(
+    scanClient({ mission: 'watch the door', image: 'x'.repeat(64) }),
+    /API key/
+  );
 });

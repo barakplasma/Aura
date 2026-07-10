@@ -85,8 +85,37 @@ input, select, textarea { font: inherit; }
   border: 1px solid;
 }
 .status-badge.live  { color: var(--c-green); border-color: var(--c-green); }
-.status-badge.mock  { color: var(--c-amber); border-color: var(--c-amber-bdr); }
+.status-badge.demo  { color: var(--c-amber); border-color: var(--c-amber-bdr); }
 .status-badge.off   { color: var(--c-dim);   border-color: var(--c-bdr); }
+
+/* ── Demo banner ───────────────────────────────────────────────────────── */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--c-amber-dim);
+  border-bottom: 1px solid var(--c-amber-bdr);
+  color: var(--c-amber);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  flex-shrink: 0;
+}
+.demo-exit-btn {
+  background: none;
+  border: 1px solid var(--c-amber-bdr);
+  border-radius: var(--radius);
+  color: var(--c-amber);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  padding: 4px 10px;
+  white-space: nowrap;
+  transition: background .15s;
+}
+.demo-exit-btn:hover { background: rgba(232,161,58,.22); }
 
 .telem-pair { display: flex; align-items: center; gap: 4px; }
 .telem-k    { font-size: 9px; color: var(--c-dim); letter-spacing: .1em; }
@@ -197,18 +226,48 @@ input, select, textarea { font: inherit; }
 .status-msg { font-size: 11px; color: var(--c-dim); margin-top: 4px; }
 
 /* ── Monitor Screen ────────────────────────────────────────────────────── */
-.screen-monitor {
-  padding: 0;
+/* Desktop/wide default: camera stage grows, controls in a fixed column. */
+.main-content.monitor-layout {
+  display: flex;
   flex-direction: row;
-  height: 100%;
   overflow: hidden;
 }
-.monitor-viewport {
+
+/* Camera stage — always mounted; the stage-* mode classes decide how it
+   presents (see MonitorStage.jsx). */
+.monitor-stage {
   position: relative;
-  flex: 1;
   background: #000;
   overflow: hidden;
 }
+.stage-full { flex: 1; }
+.stage-collapsed { flex: 0 0 40px; }
+/* Video stays rendered (never display:none — browsers throttle decoding of
+   invisible video) but shrinks to nothing when the preview is hidden. */
+.stage-collapsed .camera-feed {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  opacity: 0;
+}
+.stage-collapsed .scan-line { display: none; }
+/* Floating mini preview while armed on another tab; tap returns to Monitor. */
+.stage-pip {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: 128px;
+  aspect-ratio: 4 / 3;
+  z-index: 50;
+  border: 1px solid var(--c-amber-bdr);
+  border-radius: var(--radius);
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0,0,0,.6);
+}
+.stage-pip .monitor-status-bar { display: none; }
+/* Idle on another tab: nothing is capturing, safe to fully hide. */
+.stage-parked { display: none; }
+
 .camera-feed {
   width: 100%;
   height: 100%;
@@ -251,20 +310,43 @@ input, select, textarea { font: inherit; }
   flex-shrink: 0;
 }
 .status-dot.live { background: var(--c-green); animation: blink 1.4s ease-in-out infinite; }
-.status-dot.mock { background: var(--c-amber); animation: blink 2s ease-in-out infinite; }
+.status-dot.demo { background: var(--c-amber); animation: blink 2s ease-in-out infinite; }
 .status-dot.off  { background: var(--c-dim); }
-.monitor-status-text { font-size: 11px; color: var(--c-text); }
+.monitor-status-text { font-size: 11px; color: var(--c-text); flex: 1; min-width: 0; }
 
-.monitor-sidebar {
-  width: 200px;
+.preview-toggle {
+  background: none;
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+  color: var(--c-dim);
+  font-size: 9px;
+  letter-spacing: .1em;
+  padding: 3px 8px;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s;
+}
+.preview-toggle:hover { color: var(--c-text); border-color: var(--c-amber-bdr); }
+
+/* Controls panel (MonitorScreen) */
+.screen-monitor {
+  width: 240px;
   background: var(--c-bg-1);
   border-left: 1px solid var(--c-bdr);
   display: flex;
   flex-direction: column;
-  padding: 14px 12px;
+  padding: 14px 12px calc(14px + env(safe-area-inset-bottom));
   gap: 12px;
   flex-shrink: 0;
+  overflow-y: auto;
 }
+
+.setup-callout {
+  border: 1px solid var(--c-amber-bdr);
+  border-radius: var(--radius);
+  background: var(--c-amber-dim);
+  padding: 10px;
+}
+.setup-text { font-size: 11px; color: var(--c-text); margin: 8px 0 10px; }
 .monitor-panel { border: 1px solid var(--c-bdr); border-radius: var(--radius); padding: 10px; }
 .panel-label { font-size: 9px; font-weight: 700; letter-spacing: .15em; color: var(--c-dim); margin-bottom: 8px; }
 .panel-row   { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; }
@@ -383,9 +465,40 @@ input, select, textarea { font: inherit; }
 
 /* ── Responsive ────────────────────────────────────────────────────────── */
 @media (max-width: 600px) {
-  .nav-rail { width: 48px; }
+  .nav-rail { width: 48px; padding-left: env(safe-area-inset-left); }
   .nav-label { display: none; }
   .nav-num { font-size: 11px; opacity: 1; }
   .top-bar-right { display: none; }
-  .monitor-sidebar { width: 120px; }
+}
+
+/* Mobile portrait: stack — small camera thumbnail on top, controls get the
+   rest of the screen. */
+@media (max-width: 600px) and (orientation: portrait) {
+  .main-content.monitor-layout { flex-direction: column; }
+  .stage-full { flex: 0 0 clamp(96px, 26dvh, 200px); }
+  .stage-collapsed { flex: 0 0 40px; }
+  .screen-monitor {
+    width: auto;
+    flex: 1;
+    border-left: none;
+    border-top: 1px solid var(--c-bdr);
+    padding: 16px 14px calc(16px + env(safe-area-inset-bottom));
+  }
+  .arm-btn { padding: 18px 8px; font-size: 18px; }
+}
+
+/* Mobile landscape: keep the row but flip the proportions — minimized side
+   preview, controls take the majority of the width. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .nav-rail { width: 48px; padding-left: env(safe-area-inset-left); }
+  .nav-label { display: none; }
+  .nav-num { font-size: 11px; opacity: 1; }
+  .stage-full { flex: 0 0 clamp(120px, 30vw, 260px); }
+  .stage-collapsed { flex: 0 0 40px; }
+  .screen-monitor {
+    flex: 1;
+    width: auto;
+    padding-right: calc(12px + env(safe-area-inset-right));
+  }
+  .arm-btn { padding: 14px 8px; font-size: 16px; }
 }

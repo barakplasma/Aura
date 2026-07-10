@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { getExamples, addExample, removeExample, clearExamples, runDetectionOptimization, runActionOptimization } from '../../lib/aura.js';
+import { getExamples, addExample, removeExample, clearExamples } from '../../lib/training-store.js';
 
 export default function OptimizeScreen() {
   const [trainType, setTrainType] = useState('detection');
@@ -52,6 +52,9 @@ export default function OptimizeScreen() {
     setOptimizing(true);
     setTrainStatus(`Optimizing ${type}… this may take a minute.`);
     try {
+      // Dynamic import keeps the heavy @ax-llm/ax optimizer out of the bundle
+      // until an optimization actually runs.
+      const { runDetectionOptimization, runActionOptimization } = await import('../../lib/training.js');
       const fn = type === 'detection' ? runDetectionOptimization : runActionOptimization;
       const result = await fn({ apiKey: trainApikey.trim(), examples: exList });
       setTrainStatus(`${type} optimization done! Best score: ${result.bestScore?.toFixed(2) || '?'}`);

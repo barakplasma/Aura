@@ -18,23 +18,33 @@ camera frame → 640x480 JPEG → detection call (user's provider + model)
 
 ## Architecture
 
+React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → minified,
+code-split ESM bundles in `public/assets/` (with linked sourcemaps). `src/aura.css`
+is copied to `public/aura.css` by the build — edit the `src/` copy only.
+
 | Path | Role |
 |---|---|
-| `public/index.html` | MD3 Material Design UI with web components |
-| `public/app.js` | Camera capture + scan loop + alert delivery + telemetry |
-| `public/aura.bundle.js` | Bundled engine: `scanClient()`, `fetchModels()`, training |
-| `public/material.bundle.js` | Bundled MD3 web components |
-| `public/material-theme.css` | MD3 dark theme tokens + custom styles |
+| `src/App.jsx` | Screen routing, settings (localStorage), demo-mode state, camera stage mode |
+| `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches |
+| `src/screens/` | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen (lazy-loaded), SettingsScreen |
+| `src/hooks/useMonitor.js` | Camera capture + scan loop + alert delivery + telemetry |
+| `src/aura.css` | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints) |
+| `public/index.html` | Tiny shell: mounts `#root`, loads `assets/app.js` |
 | `public/feedback.js` | Web Speech + Web Vibration |
 | `lib/aura.js` | Browser engine: `scanClient()` calls provider directly, `fetchModels()` lists models |
 | `lib/monitor.js` | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + tests) |
-| `lib/training.js` | ax/GEPA example management and optimization |
-| `test/monitor.test.js` | Unit tests for pure functions in monitor.js |
+| `lib/demo.js` | Demo mode: deterministic simulated scans (never emits webhooks) |
+| `lib/training-store.js` | localStorage persistence for training examples/artifacts (no ax import) |
+| `lib/training.js` | ax/GEPA optimization — only ever loaded via dynamic `import()` |
+| `test/` | Unit tests for monitor.js helpers, demo.js, and scanClient validation |
+
+Keep `@ax-llm/ax` out of the main bundle: nothing statically imported by `App.jsx`
+may import `lib/training.js` (that's why the store is a separate module).
 
 ## Commands
 
 ```bash
-npm run build             # Build material bundle + aura bundle
+npm run build             # esbuild: minify + code-split src/ → public/assets/
 npm run dev               # npx serve public → http://localhost:3000
 npm test                  # node --test
 npm run deploy            # Build + gh-pages -d public
@@ -53,11 +63,13 @@ Users configure three fields in the UI, stored in localStorage:
 
 ## Conventions
 
-- ES modules, vanilla browser JS (no framework), 2-space indent.
+- ES modules, React 19 + JSX in `src/`, plain browser JS in `lib/`, 2-space indent.
 - Match the surrounding comment density and naming.
 - All AI logic must be browser-compatible (uses `fetch`, `AbortController`, no Node APIs).
-- After changing the engine, add/extend a test in `test/monitor.test.js`.
-- The mock path (no API key) cycles through normal/alert states deterministically.
+- After changing the engine, add/extend a test in `test/`.
+- No API key means `scanClient()` throws — there is no silent mock. Demo mode is
+  explicit opt-in (TRY DEMO on the Monitor screen), isolated in `lib/demo.js`,
+  clearly bannered while active, and never fires webhooks.
 - Don't commit secrets. The API key stays in the user's localStorage.
 - Don't add an offline service worker — the app needs the network for API calls.
 
