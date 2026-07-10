@@ -1,21 +1,31 @@
 import * as esbuild from 'esbuild';
-import { copyFile } from 'node:fs/promises';
+import { copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 const dir = import.meta.dirname;
 const root = path.join(dir, '..');
+const outdir = path.join(root, 'public', 'assets');
+
+// Purge stale hashed chunks from previous builds.
+await rm(outdir, { recursive: true, force: true });
 
 await Promise.all([
   esbuild.build({
     entryPoints: [path.join(root, 'src', 'main.jsx')],
-    outfile: path.join(root, 'public', 'app.bundle.js'),
+    outdir,
+    entryNames: 'app',
+    chunkNames: 'chunk-[name]-[hash]',
     bundle: true,
+    splitting: true,
     format: 'esm',
     platform: 'browser',
     target: 'es2020',
     jsx: 'automatic',
     jsxImportSource: 'react',
-    sourcemap: true,
+    minify: true,
+    // External maps keep the deployed app debuggable; browsers only fetch
+    // them when devtools is open, so users never pay for them.
+    sourcemap: 'linked',
   }),
   copyFile(path.join(root, 'src', 'aura.css'), path.join(root, 'public', 'aura.css')),
 ]);

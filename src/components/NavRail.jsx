@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 const SCREENS = [
   { id: 'mission', label: 'MISSION', num: '01' },
   { id: 'monitor', label: 'MONITOR', num: '02' },
@@ -6,7 +8,9 @@ const SCREENS = [
   { id: 'settings', label: 'SETTINGS', num: '05' },
 ];
 
-export default function NavRail({ screen, setScreen }) {
+// Memoized — per-scan telemetry updates re-render App, but the rail only
+// cares about navigation state.
+function NavRail({ screen, setScreen }) {
   return (
     <nav className="nav-rail">
       {SCREENS.map(s => (
@@ -22,3 +26,5 @@ export default function NavRail({ screen, setScreen }) {
     </nav>
   );
 }
+
+export default memo(NavRail);

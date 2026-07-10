@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { scanClient } from '../../lib/aura.js';
+import { demoScan } from '../../lib/demo.js';
+import { getExamples, getOptimizedArtifact } from '../../lib/training-store.js';
 import { alert as alertOut, resetFeedback } from '../../public/feedback.js';
 
 const CAPTURE_W = 640;
@@ -15,12 +17,16 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const [alerts, setAlerts] = useState([]);
 
   const internalRef = useRef({ stream: null, inFlight: false, loopTimer: null, totalTokens: 0, running: false });
+  const ctxRef = useRef(null);
 
   const captureFrame = useCallback(() => {
     const canvas = canvasRef.current;
-    const video = videoRef.current;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, 0, 0, CAPTURE_W, CAPTURE_H);
+    // Cache the 2D context; no willReadFrequently — we only draw and encode,
+    // never read pixels back, so the GPU-backed canvas is the fast path.
+    if (!ctxRef.current || ctxRef.current.canvas !== canvas) {
+      ctxRef.current = canvas.getContext('2d');
+    }
+    ctxRef.current.drawImage(videoRef.current, 0, 0, CAPTURE_W, CAPTURE_H);
     return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
   }, [canvasRef, videoRef]);
 
@@ -68,27 +74,39 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const tick = useCallback(async () => {
     if (!internalRef.current.running) return;
     const video = videoRef.current;
-    if (!internalRef.current.inFlight && video && video.readyState >= 2) {
+    const s = settingsRef.current;
+    // Demo mode simulates scans without a camera frame; live mode needs a
+    // decodable video frame before it can capture.
+    const ready = s.demo || (video && video.readyState >= 2);
+    if (!internalRef.current.inFlight && ready) {
       internalRef.current.inFlight = true;
       const started = performance.now();
-      const s = settingsRef.current;
       try {
-        const result = await scanClient({
-          baseUrl: s.baseUrl || undefined,
-          model: s.model || undefined,
-          apiKey: s.apiKey || undefined,
-          mission: s.mission,
-          action: s.action,
-          image: captureFrame(),
-          threshold: s.threshold ?? 0,
-          webhookAction: s.webhookAction || undefined,
-          webhookSchema: parseWebhookSchema() || undefined,
-          examples: (s.examples || []).length > 0 ? s.examples : undefined,
-          optimizedInstruction: s.optimizedInstruction || undefined,
-        });
+        // Read training data once per scan (not per render — parsing
+        // localStorage on the render path was wasted work).
+        const examples = getExamples();
+        const optimizedInstruction = getOptimizedArtifact()?.program?.instruction;
+        const result = s.demo
+          ? demoScan({ mission: s.mission, action: s.action, threshold: s.threshold ?? 0 })
+          : await scanClient({
+              baseUrl: s.baseUrl || undefined,
+              model: s.model || undefined,
+              apiKey: s.apiKey || undefined,
+              mission: s.mission,
+              action: s.action,
+              image: captureFrame(),
+              threshold: s.threshold ?? 0,
+              webhookAction: s.webhookAction || undefined,
+              webhookSchema: parseWebhookSchema() || undefined,
+              examples: examples.length > 0 ? examples : undefined,
+              optimizedInstruction: optimizedInstruction || undefined,
+            });
         if (!internalRef.current.running) return;
         const rtt = Math.round(performance.now() - started);
-        setDotClass(result.mode === 'live' ? 'live' : result.mode === 'mock' ? 'mock' : 'off');
+        setDotClass(prev => {
+          const next = result.mode === 'live' ? 'live' : result.mode === 'demo' ? 'demo' : 'off';
+          return prev === next ? prev : next;
+        });
         setTelemetry(prev => {
           const t = result.usage && Number.isFinite(result.usage.total_tokens) ? result.usage.total_tokens : 0;
           const totalTokens = internalRef.current.totalTokens + t;
@@ -108,7 +126,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
           flashAlert();
           logAlert(result.message || result.reason, result.confidence);
           alertOut(result.message || result.reason, { speech: s.speech, haptics: s.haptics });
-          if (result.webhookMessage) sendWebhook(result.webhookMessage);
+          // Demo results never carry a webhookMessage, but guard anyway —
+          // simulated alerts must never reach a real webhook.
+          if (!s.demo && result.webhookMessage) sendWebhook(result.webhookMessage);
         } else {
           setStatus(`Watching — ${result.reason}`);
         }
@@ -125,7 +145,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
 
   const start = useCallback(async () => {
     const s = settingsRef.current;
-    if (!s.mission.trim()) {
+    if (!s.demo && !s.apiKey) {
+      setStatus('No API key — add one in Settings, or use Demo Mode.');
+      return;
+    }
+    if (!s.demo && !s.mission.trim()) {
       setStatus('Describe the mission (what to watch for) first.');
       return;
     }
@@ -140,8 +164,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       video.srcObject = stream;
       await video.play();
     } catch (err) {
-      setStatus(`Camera unavailable: ${err.message}`);
-      return;
+      // Demo doesn't capture frames, so run without a preview.
+      if (!s.demo) {
+        setStatus(`Camera unavailable: ${err.message}`);
+        return;
+      }
     }
     internalRef.current.running = true;
     internalRef.current.totalTokens = 0;
