@@ -48,7 +48,7 @@ export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
-  const { running, status, dotClass, flashActive, telemetry, alerts, start, stop } = useMonitor({ settingsRef, videoRef, canvasRef });
+  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, start, stop } = useMonitor({ settingsRef, videoRef, canvasRef });
 
   function handleToggle() {
     if (running) stop();
@@ -93,7 +93,7 @@ export default function App() {
           <MonitorStage
             videoRef={videoRef} canvasRef={canvasRef}
             stageMode={stageMode} flashActive={flashActive}
-            dotClass={dotClass} status={status}
+            dotClass={dotClass} status={status} progress={progress}
             collapsed={previewCollapsed}
             onToggleCollapse={() => setPreviewCollapsed(c => !c)}
             onTap={() => setScreen('monitor')}
@@ -112,6 +112,8 @@ export default function App() {
             <MonitorScreen
               running={running}
               telemetry={telemetry}
+              progress={progress}
+              stats={stats}
               onToggle={handleToggle}
               hasApiKey={Boolean(apiKey)}
               demoMode={demoMode}
@@ -120,7 +122,7 @@ export default function App() {
             />
           )}
           {screen === 'history' && (
-            <HistoryScreen alerts={alerts} />
+            <HistoryScreen alerts={alerts} missed={missed} markedIds={markedIds} onMarkExample={markExample} />
           )}
           {screen === 'optimize' && (
             <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
