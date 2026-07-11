@@ -117,6 +117,37 @@ knobs:
   restarts the stream (stop tracks → re-acquire → reattach) without stopping
   the scan loop; extract an `acquireStream()` helper in `useMonitor.js`.
 
+## Ultra-budget mode: motion-gated scanning (researched, follow-up)
+
+Run cheap client-side change detection every 1–2 s and only fire the paid AI
+request when the scene actually changed. Research verdict: **no library
+needed** — a downscaled canvas diff beats every packaged option.
+
+- **Detector:** draw the video to a dedicated hidden 64×48 canvas
+  (`getContext('2d', { willReadFrequently: true })` — never the GPU-backed
+  capture canvas), grayscale, per-pixel diff against the last **AI-scanned**
+  frame with a noise floor (~24/255). Sub-millisecond per check on phones;
+  the downscale itself averages away sensor grain.
+- **False-trigger defenses:** subtract the mean-brightness delta before
+  thresholding (auto-exposure/white-balance swings are the #1 false-motion
+  source), and require the change to persist across two consecutive checks.
+- **Heartbeat:** differencing misses slow, gradual change (smoke haze, a pot
+  boiling over) — always send the AI a frame every N minutes (default 5,
+  user-settable) regardless of motion.
+- **Reference hygiene:** rebase the reference frame on every AI scan, camera
+  flip, and source switch — otherwise drift makes it fire always or never.
+- **Scheduler interplay:** the motion check ticks fast; `computeGapMs` still
+  floors the *AI* cadence, and skip-counts feed telemetry so scans/hr and
+  $/hr reflect actual AI calls.
+- **Shape:** pure `lib/motion.js` (`toGray`, `motionScore`, `isSceneChanged`)
+  + `test/motion.test.js` fixtures (noise must not trigger, global brightness
+  shift must not trigger, 10%-area block change must trigger). ~200–250 LOC
+  total.
+- **Library options rejected:** pixelmatch (maintained but replaces only
+  ~25 lines), ssim.js (dormant), tracking.js / diff-cam-engine (abandoned,
+  2016-era). OpenCV.js MOG2 (~10 MB WASM, lazy-loadable) is the escalation
+  path only if field noise defeats the simple diff.
+
 ## Screen-share source (low priority)
 
 `aura.videoSource`: `'camera' | 'screen'`. Screen mode uses
