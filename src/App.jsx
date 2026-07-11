@@ -26,8 +26,8 @@ export default function App() {
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
-  const [scanEvery, setScanEvery] = useLocalStorage('aura.scanEvery', 5);
-  const [requestTimeout, setRequestTimeout] = useLocalStorage('aura.requestTimeout', 30);
+  const [scanEveryValue, setScanEveryValue] = useLocalStorage('aura.scanEveryValue', 5);
+  const [scanEveryUnit, setScanEveryUnit] = useLocalStorage('aura.scanEveryUnit', 's');
   const [budgetPerHour, setBudgetPerHour] = useLocalStorage('aura.budgetPerHour', '0.10');
   const [networkMbPerHour, setNetworkMbPerHour] = useLocalStorage('aura.networkMbPerHour', '');
   const [rate, setRate] = useLocalStorage('aura.rate', '0.10');
@@ -42,11 +42,16 @@ export default function App() {
   const [webhookAction, setWebhookAction] = useLocalStorage('aura.webhookAction', '');
   const [webhookSchema, setWebhookSchema] = useLocalStorage('aura.webhookSchema', '');
 
+  // SCAN EVERY is entered as a number + unit (1s .. 12h+) and converted to
+  // seconds for the scheduler, which only deals in seconds.
+  const SCAN_EVERY_UNIT_SECONDS = { s: 1, m: 60, h: 3600 };
+  const scanEvery = (parseFloat(scanEveryValue) || 0) * (SCAN_EVERY_UNIT_SECONDS[scanEveryUnit] || 1);
+
   // Live settings ref — updated every render so tick() sees current values without stale closures
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
-    threshold: 0, scanMode, scanEvery, requestTimeout, budgetPerHour, networkMbPerHour, rate,
+    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate,
     cameraFacing, cameraDeviceId, videoSource,
     speech, haptics, demo: demoMode,
     webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
@@ -157,8 +162,8 @@ export default function App() {
               apiKey={apiKey} setApiKey={setApiKey}
               model={model} setModel={setModel}
               scanMode={scanMode} setScanMode={setScanMode}
-              scanEvery={scanEvery} setScanEvery={setScanEvery}
-              requestTimeout={requestTimeout} setRequestTimeout={setRequestTimeout}
+              scanEveryValue={scanEveryValue} setScanEveryValue={setScanEveryValue}
+              scanEveryUnit={scanEveryUnit} setScanEveryUnit={setScanEveryUnit}
               budgetPerHour={budgetPerHour} setBudgetPerHour={setBudgetPerHour}
               networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
               rate={rate} setRate={setRate}

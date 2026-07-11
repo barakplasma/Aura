@@ -24,6 +24,13 @@ test('interval mode passes scanEvery through as a millisecond gap', () => {
   assert.equal(computeGapMs('bogus', { scanEvery: 3 }, {}), 3000);
 });
 
+test('interval mode accepts the full 1s..12h+ range, including fractional seconds', () => {
+  assert.equal(computeGapMs('interval', { scanEvery: 1 }, {}), 1000);
+  assert.equal(computeGapMs('interval', { scanEvery: 0.5 }, {}), 500);
+  assert.equal(computeGapMs('interval', { scanEvery: 5 * 60 }, {}), 300000);
+  assert.equal(computeGapMs('interval', { scanEvery: 12 * 3600 }, {}), 43200000);
+});
+
 test('max mode returns the 250ms floor regardless of knobs/sample', () => {
   assert.equal(computeGapMs('max', { scanEvery: 30 }, { tokens: 5000, durationMs: 800 }), 250);
 });

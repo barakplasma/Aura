@@ -1,7 +1,9 @@
 import ProgressBar, { progressLabel } from '../components/ProgressBar.jsx';
 
-// ms → compact human string ("850ms" / "1.4s"), or "—" when unknown.
+// ms → compact human string ("850ms" / "1.4s"), "OFF" when there's no forced
+// timeout (MAX mode), or "—" when unknown (no samples yet).
 function fmtMs(ms) {
+  if (ms === Infinity) return 'OFF';
   if (!Number.isFinite(ms)) return '—';
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
@@ -58,7 +60,7 @@ export default function MonitorScreen({ running, telemetry, progress, stats, onT
           <span className="panel-v">{fmtMs(stats.p90)}</span>
         </div>
         <div className="panel-row">
-          <span className="panel-k" title="Auto-tuned to p90 × 1.5">TIMEOUT</span>
+          <span className="panel-k" title="Auto-tuned to mean + 1 stddev of this session's latencies. Off in MAX mode.">TIMEOUT</span>
           <span className="panel-v amber">{fmtMs(stats.timeoutMs)}</span>
         </div>
         <div className="panel-row">
