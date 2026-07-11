@@ -2,13 +2,25 @@ import { useState } from 'react';
 import { fetchModels } from '../../lib/aura.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 
+const SCAN_MODES = [
+  { id: 'interval', label: 'INTERVAL' },
+  { id: 'max', label: 'MAX' },
+  { id: 'budget', label: 'BUDGET' },
+];
+
 export default function SettingsScreen({
   baseUrl, setBaseUrl,
   apiKey, setApiKey,
   model, setModel,
+  scanMode, setScanMode,
   scanEvery, setScanEvery,
   requestTimeout, setRequestTimeout,
+  budgetPerHour, setBudgetPerHour,
+  networkMbPerHour, setNetworkMbPerHour,
   rate, setRate,
+  videoSource, setVideoSource,
+  cameraFacing, setCameraFacing,
+  cameraDeviceId, setCameraDeviceId,
   webhookUrl, setWebhookUrl,
   webhookMethod, setWebhookMethod,
   webhookHeaders, setWebhookHeaders,
@@ -21,6 +33,8 @@ export default function SettingsScreen({
   const [fetchingModels, setFetchingModels] = useState(false);
   const [vibeStatus, setVibeStatus] = useState('');
   const [webhookStatus, setWebhookStatus] = useState('');
+  const [cameras, setCameras] = useState([]);
+  const [cameraStatus, setCameraStatus] = useState('');
 
   async function handleFetchModels() {
     if (!baseUrl) { onStatusMsg('Enter a Base URL first.'); return; }
@@ -64,6 +78,22 @@ export default function SettingsScreen({
     fetch(url, { method: webhookMethod || 'POST', headers, body, signal: AbortSignal.timeout(5000), mode: 'no-cors' }).catch(() => {});
     setWebhookStatus('Test sent.');
     setTimeout(() => setWebhookStatus(s => s === 'Test sent.' ? '' : s), 3000);
+  }
+
+  // Device labels are blank until camera permission is granted — request a
+  // throwaway stream first, stop it, then enumerate the video inputs.
+  async function handleDetectCameras() {
+    setCameraStatus('Requesting camera permission…');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach(t => t.stop());
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      setCameras(cams);
+      setCameraStatus(`Found ${cams.length} camera${cams.length === 1 ? '' : 's'}.`);
+    } catch (err) {
+      setCameraStatus(`Camera detection failed: ${err.message}`);
+    }
   }
 
   return (
@@ -110,19 +140,122 @@ export default function SettingsScreen({
       <div className="settings-section">
         <div className="section-label">SCAN TIMING</div>
         <div className="form-group">
-          <label className="field-label">SCAN EVERY <span className="amber">{scanEvery}s</span></label>
-          <input id="scan-range" type="range" className="dc-slider" min="2" max="30" step="1" value={scanEvery} onChange={e => setScanEvery(Number(e.target.value))} />
-          <div className="field-hint">Slower = fewer inferences = lower cost</div>
+          <label className="field-label">MODE</label>
+          <div className="mode-segments" role="radiogroup" aria-label="Scan timing mode">
+            {SCAN_MODES.map(m => (
+              <button
+                key={m.id}
+                className={`mode-segment ${scanMode === m.id ? 'active' : ''}`}
+                role="radio"
+                aria-checked={scanMode === m.id}
+                onClick={() => setScanMode(m.id)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="field-hint">
+            {scanMode === 'max' && 'Freshest image, max frame rate — for free local models (Ollama, LM Studio).'}
+            {scanMode === 'budget' && 'Cadence derived from your spend / data caps — for cloud within a budget.'}
+            {scanMode !== 'max' && scanMode !== 'budget' && 'Fixed gap between scans — predictable cadence.'}
+          </div>
         </div>
+        {scanMode === 'interval' && (
+          <div className="form-group">
+            <label className="field-label">SCAN EVERY <span className="amber">{scanEvery}s</span></label>
+            <input id="scan-range" type="range" className="dc-slider" min="2" max="30" step="1" value={scanEvery} onChange={e => setScanEvery(Number(e.target.value))} />
+            <div className="field-hint">Slower = fewer inferences = lower cost</div>
+          </div>
+        )}
+        {scanMode === 'max' && (
+          <div className="form-group">
+            <label className="field-label">MAX SCAN AGE <span className="amber">{requestTimeout}s</span></label>
+            <input id="timeout-range" type="range" className="dc-slider" min="5" max="120" step="5" value={requestTimeout} onChange={e => setRequestTimeout(Number(e.target.value))} />
+            <div className="field-hint">A scan slower than this is aborted and replaced by a scan of a fresh frame — a stale answer about a stale image is worthless.</div>
+          </div>
+        )}
+        {scanMode === 'budget' && (
+          <>
+            <div className="form-group">
+              <label className="field-label">MAX $/HOUR</label>
+              <input id="budget-per-hour" type="number" className="dc-input narrow" min="0" step="0.01" value={budgetPerHour} onChange={e => setBudgetPerHour(e.target.value)} />
+              <div className="field-hint">Spend cap — needs the COST RATE below and a provider that reports token usage.</div>
+            </div>
+            <div className="form-group">
+              <label className="field-label">MAX MB/HOUR</label>
+              <input id="network-mb-per-hour" type="number" className="dc-input narrow" min="0" step="1" value={networkMbPerHour} onChange={e => setNetworkMbPerHour(e.target.value)} placeholder="off" />
+              <div className="field-hint">Upload cap for mobile data — blank = off. The most restrictive cap wins.</div>
+            </div>
+          </>
+        )}
+        {scanMode !== 'max' && (
+          <div className="form-group">
+            <label className="field-label">REQUEST TIMEOUT <span className="amber">{requestTimeout}s</span></label>
+            <input id="timeout-range" type="range" className="dc-slider" min="5" max="120" step="5" value={requestTimeout} onChange={e => setRequestTimeout(Number(e.target.value))} />
+            <div className="field-hint">Upper bound only — once a few frames are timed, Aura auto-tunes the live timeout to p90 × 1.5 (shown on the Monitor tab). Raise this ceiling for slow local models (e.g. Ollama).</div>
+          </div>
+        )}
+        {(scanMode === 'interval' || scanMode === 'budget') && (
+          <div className="form-group">
+            <label className="field-label">COST RATE ($/1M tokens)</label>
+            <input id="rate" type="number" className="dc-input narrow" min="0" step="0.01" value={rate} onChange={e => setRate(e.target.value)} />
+          </div>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <div className="section-label">CAMERA</div>
         <div className="form-group">
-          <label className="field-label">REQUEST TIMEOUT <span className="amber">{requestTimeout}s</span></label>
-          <input id="timeout-range" type="range" className="dc-slider" min="5" max="120" step="5" value={requestTimeout} onChange={e => setRequestTimeout(Number(e.target.value))} />
-          <div className="field-hint">Upper bound only — once a few frames are timed, Aura auto-tunes the live timeout to p90 × 1.5 (shown on the Monitor tab). Raise this ceiling for slow local models (e.g. Ollama).</div>
+          <label className="field-label">SOURCE</label>
+          <select id="video-source" className="dc-select" value={videoSource} onChange={e => setVideoSource(e.target.value)}>
+            <option value="camera">CAMERA</option>
+            <option value="screen">SCREEN SHARE</option>
+          </select>
+          {videoSource === 'screen' && (
+            <div className="field-hint">Screen share needs a fresh browser prompt each time you arm, and is effectively desktop-only. Monitoring stops when you stop sharing.</div>
+          )}
         </div>
-        <div className="form-group">
-          <label className="field-label">COST RATE ($/1M tokens)</label>
-          <input id="rate" type="number" className="dc-input narrow" min="0" step="0.01" value={rate} onChange={e => setRate(e.target.value)} />
-        </div>
+        {videoSource !== 'screen' && (
+          <>
+            <div className="form-group">
+              <label className="field-label">FACING</label>
+              <div className="mode-segments" role="radiogroup" aria-label="Camera facing">
+                <button
+                  className={`mode-segment ${cameraFacing === 'environment' ? 'active' : ''}`}
+                  role="radio" aria-checked={cameraFacing === 'environment'}
+                  onClick={() => { setCameraFacing('environment'); setCameraDeviceId(''); }}
+                >
+                  BACK
+                </button>
+                <button
+                  className={`mode-segment ${cameraFacing === 'user' ? 'active' : ''}`}
+                  role="radio" aria-checked={cameraFacing === 'user'}
+                  onClick={() => { setCameraFacing('user'); setCameraDeviceId(''); }}
+                >
+                  FRONT
+                </button>
+              </div>
+              <div className="field-hint">Used when DEVICE is AUTO. Picking a specific device below overrides it.</div>
+            </div>
+            <div className="form-group inline-row">
+              <div style={{ flex: 1 }}>
+                <label className="field-label">DEVICE</label>
+                <select id="camera-device" className="dc-select" value={cameraDeviceId} onChange={e => setCameraDeviceId(e.target.value)}>
+                  <option value="">AUTO (by facing)</option>
+                  {/* Keep a previously saved device selectable before detection runs. */}
+                  {cameraDeviceId && !cameras.some(c => c.deviceId === cameraDeviceId) && (
+                    <option value={cameraDeviceId}>SAVED DEVICE</option>
+                  )}
+                  {cameras.map((c, i) => (
+                    <option key={c.deviceId} value={c.deviceId}>{c.label || `Camera ${i + 1}`}</option>
+                  ))}
+                </select>
+              </div>
+              <button id="detect-cameras-btn" className="dc-btn" onClick={handleDetectCameras}>DETECT CAMERAS</button>
+            </div>
+            {cameraStatus && <p id="camera-status" className="status-msg" role="status">{cameraStatus}</p>}
+          </>
+        )}
       </div>
 
       <div className="settings-section">

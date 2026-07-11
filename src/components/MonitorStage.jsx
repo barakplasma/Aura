@@ -7,9 +7,11 @@ import ProgressBar, { progressLabel } from './ProgressBar.jsx';
 //   stage-collapsed Monitor tab, preview hidden (thin status strip)
 //   stage-pip       other tab while armed — floating mini thumbnail
 //   stage-parked    other tab, idle — fully hidden (no capture running)
-export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActive, dotClass, status, progress, collapsed, onToggleCollapse, onTap }) {
+export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActive, dotClass, status, progress, collapsed, onToggleCollapse, onTap, videoSource, running, onFlipCamera }) {
   const pip = stageMode === 'stage-pip';
   const showProgress = progress && progress.phase !== 'idle';
+  // Flip only applies to a live camera stream — hidden for screen share.
+  const showFlip = running && !pip && !collapsed && videoSource !== 'screen';
   return (
     <div
       className={`monitor-stage ${stageMode}`}
@@ -21,6 +23,11 @@ export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActi
       <canvas ref={canvasRef} id="canvas" width="640" height="480" hidden />
       <div className={`flash-overlay ${flashActive ? 'on' : ''}`} />
       <div className="scan-line" />
+      {showFlip && (
+        <button className="flip-camera-btn" onClick={onFlipCamera} aria-label="Flip camera" title="Flip camera">
+          ⇄ FLIP
+        </button>
+      )}
       <div className="monitor-status-bar">
         <div className="status-row">
           <span className={`status-dot ${dotClass}`} />
