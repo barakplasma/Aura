@@ -44,7 +44,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     stream: null, inFlight: false, loopTimer: null, totalTokens: 0, running: false, abort: null,
     // latency samples + current scan-cycle phase, read by the progress ticker.
     samples: [], phase: 'idle', phaseStart: 0, phaseEstimate: 0,
-    progressTimer: null, lastMissedAt: 0,
+    progressTimer: null, lastMissedAt: 0, switching: false,
     // Per-session EMAs (α = 0.3) that feed the budget scheduler: tokens/scan,
     // request payload bytes/scan, and scan duration (ms). null until sampled.
     emaTokens: null, emaBytes: null, emaDuration: null, budgetWarned: false,
@@ -365,6 +365,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       video.srcObject = stream;
       await video.play();
     } catch (err) {
+      // An acquired-but-unusable stream (play() threw, etc.) must not stay
+      // live — nothing else will stop it.
+      if (internalRef.current.stream) {
+        internalRef.current.stream.getTracks().forEach(t => t.stop());
+        internalRef.current.stream = null;
+      }
+      if (videoRef.current) videoRef.current.srcObject = null;
       // Demo doesn't capture frames, so run without a preview.
       if (!s.demo) {
         setStatus(`${s.videoSource === 'screen' ? 'Screen share' : 'Camera'} unavailable: ${err.message}`);
@@ -394,10 +401,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   }, [acquireStream, pumpProgress, settingsRef, tick, videoRef]);
 
   // Restart the stream in place (camera flip / source switch) without stopping
-  // the scan loop: acquire the new stream, reattach, then stop the old tracks.
+  // the scan loop: stop the old tracks, acquire the new stream, reattach.
   const switchCamera = useCallback(async () => {
     const st = internalRef.current;
-    if (!st.running || settingsRef.current.demo) return;
+    if (!st.running || settingsRef.current.demo || st.switching) return;
+    // Guard against overlapping calls (rapid taps) racing two acquireStream()
+    // promises and leaking whichever stream loses.
+    st.switching = true;
     // Release the old camera first — phones can't open the opposite lens
     // while the current one is still held.
     if (st.stream) {
@@ -410,9 +420,15 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       const video = videoRef.current;
       if (video) { video.srcObject = stream; await video.play(); }
     } catch (err) {
+      // No stream means the scan loop has nothing to capture — shut down
+      // cleanly instead of spinning. stop() first so this status wins over
+      // its own "Stopped."
+      stop();
       setStatus(`Camera switch failed: ${err.message}`);
+    } finally {
+      st.switching = false;
     }
-  }, [acquireStream, settingsRef, videoRef]);
+  }, [acquireStream, settingsRef, stop, videoRef]);
 
   // On unmount, tear everything down — otherwise the camera track, the scan
   // timeout, and the progress interval keep running in the background.
