@@ -25,9 +25,15 @@ export default function App() {
   const [model, setModel] = useLocalStorage('aura.model', '');
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
+  const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
   const [scanEvery, setScanEvery] = useLocalStorage('aura.scanEvery', 5);
   const [requestTimeout, setRequestTimeout] = useLocalStorage('aura.requestTimeout', 30);
+  const [budgetPerHour, setBudgetPerHour] = useLocalStorage('aura.budgetPerHour', '0.10');
+  const [networkMbPerHour, setNetworkMbPerHour] = useLocalStorage('aura.networkMbPerHour', '');
   const [rate, setRate] = useLocalStorage('aura.rate', '0.10');
+  const [cameraFacing, setCameraFacing] = useLocalStorage('aura.cameraFacing', 'environment');
+  const [cameraDeviceId, setCameraDeviceId] = useLocalStorage('aura.cameraDeviceId', '');
+  const [videoSource, setVideoSource] = useLocalStorage('aura.videoSource', 'camera');
   const [speech, setSpeech] = useLocalStorage('aura.speech', true);
   const [haptics, setHaptics] = useLocalStorage('aura.haptics', true);
   const [webhookUrl, setWebhookUrl] = useLocalStorage('aura.webhookUrl', '');
@@ -40,7 +46,8 @@ export default function App() {
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
-    threshold: 0, scanEvery, requestTimeout, rate,
+    threshold: 0, scanMode, scanEvery, requestTimeout, budgetPerHour, networkMbPerHour, rate,
+    cameraFacing, cameraDeviceId, videoSource,
     speech, haptics, demo: demoMode,
     webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
   };
@@ -48,7 +55,7 @@ export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
-  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, start, stop } = useMonitor({ settingsRef, videoRef, canvasRef });
+  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, start, stop, switchCamera } = useMonitor({ settingsRef, videoRef, canvasRef });
 
   function handleToggle() {
     if (running) stop();
@@ -71,6 +78,18 @@ export default function App() {
   function handleStatusMsg(msg) {
     // Used by SettingsScreen to surface transient messages
     console.info('[aura]', msg);
+  }
+
+  function handleFlipCamera() {
+    const next = cameraFacing === 'environment' ? 'user' : 'environment';
+    setCameraFacing(next);
+    // An explicit device pick would override facingMode — clear it on flip.
+    setCameraDeviceId('');
+    // switchCamera() reads the settings ref before the re-render lands, so
+    // update the ref directly too (same pattern as handleStartDemo).
+    settingsRef.current.cameraFacing = next;
+    settingsRef.current.cameraDeviceId = '';
+    switchCamera();
   }
 
   // How the always-mounted camera stage presents itself (see MonitorStage).
@@ -97,6 +116,9 @@ export default function App() {
             collapsed={previewCollapsed}
             onToggleCollapse={() => setPreviewCollapsed(c => !c)}
             onTap={() => setScreen('monitor')}
+            videoSource={videoSource}
+            running={running}
+            onFlipCamera={handleFlipCamera}
           />
           {screen === 'mission' && (
             <MissionScreen
