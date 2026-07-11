@@ -156,9 +156,15 @@ export default function App() {
               baseUrl={baseUrl} setBaseUrl={setBaseUrl}
               apiKey={apiKey} setApiKey={setApiKey}
               model={model} setModel={setModel}
+              scanMode={scanMode} setScanMode={setScanMode}
               scanEvery={scanEvery} setScanEvery={setScanEvery}
               requestTimeout={requestTimeout} setRequestTimeout={setRequestTimeout}
+              budgetPerHour={budgetPerHour} setBudgetPerHour={setBudgetPerHour}
+              networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
               rate={rate} setRate={setRate}
+              videoSource={videoSource} setVideoSource={setVideoSource}
+              cameraFacing={cameraFacing} setCameraFacing={setCameraFacing}
+              cameraDeviceId={cameraDeviceId} setCameraDeviceId={setCameraDeviceId}
               webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
               webhookMethod={webhookMethod} setWebhookMethod={setWebhookMethod}
               webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}

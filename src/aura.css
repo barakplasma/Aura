@@ -192,6 +192,33 @@ input, select, textarea { font: inherit; }
   height: 4px;
 }
 
+/* Segmented selector — scan-timing mode + camera facing. */
+.mode-segments {
+  display: flex;
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+  overflow: hidden;
+  width: fit-content;
+}
+.mode-segment {
+  background: var(--c-bg-2);
+  border: none;
+  border-right: 1px solid var(--c-bdr);
+  color: var(--c-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.mode-segment:last-child { border-right: none; }
+.mode-segment:hover:not(.active) { color: var(--c-text); }
+.mode-segment.active {
+  background: var(--c-amber-dim);
+  color: var(--c-amber);
+}
+
 /* Checkboxes */
 .dc-checkbox { accent-color: var(--c-amber); width: 14px; height: 14px; cursor: pointer; }
 .toggle-row  { display: flex; gap: 24px; flex-wrap: wrap; }
@@ -331,6 +358,25 @@ input, select, textarea { font: inherit; }
   transition: color .15s, border-color .15s;
 }
 .preview-toggle:hover { color: var(--c-text); border-color: var(--c-amber-bdr); }
+
+/* Flip-camera overlay — top-right of the stage, camera source only. */
+.flip-camera-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 7;
+  background: rgba(7,9,11,.7);
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+  color: var(--c-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  padding: 5px 10px;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s;
+}
+.flip-camera-btn:hover { color: var(--c-amber); border-color: var(--c-amber-bdr); }
 
 /* ── Scan progress / countdown bar ─────────────────────────────────────── */
 .scan-progress { display: flex; flex-direction: column; gap: 3px; }

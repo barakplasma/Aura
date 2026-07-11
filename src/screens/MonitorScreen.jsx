@@ -30,6 +30,14 @@ export default function MonitorScreen({ running, telemetry, progress, stats, onT
           <span className="panel-k">TOKENS</span>
           <span className="panel-v">{telemetry.tokens}</span>
         </div>
+        <div className="panel-row">
+          <span className="panel-k" title="Effective throughput from the cycle-period EMA">SCANS/HR</span>
+          <span className="panel-v">{telemetry.scansPerHr}</span>
+        </div>
+        <div className="panel-row">
+          <span className="panel-k" title="Projected spend at the current cadence">EST $/HR</span>
+          <span className="panel-v amber">${telemetry.costPerHr}</span>
+        </div>
       </div>
 
       {showProgress && (

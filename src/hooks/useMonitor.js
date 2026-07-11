@@ -398,13 +398,17 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const switchCamera = useCallback(async () => {
     const st = internalRef.current;
     if (!st.running || settingsRef.current.demo) return;
+    // Release the old camera first — phones can't open the opposite lens
+    // while the current one is still held.
+    if (st.stream) {
+      st.stream.getTracks().forEach(t => t.stop());
+      st.stream = null;
+    }
     try {
-      const old = st.stream;
       const stream = await acquireStream();
       st.stream = stream;
       const video = videoRef.current;
       if (video) { video.srcObject = stream; await video.play(); }
-      if (old) old.getTracks().forEach(t => t.stop());
     } catch (err) {
       setStatus(`Camera switch failed: ${err.message}`);
     }
