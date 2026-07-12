@@ -11,7 +11,9 @@ const CAPTURE_H = 480;
 const JPEG_QUALITY = 0.4;
 
 // Self-tuning timeout never dips below this, so ordinary latency variance
-// doesn't kill a scan mid-flight. The ceiling is the operator's REQUEST TIMEOUT.
+// doesn't kill a scan mid-flight. There is no operator-set ceiling — beyond
+// the floor, the bound is derived entirely from this session's own latency
+// history (mean + 3 stddev, once enough samples have landed).
 const TIMEOUT_FLOOR_MS = 4000;
 const TIMEOUT_MIN_SAMPLES = 5;
 // How many recent non-alert frames to keep for false-negative review, and how
@@ -195,9 +197,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       // Capture once, up front, so the exact frame can be attached to an alert
       // (or kept as a false-negative candidate) without re-drawing the canvas.
       const frame = s.demo ? null : captureFrame();
-      // Self-tuning timeout: p90 × 1.5, bounded by the operator's setting.
-      const ceilMs = (parseInt(s.requestTimeout, 10) || 30) * 1000;
-      const effTimeoutMs = tunedTimeoutMs(st.samples, { floorMs: TIMEOUT_FLOOR_MS, ceilMs, minSamples: TIMEOUT_MIN_SAMPLES });
+      // MAX mode never forces a timeout — a scan runs to completion (or is
+      // cancelled by Stop) and the next one starts right after, for the
+      // highest achievable frame rate. Other modes self-tune the timeout from
+      // this session's own latency history (mean + 3 stddev) — no operator
+      // ceiling involved.
+      const isMaxMode = s.scanMode === 'max';
+      const effTimeoutMs = isMaxMode ? null : tunedTimeoutMs(st.samples, { floorMs: TIMEOUT_FLOOR_MS, minSamples: TIMEOUT_MIN_SAMPLES });
       try {
         // Read training data once per scan (not per render — parsing
         // localStorage on the render path was wasted work).
@@ -217,7 +223,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
               webhookSchema: parseWebhookSchema() || undefined,
               examples: examples.length > 0 ? examples : undefined,
               optimizedInstruction: optimizedInstruction || undefined,
-              requestTimeout: effTimeoutMs / 1000,
+              requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
               signal: abort.signal,
             });
         if (!internalRef.current.running) return;
@@ -227,7 +233,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
         st.samples = recordLatency(st.samples, measured);
         const p50 = percentile(st.samples, 50);
         const p90 = percentile(st.samples, 90);
-        const timeoutMs = tunedTimeoutMs(st.samples, { floorMs: TIMEOUT_FLOOR_MS, ceilMs, minSamples: TIMEOUT_MIN_SAMPLES });
+        const timeoutMs = isMaxMode ? Infinity : tunedTimeoutMs(st.samples, { floorMs: TIMEOUT_FLOOR_MS, minSamples: TIMEOUT_MIN_SAMPLES });
         setStats({ p50, p90, timeoutMs, count: st.samples.length });
         // Feed the budget scheduler's EMAs: tokens/scan (provider usage), the
         // request payload size (base64 JPEG is ~¾ its char length, + prompt

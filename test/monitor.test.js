@@ -130,3 +130,31 @@ test('scanClient propagates an external abort (Stop) without the timeout message
     globalThis.fetch = realFetch;
   }
 });
+
+test('scanClient applies no forced timeout when requestTimeout is null (MAX mode)', async () => {
+  const realFetch = globalThis.fetch;
+  const realSetTimeout = globalThis.setTimeout;
+  let timeoutScheduled = false;
+  // Fail loudly if a forced-timeout timer is scheduled at all — MAX mode must
+  // rely solely on the caller's own abort signal (Stop), never a TTL.
+  globalThis.setTimeout = (...args) => { timeoutScheduled = true; return realSetTimeout(...args); };
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: '{"triggered":false,"confidence":0,"reason":"clear"}' } }], usage: {} }),
+  });
+  try {
+    const result = await scanClient({
+      baseUrl: 'http://localhost:11434/v1',
+      model: 'gemma',
+      apiKey: 'k',
+      mission: 'watch the door',
+      image: 'x'.repeat(64),
+      requestTimeout: null,
+    });
+    assert.equal(result.triggered, false);
+    assert.equal(timeoutScheduled, false);
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realSetTimeout;
+  }
+});

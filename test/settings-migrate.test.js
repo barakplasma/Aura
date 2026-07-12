@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { migrateLegacySettings } from '../lib/settings-migrate.js';
+import { migrateLegacySettings, migrateScanEveryKey } from '../lib/settings-migrate.js';
 
 // Minimal Storage-like stub over a plain object.
 function makeStorage(initial = {}) {
@@ -63,4 +63,32 @@ test('handles a missing/invalid storage argument', () => {
   assert.equal(migrateLegacySettings(null), 0);
   assert.equal(migrateLegacySettings(undefined), 0);
   assert.equal(migrateLegacySettings({}), 0);
+});
+
+test('migrateScanEveryKey seeds the new keys from the legacy aura.scanEvery value', () => {
+  const s = makeStorage({ 'aura.scanEvery': '30' });
+  const migrated = migrateScanEveryKey(s);
+  assert.equal(migrated, true);
+  assert.equal(s.getItem('aura.scanEveryValue'), '30');
+  assert.equal(s.getItem('aura.scanEveryUnit'), '"s"');
+});
+
+test('migrateScanEveryKey is a no-op once the new key already exists', () => {
+  const s = makeStorage({ 'aura.scanEvery': '30', 'aura.scanEveryValue': '12' });
+  const migrated = migrateScanEveryKey(s);
+  assert.equal(migrated, false);
+  assert.equal(s.getItem('aura.scanEveryValue'), '12'); // untouched
+  assert.equal(s.getItem('aura.scanEveryUnit'), null); // never set
+});
+
+test('migrateScanEveryKey handles a raw (unwrapped) legacy value and missing/invalid input', () => {
+  // Raw string (pre-JSON-wrap migration) still parses via Number() fallback.
+  const raw = makeStorage({ 'aura.scanEvery': '7' });
+  assert.equal(migrateScanEveryKey(raw), true);
+  assert.equal(raw.getItem('aura.scanEveryValue'), '7');
+
+  assert.equal(migrateScanEveryKey(makeStorage({})), false); // nothing to migrate
+  assert.equal(migrateScanEveryKey(makeStorage({ 'aura.scanEvery': '0' })), false); // non-positive
+  assert.equal(migrateScanEveryKey(makeStorage({ 'aura.scanEvery': 'garbage' })), false); // unparseable
+  assert.equal(migrateScanEveryKey(null), false);
 });

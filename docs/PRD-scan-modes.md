@@ -46,8 +46,8 @@ New setting `aura.scanMode`:
 
 | Mode | Gap after scan completes | Knobs | Best for |
 |---|---|---|---|
-| `interval` (default — today's behavior) | fixed `scanEvery` seconds | SCAN EVERY 2–30 s | predictable cadence, cheap cloud |
-| `max` | ~0 (250 ms floor so the UI/browser can breathe) | MAX SCAN AGE (TTL) | local AI — freshest image, max frame rate |
+| `interval` (default — today's behavior) | fixed `scanEvery` seconds | SCAN EVERY, number + unit (s/m/h), 1s to many hours | predictable cadence, cheap cloud |
+| `max` | ~0 (250 ms floor so the UI/browser can breathe) | none — no forced timeout | local AI — freshest image, max frame rate |
 | `budget` | derived from spend/data caps (below) | $/hour cap, optional MB/hour cap | cloud within a cost or mobile-data budget |
 
 ### Budget math
@@ -69,14 +69,22 @@ gapMs         = max(gapFromCost, gapFromNet)           # most restrictive cap wi
   cost-capped — surface a status warning and behave like `interval`.
   The network cap still works (payload size is measured client-side).
 
-### TTL — MAX SCAN AGE
+### Request timeout — fully automatic, no operator setting
 
-The existing self-tuned timeout (p90 × 1.5, clamped) already aborts and
-discards slow scans; the operator-facing **MAX SCAN AGE** slider is that
-clamp's hard ceiling (today's REQUEST TIMEOUT, relabeled for `max` mode).
-On timeout the next cycle starts per the mode's gap — immediately in `max`
-mode — and always captures a **fresh frame**; the timed-out response is never
-delivered.
+The per-request timeout is derived entirely from this session's own latency
+history: **mean + 3 standard deviations** of observed successful response
+times, floored at a small safety minimum so ordinary variance never kills a
+scan mid-flight. Before the first sample lands there's no distribution to
+derive from, so that one request gets a generous fixed default. There is no
+operator-facing ceiling — no REQUEST TIMEOUT / MAX SCAN AGE slider.
+
+**`max` mode is the one exception: no forced timeout at all.** A scan runs to
+completion (or is cancelled by Stop) and the next one starts immediately
+after — the whole point of `max` is the highest frame rate the model can
+sustain, so an artificial TTL would only throw away in-flight work. Every
+other mode still applies the auto-tuned bound above. On a timeout the next
+cycle starts per the mode's gap and always captures a **fresh frame**; the
+timed-out response is never delivered.
 
 ### Engine shape
 
@@ -98,8 +106,8 @@ bar keeps working — its "waiting" estimate is the computed gap.
 SCAN TIMING section becomes a 3-way mode selector; each mode shows only its
 knobs:
 
-- `interval` → SCAN EVERY slider (unchanged)
-- `max` → MAX SCAN AGE slider
+- `interval` → SCAN EVERY number input + unit select (seconds/minutes/hours)
+- `max` → no knobs — just a hint explaining there's no forced timeout
 - `budget` → MAX $/HOUR input, MAX MB/HOUR input (blank = off), plus the
   existing COST RATE input it depends on
 
@@ -174,8 +182,8 @@ needed** — a downscaled canvas diff beats every packaged option.
 | Key | Default | New? |
 |---|---|---|
 | `scanMode` | `'interval'` | ✔ |
-| `scanEvery` | `5` | existing |
-| `requestTimeout` | `30` | existing (doubles as MAX SCAN AGE) |
+| `scanEveryValue` | `5` | ✔ (replaces `scanEvery`) |
+| `scanEveryUnit` | `'s'` | ✔ |
 | `budgetPerHour` | `'0.10'` | ✔ |
 | `networkMbPerHour` | `''` (off) | ✔ |
 | `cameraFacing` | `'environment'` | ✔ |

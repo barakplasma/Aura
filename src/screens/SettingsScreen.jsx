@@ -8,13 +8,19 @@ const SCAN_MODES = [
   { id: 'budget', label: 'BUDGET' },
 ];
 
+const SCAN_EVERY_UNITS = [
+  { id: 's', label: 'SEC', seconds: 1 },
+  { id: 'm', label: 'MIN', seconds: 60 },
+  { id: 'h', label: 'HR', seconds: 3600 },
+];
+
 export default function SettingsScreen({
   baseUrl, setBaseUrl,
   apiKey, setApiKey,
   model, setModel,
   scanMode, setScanMode,
-  scanEvery, setScanEvery,
-  requestTimeout, setRequestTimeout,
+  scanEveryValue, setScanEveryValue,
+  scanEveryUnit, setScanEveryUnit,
   budgetPerHour, setBudgetPerHour,
   networkMbPerHour, setNetworkMbPerHour,
   rate, setRate,
@@ -162,16 +168,32 @@ export default function SettingsScreen({
         </div>
         {scanMode === 'interval' && (
           <div className="form-group">
-            <label className="field-label">SCAN EVERY <span className="amber">{scanEvery}s</span></label>
-            <input id="scan-range" type="range" className="dc-slider" min="2" max="30" step="1" value={scanEvery} onChange={e => setScanEvery(Number(e.target.value))} />
-            <div className="field-hint">Slower = fewer inferences = lower cost</div>
+            <label className="field-label">SCAN EVERY</label>
+            <div className="inline-row">
+              <input
+                id="scan-every-value"
+                type="number"
+                className="dc-input narrow"
+                min="1"
+                step="any"
+                value={scanEveryValue}
+                onChange={e => setScanEveryValue(e.target.value)}
+              />
+              <select
+                id="scan-every-unit"
+                className="dc-select"
+                value={scanEveryUnit}
+                onChange={e => setScanEveryUnit(e.target.value)}
+              >
+                {SCAN_EVERY_UNITS.map(u => <option key={u.id} value={u.id}>{u.label}</option>)}
+              </select>
+            </div>
+            <div className="field-hint">Slower = fewer inferences = lower cost. Anywhere from 1 second to many hours.</div>
           </div>
         )}
         {scanMode === 'max' && (
           <div className="form-group">
-            <label className="field-label">MAX SCAN AGE <span className="amber">{requestTimeout}s</span></label>
-            <input id="timeout-range" type="range" className="dc-slider" min="5" max="120" step="5" value={requestTimeout} onChange={e => setRequestTimeout(Number(e.target.value))} />
-            <div className="field-hint">A scan slower than this is aborted and replaced by a scan of a fresh frame — a stale answer about a stale image is worthless.</div>
+            <div className="field-hint">No forced timeout — each scan runs to completion and the next one starts immediately after, for the highest frame rate the model can sustain.</div>
           </div>
         )}
         {scanMode === 'budget' && (
@@ -190,9 +212,7 @@ export default function SettingsScreen({
         )}
         {scanMode !== 'max' && (
           <div className="form-group">
-            <label className="field-label">REQUEST TIMEOUT <span className="amber">{requestTimeout}s</span></label>
-            <input id="timeout-range" type="range" className="dc-slider" min="5" max="120" step="5" value={requestTimeout} onChange={e => setRequestTimeout(Number(e.target.value))} />
-            <div className="field-hint">Upper bound only — once a few frames are timed, Aura auto-tunes the live timeout to p90 × 1.5 (shown on the Monitor tab). Raise this ceiling for slow local models (e.g. Ollama).</div>
+            <div className="field-hint">Per-request timeout is fully automatic: mean + 3 standard deviations of this session's own successful response times (shown as TIMEOUT on the Monitor tab). No manual setting needed.</div>
           </div>
         )}
         {(scanMode === 'interval' || scanMode === 'budget') && (
