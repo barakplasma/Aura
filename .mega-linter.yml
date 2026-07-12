@@ -28,8 +28,14 @@ DISABLE_ERRORS: true
 # anything to analyze.
 LLM_ADVISOR_ENABLED: true
 LLM_ADVISOR_LEVEL: WARNING
-LLM_PROVIDER: anthropic
-LLM_MODEL_NAME: claude-3-7-sonnet-latest
+# OpenRouter is OpenAI-compatible: LLM_PROVIDER: openai + OPENAI_BASE_URL
+# pointed at OpenRouter, authenticated with OPENROUTER_API_KEY passed through
+# as OPENAI_API_KEY in the workflow. openrouter/auto routes each request to
+# a model OpenRouter judges suitable (and cheap) for it, rather than pinning
+# one fixed model.
+LLM_PROVIDER: openai
+OPENAI_BASE_URL: https://openrouter.ai/api/v1
+LLM_MODEL_NAME: openrouter/auto
 
 # table-sections is already the default, but it's what makes the PR comment
 # render per-linter detail sections (not just the summary table) — that's
