@@ -39,6 +39,16 @@ const IDLE_PROGRESS = {
 };
 const EMPTY_STATS = { p50: null, p90: null, timeoutMs: null, count: 0 };
 
+// Stop any live tracks and detach the preview. Shared by stop() and the
+// start() failure path so an acquired-but-unusable stream never stays live.
+function releaseStream(internalRef, videoRef) {
+  if (internalRef.current.stream) {
+    internalRef.current.stream.getTracks().forEach((t) => t.stop());
+    internalRef.current.stream = null;
+  }
+  if (videoRef.current) videoRef.current.srcObject = null;
+}
+
 export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("Configure a provider and press Start.");
@@ -192,10 +202,22 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
           headers = { ...headers, ...custom };
       } catch {}
       const method = settingsRef.current.webhookMethod || "POST";
+      // webhookMessage is a plain announcement string, not JSON — wrap it so
+      // the body matches the application/json Content-Type sent above.
+      let formattedBody = body;
+      if (typeof body === "string") {
+        try {
+          JSON.parse(body);
+        } catch {
+          formattedBody = JSON.stringify({ message: body });
+        }
+      } else if (body && typeof body === "object") {
+        formattedBody = JSON.stringify(body);
+      }
       fetch(url, {
         method,
         headers,
-        body: method === "GET" || method === "HEAD" ? undefined : body,
+        body: method === "GET" || method === "HEAD" ? undefined : formattedBody,
         signal: AbortSignal.timeout(5000),
         mode: "no-cors",
       }).catch(() => {});
@@ -453,11 +475,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     clearTimeout(internalRef.current.loopTimer);
     clearInterval(internalRef.current.progressTimer);
     if (internalRef.current.abort) internalRef.current.abort.abort();
-    if (internalRef.current.stream) {
-      internalRef.current.stream.getTracks().forEach((t) => t.stop());
-      internalRef.current.stream = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
+    releaseStream(internalRef, videoRef);
     resetFeedback();
     setRunning(false);
     setStatus("Stopped.");
@@ -509,11 +527,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     } catch (err) {
       // An acquired-but-unusable stream (play() threw, etc.) must not stay
       // live — nothing else will stop it.
-      if (internalRef.current.stream) {
-        internalRef.current.stream.getTracks().forEach((t) => t.stop());
-        internalRef.current.stream = null;
-      }
-      if (videoRef.current) videoRef.current.srcObject = null;
+      releaseStream(internalRef, videoRef);
       // Demo doesn't capture frames, so run without a preview.
       if (!s.demo) {
         setStatus(

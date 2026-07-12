@@ -1103,7 +1103,7 @@ textarea {
 }
 
 /* ── Responsive ────────────────────────────────────────────────────────── */
-@media (width <= 600px) {
+@media (max-width: 600px) {
   .nav-rail {
     width: 48px;
     padding-left: env(safe-area-inset-left);
@@ -1125,7 +1125,7 @@ textarea {
 
 /* Mobile portrait: stack — small camera thumbnail on top, controls get the
    rest of the screen. */
-@media (width <= 600px) and (orientation: portrait) {
+@media (max-width: 600px) and (orientation: portrait) {
   .main-content.monitor-layout {
     flex-direction: column;
   }
@@ -1154,7 +1154,7 @@ textarea {
 
 /* Mobile landscape: keep the row but flip the proportions — minimized side
    preview, controls take the majority of the width. */
-@media (orientation: landscape) and (height <= 520px) {
+@media (orientation: landscape) and (max-height: 520px) {
   .nav-rail {
     width: 48px;
     padding-left: env(safe-area-inset-left);

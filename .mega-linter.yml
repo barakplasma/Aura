@@ -9,6 +9,11 @@ DISABLE_LINTERS:
 # public/aura.css is a build copy of src/aura.css. Don't lint generated files.
 FILTER_REGEX_EXCLUDE: "(public/assets/|public/aura\\.css|\\.map$)"
 
+# package-lock.json embeds npm packages' funding URLs (e.g. Patreon,
+# OpenCollective); those hosts 403 automated requests, which isn't a real
+# dead link. Still JSON/lint-checked — just not link-checked.
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: "package-lock\\.json"
+
 # The repo uses semicolons throughout; Standard's default style forbids them.
 # Prettier keeps the existing convention instead of forcing a repo-wide rewrite.
 JAVASCRIPT_DEFAULT_STYLE: prettier
