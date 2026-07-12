@@ -36,7 +36,7 @@ Scheduling stays **strictly serial** — one scan in flight, the frame is
 captured at send time, so *image freshness ≈ scan duration*. Modes only change
 the **gap** inserted after a scan completes:
 
-```
+```text
 capture fresh frame → detection call → (alert path) → compute gap by mode → wait → repeat
                           |
                  no response by TTL? → abort, discard, next cycle per mode
@@ -56,7 +56,7 @@ Maintain per-session EMAs (α = 0.3) of **tokens per scan** (from provider
 `usage`), **request payload bytes per scan** (JPEG data-URL length × ¾ + fixed
 prompt overhead), and **scan duration**.
 
-```
+```text
 costPerScan   = emaTokensPerScan × rate / 1e6          # rate = $/1M tokens (existing setting)
 gapFromCost   = max(0, 3600e3 × costPerScan / budgetPerHour − emaScanDurationMs)
 gapFromNet    = max(0, 3600e3 × emaBytesPerScan / (mbPerHour × 1e6) − emaScanDurationMs)

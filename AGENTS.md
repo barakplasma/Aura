@@ -12,7 +12,7 @@ Aura turns a phone/webcam into an **automated visual monitor** — entirely in t
 - **Sensitivity** — confidence threshold (10–95%) for firing alerts.
 
 Each scan cycle:
-```
+```text
 frame → scanClient() → detection call → if triggered: action call → speak + vibrate + flash + webhook
 ```
 

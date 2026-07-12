@@ -6,7 +6,7 @@ Guidance for working in this repo. Read this before changing code.
 
 An **automated visual monitoring PWA** that runs entirely in the browser. A phone/webcam streams frames; each scan cycle calls an OpenAI-compatible vision model (Cerebras, OpenAI, Groq, etc.) with a **detection** prompt and, if the alert fires, an **action** prompt that generates a spoken announcement. The user provides their own API key — no backend, no secrets.
 
-```
+```text
 camera frame → 640x480 JPEG → detection call (user's provider + model)
                                      |
                          triggered AND confidence ≥ threshold ?

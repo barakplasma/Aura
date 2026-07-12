@@ -9,7 +9,7 @@ Aura turns any phone or laptop with a webcam into an automated visual monitor. Y
 
 **No backend required.** This is a pure static PWA — your API key is stored in your browser's localStorage and sent directly to the provider. Nothing is proxied through a server.
 
-```
+```text
 [ camera frame ] → 640x480 JPEG → detection call (your provider + model)
                                        |
                           triggered AND confidence ≥ threshold ?
@@ -63,13 +63,13 @@ Enter a **Mission** (what to watch for) and **Action** (what to announce on aler
 | **Cost tracking** | Cumulative token count and estimated cost |
 | **PWA** | Installable on mobile home screen |
 
-### No API key? No problem.
+### No API key? No problem
 
 With no API key, Aura runs in **mock mode** — it cycles between normal/alert states so you can test the camera, speech, vibration, webhook, and alert log without any backend calls.
 
 ## Project layout
 
-```
+```text
 public/                   Static site (deploy this directory)
   index.html              MD3 UI with material web components
   app.js                  Camera capture + scan loop + alert delivery
