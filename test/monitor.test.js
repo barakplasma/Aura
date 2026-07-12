@@ -185,3 +185,49 @@ test("scanClient applies no forced timeout when requestTimeout is null (MAX mode
     globalThis.setTimeout = realSetTimeout;
   }
 });
+
+test("scanClient sends OpenRouter attribution headers only for an OpenRouter baseUrl", async () => {
+  const realFetch = globalThis.fetch;
+  const seenHeaders = [];
+  globalThis.fetch = async (_url, opts) => {
+    seenHeaders.push(opts.headers);
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: '{"triggered":false,"confidence":0,"reason":"clear"}',
+            },
+          },
+        ],
+        usage: {},
+      }),
+    };
+  };
+  try {
+    await scanClient({
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "gemma",
+      apiKey: "k",
+      mission: "watch the door",
+      image: "x".repeat(64),
+      requestTimeout: 30,
+    });
+    assert.equal(seenHeaders[0]["X-Title"], "Aura");
+    assert.ok(seenHeaders[0]["HTTP-Referer"]);
+
+    await scanClient({
+      baseUrl: "https://api.cerebras.ai/v1",
+      model: "gemma",
+      apiKey: "k",
+      mission: "watch the door",
+      image: "x".repeat(64),
+      requestTimeout: 30,
+    });
+    assert.equal(seenHeaders[1]["X-Title"], undefined);
+    assert.equal(seenHeaders[1]["HTTP-Referer"], undefined);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
