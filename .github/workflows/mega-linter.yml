@@ -45,7 +45,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # LLM Advisor (AI-generated fix suggestions in the PR/job summary),
           # routed through OpenRouter (OpenAI-compatible) — see .mega-linter.yml.
+          # Both must be actual env vars (not .mega-linter.yml keys): the
+          # underlying OpenAI client reads them straight from the process
+          # environment.
           OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
       - name: Archive production artifacts
         if: success() || failure()
