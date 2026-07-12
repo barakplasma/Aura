@@ -22,8 +22,12 @@ JAVASCRIPT_DEFAULT_STYLE: prettier
 DISABLE_ERRORS: true
 
 # AI-generated fix suggestions on top of each linter finding.
+# Level WARNING, not the default ERROR: ERROR only analyzes linters whose own
+# exit code is non-zero (blocking), but DISABLE_ERRORS above forces every
+# linter's exit code to 0 — under ERROR the advisor would never have
+# anything to analyze.
 LLM_ADVISOR_ENABLED: true
-LLM_ADVISOR_LEVEL: ERROR
+LLM_ADVISOR_LEVEL: WARNING
 LLM_PROVIDER: anthropic
 LLM_MODEL_NAME: claude-3-7-sonnet-latest
 
