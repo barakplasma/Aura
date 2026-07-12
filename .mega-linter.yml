@@ -32,11 +32,18 @@ LLM_ADVISOR_LEVEL: WARNING
 # OPENROUTER_API_KEY passed through as OPENAI_API_KEY in the workflow.
 # openrouter/auto routes each request to a model OpenRouter judges suitable
 # (and cheap) for it, rather than pinning one fixed model.
-# OPENAI_BASE_URL isn't a MegaLinter config key (v8r rejects it here as an
-# unknown property, and it never reaches the container as an env var) — it
-# has to be set alongside OPENAI_API_KEY in the workflow's step env instead.
+# OPENAI_BASE_URL: MegaLinter reads it via the same config.get() accessor as
+# every other setting, so it works from either .mega-linter.yml or the CI
+# env — v8r flags it as an unrecognized property only because MegaLinter's
+# published JSON schema hasn't been updated to list it. Kept in the workflow
+# env anyway so v8r stays clean.
 LLM_PROVIDER: openai
 LLM_MODEL_NAME: openrouter/auto
+
+# TEMP: surface the advisor's own debug trace (init/skip/error) — almost all
+# of it logs at DEBUG, so silence in the job log is uninformative otherwise.
+# Remove once we've confirmed suggestions are actually being generated.
+LOG_LEVEL: DEBUG
 
 # table-sections is already the default, but it's what makes the PR comment
 # render per-linter detail sections (not just the summary table) — that's
