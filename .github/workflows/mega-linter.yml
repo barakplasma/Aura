@@ -5,8 +5,6 @@ name: MegaLinter
 
 on:
   push:
-  pull_request:
-    branches: [main]
 
 # No default permissions — each job declares exactly what it needs below.
 permissions: {}
@@ -36,7 +34,7 @@ jobs:
         id: ml
         uses: oxsecurity/megalinter/flavors/javascript@v8
         env:
-          VALIDATE_ALL_CODEBASE: ${{ github.event_name == 'push' }}
+          VALIDATE_ALL_CODEBASE: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # LLM Advisor (AI-generated fix suggestions in the PR/job summary).
           # Add an ANTHROPIC_API_KEY repo/org secret to enable it.
