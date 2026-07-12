@@ -27,4 +27,10 @@ LLM_ADVISOR_LEVEL: ERROR
 LLM_PROVIDER: anthropic
 LLM_MODEL_NAME: claude-3-7-sonnet-latest
 
+# table-sections is already the default, but it's what makes the PR comment
+# render per-linter detail sections (not just the summary table) — that's
+# where the LLM Advisor attaches its fix suggestions. Set explicitly so it
+# doesn't silently drift if the reporter's default ever changes.
+REPORTERS_MARKDOWN_SUMMARY_TYPE: table-sections
+
 PRINT_ALPACA: false

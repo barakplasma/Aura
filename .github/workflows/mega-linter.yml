@@ -5,6 +5,8 @@ name: MegaLinter
 
 on:
   push:
+  pull_request:
+    branches: [main]
 
 # No default permissions — each job declares exactly what it needs below.
 permissions: {}
@@ -20,6 +22,11 @@ jobs:
   megalinter:
     name: MegaLinter
     runs-on: ubuntu-latest
+    # push already covers same-repo branches (including PR source branches);
+    # only let pull_request run too when the PR is from a fork, where push
+    # never fires. Otherwise both trigger on the same commit and race to
+    # overwrite the same PR comment.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     permissions:
       contents: read
       issues: write
