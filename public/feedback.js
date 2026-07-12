@@ -3,8 +3,9 @@
 //   Web Speech API     -> speak the announcement aloud (speechSynthesis)
 //   Web Vibration API  -> a distinct alert buzz          (navigator.vibrate)
 
-export const canVibrate = typeof navigator !== 'undefined' && 'vibrate' in navigator;
-const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window;
+export const canVibrate =
+  typeof navigator !== "undefined" && "vibrate" in navigator;
+const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
 
 export function resetFeedback() {
   if (canVibrate) navigator.vibrate(0);

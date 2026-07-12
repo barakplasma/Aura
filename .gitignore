@@ -10,3 +10,4 @@ public/material.bundle.js
 public/material.bundle.js.map
 npm-debug.log*
 .DS_Store
+megalinter-reports/

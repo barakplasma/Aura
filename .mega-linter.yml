@@ -1,0 +1,62 @@
+---
+# Configuration file for MegaLinter
+# See all available variables at https://megalinter.io/latest/config-file/
+
+DISABLE_LINTERS:
+  - SPELL_CSPELL
+
+# public/assets is esbuild output (minified, code-split bundles + sourcemaps);
+# public/aura.css is a build copy of src/aura.css. Don't lint generated files.
+FILTER_REGEX_EXCLUDE: "(public/assets/|public/aura\\.css|\\.map$)"
+
+# jscpd runs in project mode (scans the whole tree itself, ignoring
+# MegaLinter's FILTER_REGEX_EXCLUDE family of variables entirely — confirmed:
+# COPYPASTE_JSCPD_FILTER_REGEX_EXCLUDE was both schema-invalid per v8r *and*
+# had no effect on jscpd's own output). Excluding public/aura.css (the build
+# copy of src/aura.css) has to go through jscpd's own .jscpd.json instead.
+
+# zizmor (Action security scanner) checks `uses:` refs against the GitHub
+# API for ref-confusion attacks, which needs a token — opt in our own
+# GITHUB_TOKEN rather than leave it erroring out unauthenticated.
+ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
+  - GITHUB_TOKEN
+
+# package-lock.json embeds npm packages' funding URLs (e.g. Patreon,
+# OpenCollective); those hosts 403 automated requests, which isn't a real
+# dead link. Still JSON/lint-checked — just not link-checked.
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: "package-lock\\.json"
+
+# The repo uses semicolons throughout; Standard's default style forbids them.
+# Prettier keeps the existing convention instead of forcing a repo-wide rewrite.
+JAVASCRIPT_DEFAULT_STYLE: prettier
+
+# Report findings without failing the job; the PR comment is the review surface.
+DISABLE_ERRORS: true
+
+# AI-generated fix suggestions on top of each linter finding.
+# Level WARNING, not the default ERROR: ERROR only analyzes linters whose own
+# exit code is non-zero (blocking), but DISABLE_ERRORS above forces every
+# linter's exit code to 0 — under ERROR the advisor would never have
+# anything to analyze.
+LLM_ADVISOR_ENABLED: true
+LLM_ADVISOR_LEVEL: WARNING
+# OpenRouter is OpenAI-compatible: LLM_PROVIDER: openai, authenticated with
+# OPENROUTER_API_KEY passed through as OPENAI_API_KEY in the workflow.
+# openrouter/pareto-code routes each request to a strong coding model at
+# OpenRouter's default quality tier, rather than a plain cost/speed "auto"
+# pick or one fixed model: https://openrouter.ai/docs/guides/routing/routers/pareto-router
+# OPENAI_BASE_URL: MegaLinter reads it via the same config.get() accessor as
+# every other setting, so it works from either .mega-linter.yml or the CI
+# env — v8r flags it as an unrecognized property only because MegaLinter's
+# published JSON schema hasn't been updated to list it. Kept in the workflow
+# env anyway so v8r stays clean.
+LLM_PROVIDER: openai
+LLM_MODEL_NAME: openrouter/pareto-code
+
+# table-sections is already the default, but it's what makes the PR comment
+# render per-linter detail sections (not just the summary table) — that's
+# where the LLM Advisor attaches its fix suggestions. Set explicitly so it
+# doesn't silently drift if the reporter's default ever changes.
+REPORTERS_MARKDOWN_SUMMARY_TYPE: table-sections
+
+PRINT_ALPACA: false

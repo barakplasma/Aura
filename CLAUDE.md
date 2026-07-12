@@ -6,7 +6,7 @@ Guidance for working in this repo. Read this before changing code.
 
 An **automated visual monitoring PWA** that runs entirely in the browser. A phone/webcam streams frames; each scan cycle calls an OpenAI-compatible vision model (Cerebras, OpenAI, Groq, etc.) with a **detection** prompt and, if the alert fires, an **action** prompt that generates a spoken announcement. The user provides their own API key — no backend, no secrets.
 
-```
+```text
 camera frame → 640x480 JPEG → detection call (user's provider + model)
                                      |
                          triggered AND confidence ≥ threshold ?
@@ -22,22 +22,22 @@ React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → mini
 code-split ESM bundles in `public/assets/` (with linked sourcemaps). `src/aura.css`
 is copied to `public/aura.css` by the build — edit the `src/` copy only.
 
-| Path | Role |
-|---|---|
-| `src/App.jsx` | Screen routing, settings (localStorage), demo-mode state, camera stage mode |
+| Path                              | Role                                                                                                                |
+|-----------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                         |
 | `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches |
-| `src/screens/` | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen (lazy-loaded), SettingsScreen |
-| `src/hooks/useMonitor.js` | Camera capture + scan loop + alert delivery + telemetry |
-| `src/aura.css` | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints) |
-| `src/monitoring.js` | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx` |
-| `public/index.html` | Tiny shell: mounts `#root`, loads `assets/app.js` |
-| `public/feedback.js` | Web Speech + Web Vibration |
-| `lib/aura.js` | Browser engine: `scanClient()` calls provider directly, `fetchModels()` lists models |
-| `lib/monitor.js` | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + tests) |
-| `lib/demo.js` | Demo mode: deterministic simulated scans (never emits webhooks) |
-| `lib/training-store.js` | localStorage persistence for training examples/artifacts (no ax import) |
-| `lib/training.js` | ax/GEPA optimization — only ever loaded via dynamic `import()` |
-| `test/` | Unit tests for monitor.js helpers, demo.js, and scanClient validation |
+| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen (lazy-loaded), SettingsScreen          |
+| `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                             |
+| `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                          |
+| `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                |
+| `public/index.html`               | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                   |
+| `public/feedback.js`              | Web Speech + Web Vibration                                                                                          |
+| `lib/aura.js`                     | Browser engine: `scanClient()` calls provider directly, `fetchModels()` lists models                                |
+| `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + tests)                        |
+| `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                     |
+| `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                             |
+| `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                      |
+| `test/`                           | Unit tests for monitor.js helpers, demo.js, and scanClient validation                                               |
 
 Keep `@ax-llm/ax` out of the main bundle: nothing statically imported by `App.jsx`
 may import `lib/training.js` (that's why the store is a separate module).

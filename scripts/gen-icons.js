@@ -1,12 +1,12 @@
 // One-time generator for the PWA icons. No image deps — encodes PNGs directly
 // with the built-in zlib. Run: node scripts/gen-icons.js
-import zlib from 'node:zlib';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import zlib from "node:zlib";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outDir = path.join(__dirname, '..', 'public', 'icons');
+const outDir = path.join(__dirname, "..", "public", "icons");
 fs.mkdirSync(outDir, { recursive: true });
 
 const CRC_TABLE = (() => {
@@ -21,14 +21,15 @@ const CRC_TABLE = (() => {
 
 function crc32(buf) {
   let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  for (let i = 0; i < buf.length; i++)
+    c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
 function chunk(type, data) {
   const len = Buffer.alloc(4);
   len.writeUInt32BE(data.length, 0);
-  const typeBuf = Buffer.from(type, 'ascii');
+  const typeBuf = Buffer.from(type, "ascii");
   const crc = Buffer.alloc(4);
   crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
   return Buffer.concat([len, typeBuf, data, crc]);
@@ -46,10 +47,7 @@ function render(size) {
       const i = (y * size + x) * 4;
       const d = Math.hypot(x - cx, y - cy) / (size / 2);
       // Three soft rings glowing toward the center.
-      const ring = Math.max(
-        0,
-        Math.cos((d - 0.15) * Math.PI * 3) * (1 - d)
-      );
+      const ring = Math.max(0, Math.cos((d - 0.15) * Math.PI * 3) * (1 - d));
       const t = Math.min(1, Math.max(0, ring));
       px[i] = Math.round(bg[0] + (accent[0] - bg[0]) * t);
       px[i + 1] = Math.round(bg[1] + (accent[1] - bg[1]) * t);
@@ -77,9 +75,9 @@ function encodePng(size) {
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   return Buffer.concat([
     sig,
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(filtered)),
-    chunk('IEND', Buffer.alloc(0)),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(filtered)),
+    chunk("IEND", Buffer.alloc(0)),
   ]);
 }
 

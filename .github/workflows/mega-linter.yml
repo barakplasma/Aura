@@ -1,0 +1,78 @@
+---
+# MegaLinter GitHub Action configuration file
+# More info at https://megalinter.io
+name: MegaLinter
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+# No default permissions — each job declares exactly what it needs below.
+permissions: {}
+
+env:
+  # APPLY_FIXES itself can go in .mega-linter.yml, but APPLY_FIXES_EVENT and
+  # APPLY_FIXES_MODE can only be set here (workflow env), per MegaLinter docs.
+  APPLY_FIXES: all
+  # Only push actually has a token that can write back (pull_request only
+  # runs for forks here, which get a read-only token and can't push anyway).
+  APPLY_FIXES_EVENT: push
+  # Push a fix commit straight to the branch, rather than opening a second
+  # PR against this one.
+  APPLY_FIXES_MODE: commit
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  megalinter:
+    name: MegaLinter
+    runs-on: ubuntu-latest
+    # push already covers same-repo branches (including PR source branches);
+    # only let pull_request run too when the PR is from a fork, where push
+    # never fires. Otherwise both trigger on the same commit and race to
+    # overwrite the same PR comment.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    permissions:
+      # write: APPLY_FIXES_MODE: commit needs to push fix commits back.
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout Code
+        # persist-credentials stays at its default (true), deliberately:
+        # APPLY_FIXES_MODE: commit below needs the checked-out credentials to
+        # push the fix commit. The artifact step only uploads megalinter-
+        # reports/mega-linter.log, never .git, so the usual persist-
+        # credentials/artifact-leak risk doesn't apply here.
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+
+      - name: MegaLinter
+        id: ml
+        # v9, not v8: the LLM Advisor (megalinter/llm_advisor.py) doesn't
+        # exist before v9.0.0 — v8's last release predates it entirely, which
+        # is why it silently produced nothing even with LOG_LEVEL: DEBUG.
+        uses: oxsecurity/megalinter/flavors/javascript@ef3e84b8b836d76db562d0f3ed7da61e8fd538bc # v9
+        env:
+          VALIDATE_ALL_CODEBASE: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # LLM Advisor (AI-generated fix suggestions in the PR/job summary),
+          # routed through OpenRouter (OpenAI-compatible) — see .mega-linter.yml.
+          # Both must be actual env vars (not .mega-linter.yml keys): the
+          # underlying OpenAI client reads them straight from the process
+          # environment.
+          OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
+
+      - name: Archive production artifacts
+        if: success() || failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: MegaLinter reports
+          path: |
+            megalinter-reports
+            mega-linter.log

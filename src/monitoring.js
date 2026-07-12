@@ -9,14 +9,14 @@
 // We deliberately keep this to plain error reporting — no performance tracing
 // or session replay integrations — because Bugsink ingests errors only, and
 // omitting them keeps the main bundle small.
-import * as Sentry from '@sentry/browser';
+import * as Sentry from "@sentry/browser";
 
 // Skip local development so dev-time errors don't pollute the Bugsink project.
-const host = typeof location !== 'undefined' ? location.hostname : '';
-const isLocalDev = host === 'localhost' || host === '127.0.0.1' || host === '';
+const host = typeof location !== "undefined" ? location.hostname : "";
+const isLocalDev = host === "localhost" || host === "127.0.0.1" || host === "";
 
 Sentry.init({
-  dsn: 'https://1b4075f67e00411896ae35506159ebe2@barakplasma.bugsink.com/4',
+  dsn: "https://1b4075f67e00411896ae35506159ebe2@barakplasma.bugsink.com/4",
   enabled: !isLocalDev,
   // Don't attach PII (IP address, cookies, request bodies) to events.
   sendDefaultPii: false,
