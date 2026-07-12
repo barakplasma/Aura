@@ -50,18 +50,18 @@ Enter a **Mission** (what to watch for) and **Action** (what to announce on aler
 
 ### Features
 
-| Feature | How |
-|---|---|
-| **Provider config** | Base URL, API key, model — any OpenAI-compatible vision model |
-| **Model discovery** | Fetches available models from `GET /v1/models` |
-| **Alert sensitivity** | Slider (10–95% confidence threshold) |
-| **Scan interval** | 2–30 seconds |
-| **Text-to-speech** | Built-in Web Speech API |
-| **Vibration** | Web Vibration API (not available on iOS Safari) |
-| **Webhook** | POST/GET/PUT/PATCH to any URL with custom headers and JSON body |
-| **Training** | Add detection/action examples, optimize with ax/GEPA |
-| **Cost tracking** | Cumulative token count and estimated cost |
-| **PWA** | Installable on mobile home screen |
+| Feature               | How                                                             |
+|-----------------------|-----------------------------------------------------------------|
+| **Provider config**   | Base URL, API key, model — any OpenAI-compatible vision model   |
+| **Model discovery**   | Fetches available models from `GET /v1/models`                  |
+| **Alert sensitivity** | Slider (10–95% confidence threshold)                            |
+| **Scan interval**     | 2–30 seconds                                                    |
+| **Text-to-speech**    | Built-in Web Speech API                                         |
+| **Vibration**         | Web Vibration API (not available on iOS Safari)                 |
+| **Webhook**           | POST/GET/PUT/PATCH to any URL with custom headers and JSON body |
+| **Training**          | Add detection/action examples, optimize with ax/GEPA            |
+| **Cost tracking**     | Cumulative token count and estimated cost                       |
+| **PWA**               | Installable on mobile home screen                               |
 
 ### No API key? No problem
 

@@ -18,18 +18,18 @@ frame → scanClient() → detection call → if triggered: action call → spea
 
 ## Where things live
 
-| Path | Role |
-|---|---|
-| `public/index.html` | Material Design 3 UI with web components |
-| `public/app.js` | Camera capture + scan loop + alert delivery + telemetry |
-| `public/aura.bundle.js` | Bundled browser engine |
-| `public/material.bundle.js` | Bundled MD3 web components |
-| `public/material-theme.css` | MD3 dark theme |
-| `public/feedback.js` | Speech + vibration feedback |
-| `lib/aura.js` | Browser engine: `scanClient()`, `fetchModels()` |
-| `lib/monitor.js` | Pure prompt/parser functions (used by aura.js + tests) |
-| `lib/training.js` | ax/GEPA example management and optimization |
-| `test/monitor.test.js` | Unit tests |
+| Path                        | Role                                                    |
+|-----------------------------|---------------------------------------------------------|
+| `public/index.html`         | Material Design 3 UI with web components                |
+| `public/app.js`             | Camera capture + scan loop + alert delivery + telemetry |
+| `public/aura.bundle.js`     | Bundled browser engine                                  |
+| `public/material.bundle.js` | Bundled MD3 web components                              |
+| `public/material-theme.css` | MD3 dark theme                                          |
+| `public/feedback.js`        | Speech + vibration feedback                             |
+| `lib/aura.js`               | Browser engine: `scanClient()`, `fetchModels()`         |
+| `lib/monitor.js`            | Pure prompt/parser functions (used by aura.js + tests)  |
+| `lib/training.js`           | ax/GEPA example management and optimization             |
+| `test/monitor.test.js`      | Unit tests                                              |
 
 ## How to add a feature
 
