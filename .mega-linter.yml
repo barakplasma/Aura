@@ -9,11 +9,11 @@ DISABLE_LINTERS:
 # public/aura.css is a build copy of src/aura.css. Don't lint generated files.
 FILTER_REGEX_EXCLUDE: "(public/assets/|public/aura\\.css|\\.map$)"
 
-# jscpd runs in project mode (scans the whole tree itself) rather than the
-# per-file list FILTER_REGEX_EXCLUDE applies to, so it still flags
-# public/aura.css as a 100% duplicate of src/aura.css — that's the build
-# copy working as intended, not something to fix. Needs its own exclude.
-COPYPASTE_JSCPD_FILTER_REGEX_EXCLUDE: "public/aura\\.css"
+# jscpd runs in project mode (scans the whole tree itself, ignoring
+# MegaLinter's FILTER_REGEX_EXCLUDE family of variables entirely — confirmed:
+# COPYPASTE_JSCPD_FILTER_REGEX_EXCLUDE was both schema-invalid per v8r *and*
+# had no effect on jscpd's own output). Excluding public/aura.css (the build
+# copy of src/aura.css) has to go through jscpd's own .jscpd.json instead.
 
 # zizmor (Action security scanner) checks `uses:` refs against the GitHub
 # API for ref-confusion attacks, which needs a token — opt in our own

@@ -42,7 +42,12 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v7
+        # persist-credentials stays at its default (true), deliberately:
+        # APPLY_FIXES_MODE: commit below needs the checked-out credentials to
+        # push the fix commit. The artifact step only uploads megalinter-
+        # reports/mega-linter.log, never .git, so the usual persist-
+        # credentials/artifact-leak risk doesn't apply here.
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
@@ -51,7 +56,7 @@ jobs:
         # v9, not v8: the LLM Advisor (megalinter/llm_advisor.py) doesn't
         # exist before v9.0.0 — v8's last release predates it entirely, which
         # is why it silently produced nothing even with LOG_LEVEL: DEBUG.
-        uses: oxsecurity/megalinter/flavors/javascript@v9
+        uses: oxsecurity/megalinter/flavors/javascript@ef3e84b8b836d76db562d0f3ed7da61e8fd538bc # v9
         env:
           VALIDATE_ALL_CODEBASE: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -65,7 +70,7 @@ jobs:
 
       - name: Archive production artifacts
         if: success() || failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: MegaLinter reports
           path: |
