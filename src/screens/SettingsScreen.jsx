@@ -212,7 +212,7 @@ export default function SettingsScreen({
         )}
         {scanMode !== 'max' && (
           <div className="form-group">
-            <div className="field-hint">Per-request timeout is fully automatic: mean + 1 standard deviation of this session's own successful response times (shown as TIMEOUT on the Monitor tab). No manual setting needed.</div>
+            <div className="field-hint">Per-request timeout is fully automatic: mean + 3 standard deviations of this session's own successful response times (shown as TIMEOUT on the Monitor tab). No manual setting needed.</div>
           </div>
         )}
         {(scanMode === 'interval' || scanMode === 'budget') && (

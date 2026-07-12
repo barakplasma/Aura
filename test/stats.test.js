@@ -40,7 +40,7 @@ test('tunedTimeoutMs falls back to the bootstrap default until a sample lands', 
   assert.equal(tunedTimeoutMs([], { floorMs: 4000, minSamples: 1, bootstrapMs: 9000 }), 9000);
 });
 
-test('tunedTimeoutMs is mean + 1 stddev, floored', () => {
+test('tunedTimeoutMs is mean + 3 stddev, floored', () => {
   // A single sample has zero stddev, so the timeout is just that latency —
   // floored when it's below the safety minimum.
   assert.equal(tunedTimeoutMs([500], { floorMs: 4000 }), 4000);
@@ -48,10 +48,10 @@ test('tunedTimeoutMs is mean + 1 stddev, floored', () => {
   // Consistent latencies (~500ms, low variance) stay near the mean, floored.
   const fast = [480, 500, 510, 495, 505, 500, 490, 500, 510, 500];
   assert.equal(tunedTimeoutMs(fast, { floorMs: 4000 }), 4000);
-  // Wider spread pushes the bound above the floor via the stddev term.
+  // Wider spread pushes the bound above the floor via the 3x stddev term.
   const varied = [1000, 2000, 1500, 3000, 1200, 2500, 1800, 2200, 1300, 2800];
   const mean = varied.reduce((a, b) => a + b, 0) / varied.length;
   const variance = varied.reduce((a, b) => a + (b - mean) ** 2, 0) / varied.length;
-  const expected = Math.max(4000, Math.round(mean + Math.sqrt(variance)));
+  const expected = Math.max(4000, Math.round(mean + 3 * Math.sqrt(variance)));
   assert.equal(tunedTimeoutMs(varied, { floorMs: 4000 }), expected);
 });

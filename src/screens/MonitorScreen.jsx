@@ -60,7 +60,7 @@ export default function MonitorScreen({ running, telemetry, progress, stats, onT
           <span className="panel-v">{fmtMs(stats.p90)}</span>
         </div>
         <div className="panel-row">
-          <span className="panel-k" title="Auto-tuned to mean + 1 stddev of this session's latencies. Off in MAX mode.">TIMEOUT</span>
+          <span className="panel-k" title="Auto-tuned to mean + 3 stddev of this session's latencies. Off in MAX mode.">TIMEOUT</span>
           <span className="panel-v amber">{fmtMs(stats.timeoutMs)}</span>
         </div>
         <div className="panel-row">

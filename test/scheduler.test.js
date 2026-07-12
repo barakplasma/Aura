@@ -31,6 +31,14 @@ test('interval mode accepts the full 1s..12h+ range, including fractional second
   assert.equal(computeGapMs('interval', { scanEvery: 12 * 3600 }, {}), 43200000);
 });
 
+test('an extreme scanEvery is clamped to the setTimeout 32-bit int max, not overflowed', () => {
+  // 1,000,000 hours in ms would overflow 2^31-1 and fire almost immediately
+  // if passed straight to setTimeout — must be clamped instead.
+  const gap = computeGapMs('interval', { scanEvery: 1e6 * 3600 }, {});
+  assert.equal(gap, 2147483647);
+  assert.ok(gap <= 2147483647);
+});
+
 test('max mode returns the 250ms floor regardless of knobs/sample', () => {
   assert.equal(computeGapMs('max', { scanEvery: 30 }, { tokens: 5000, durationMs: 800 }), 250);
 });

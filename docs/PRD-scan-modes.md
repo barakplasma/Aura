@@ -72,7 +72,7 @@ gapMs         = max(gapFromCost, gapFromNet)           # most restrictive cap wi
 ### Request timeout — fully automatic, no operator setting
 
 The per-request timeout is derived entirely from this session's own latency
-history: **mean + 1 standard deviation** of observed successful response
+history: **mean + 3 standard deviations** of observed successful response
 times, floored at a small safety minimum so ordinary variance never kills a
 scan mid-flight. Before the first sample lands there's no distribution to
 derive from, so that one request gets a generous fixed default. There is no

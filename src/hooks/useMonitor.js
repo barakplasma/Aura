@@ -13,7 +13,7 @@ const JPEG_QUALITY = 0.4;
 // Self-tuning timeout never dips below this, so ordinary latency variance
 // doesn't kill a scan mid-flight. There is no operator-set ceiling — beyond
 // the floor, the bound is derived entirely from this session's own latency
-// history (mean + 1 stddev, once enough samples have landed).
+// history (mean + 3 stddev, once enough samples have landed).
 const TIMEOUT_FLOOR_MS = 4000;
 const TIMEOUT_MIN_SAMPLES = 5;
 // How many recent non-alert frames to keep for false-negative review, and how
@@ -200,7 +200,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       // MAX mode never forces a timeout — a scan runs to completion (or is
       // cancelled by Stop) and the next one starts right after, for the
       // highest achievable frame rate. Other modes self-tune the timeout from
-      // this session's own latency history (mean + 1 stddev) — no operator
+      // this session's own latency history (mean + 3 stddev) — no operator
       // ceiling involved.
       const isMaxMode = s.scanMode === 'max';
       const effTimeoutMs = isMaxMode ? null : tunedTimeoutMs(st.samples, { floorMs: TIMEOUT_FLOOR_MS, minSamples: TIMEOUT_MIN_SAMPLES });
