@@ -12,7 +12,15 @@ on:
 permissions: {}
 
 env:
-  APPLY_FIXES: none
+  # APPLY_FIXES itself can go in .mega-linter.yml, but APPLY_FIXES_EVENT and
+  # APPLY_FIXES_MODE can only be set here (workflow env), per MegaLinter docs.
+  APPLY_FIXES: all
+  # Only push actually has a token that can write back (pull_request only
+  # runs for forks here, which get a read-only token and can't push anyway).
+  APPLY_FIXES_EVENT: push
+  # Push a fix commit straight to the branch, rather than opening a second
+  # PR against this one.
+  APPLY_FIXES_MODE: commit
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
@@ -28,7 +36,8 @@ jobs:
     # overwrite the same PR comment.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     permissions:
-      contents: read
+      # write: APPLY_FIXES_MODE: commit needs to push fix commits back.
+      contents: write
       issues: write
       pull-requests: write
     steps:

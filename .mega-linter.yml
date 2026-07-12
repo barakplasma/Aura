@@ -9,6 +9,18 @@ DISABLE_LINTERS:
 # public/aura.css is a build copy of src/aura.css. Don't lint generated files.
 FILTER_REGEX_EXCLUDE: "(public/assets/|public/aura\\.css|\\.map$)"
 
+# jscpd runs in project mode (scans the whole tree itself) rather than the
+# per-file list FILTER_REGEX_EXCLUDE applies to, so it still flags
+# public/aura.css as a 100% duplicate of src/aura.css — that's the build
+# copy working as intended, not something to fix. Needs its own exclude.
+COPYPASTE_JSCPD_FILTER_REGEX_EXCLUDE: "public/aura\\.css"
+
+# zizmor (Action security scanner) checks `uses:` refs against the GitHub
+# API for ref-confusion attacks, which needs a token — opt in our own
+# GITHUB_TOKEN rather than leave it erroring out unauthenticated.
+ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
+  - GITHUB_TOKEN
+
 # package-lock.json embeds npm packages' funding URLs (e.g. Patreon,
 # OpenCollective); those hosts 403 automated requests, which isn't a real
 # dead link. Still JSON/lint-checked — just not link-checked.
