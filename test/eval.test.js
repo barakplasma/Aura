@@ -6,10 +6,7 @@ import {
   runEvalMatrix,
   summarizeResults,
 } from "../lib/eval.js";
-import {
-  createEvalStore,
-  createMemoryAdapter,
-} from "../lib/eval-store.js";
+import { createEvalStore, createMemoryAdapter } from "../lib/eval-store.js";
 
 const variants = [
   { id: "v1", name: "A", mission: "watch A", instruction: "" },
@@ -29,9 +26,18 @@ test("expandMatrix creates model-major cells and rejects empty inputs", () => {
     { imageId: "i1", model: "m1", variantId: "v2" },
     { imageId: "i2", model: "m1", variantId: "v2" },
   ]);
-  assert.throws(() => expandMatrix({ imageIds: [], models: ["m"], variants }), /image/);
-  assert.throws(() => expandMatrix({ imageIds: ["i"], models: [], variants }), /model/);
-  assert.throws(() => expandMatrix({ imageIds: ["i"], models: ["m"], variants: [] }), /variant/);
+  assert.throws(
+    () => expandMatrix({ imageIds: [], models: ["m"], variants }),
+    /image/,
+  );
+  assert.throws(
+    () => expandMatrix({ imageIds: ["i"], models: [], variants }),
+    /model/,
+  );
+  assert.throws(
+    () => expandMatrix({ imageIds: ["i"], models: ["m"], variants: [] }),
+    /variant/,
+  );
 });
 
 test("summarizeResults scores labeled ok cells and aggregates usage", () => {
@@ -70,7 +76,11 @@ test("summarizeResults scores labeled ok cells and aggregates usage", () => {
 });
 
 test("summarizeResults leaves all-unlabeled combos unlabeled", () => {
-  const summary = summarizeResults([ok("i1", "m1", "v1", false, 0, 10, 5)], {}, 1);
+  const summary = summarizeResults(
+    [ok("i1", "m1", "v1", false, 0, 10, 5)],
+    {},
+    1,
+  );
   assert.equal(summary.combos[0].labeled, null);
 });
 
@@ -107,7 +117,10 @@ test("runEvalMatrix reports all results and bounds concurrency", async () => {
   });
 
   assert.equal(results.length, 4);
-  assert.equal(results.every((r) => r.status === "ok"), true);
+  assert.equal(
+    results.every((r) => r.status === "ok"),
+    true,
+  );
   assert.equal(maxInFlight, 2);
   assert.deepEqual(progress, [
     [1, 4],
@@ -216,7 +229,15 @@ test("eval store module imports in Node without indexedDB", () => {
   assert.equal(typeof createMemoryAdapter, "function");
 });
 
-function ok(imageId, model, variantId, triggered, confidence, latencyMs, tokens) {
+function ok(
+  imageId,
+  model,
+  variantId,
+  triggered,
+  confidence,
+  latencyMs,
+  tokens,
+) {
   return {
     imageId,
     model,

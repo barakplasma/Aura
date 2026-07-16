@@ -23,10 +23,10 @@ code-split ESM bundles in `public/assets/` (with linked sourcemaps). `src/aura.c
 is copied to `public/aura.css` by the build — edit the `src/` copy only.
 
 | Path                              | Role                                                                                                                |
-|-----------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                         |
 | `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches |
-| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen and EvalScreen (lazy-loaded), SettingsScreen |
+| `src/screens/`                    | MissionScreen, MonitorScreen, HistoryScreen, lazy OptimizeScreen/EvalScreen, SettingsScreen                         |
 | `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                             |
 | `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                          |
 | `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                |

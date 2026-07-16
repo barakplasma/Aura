@@ -554,6 +554,44 @@ textarea {
   flex: 0 0 40px;
 }
 
+.camera-feed {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(74 213 138 / 60%),
+    transparent
+  );
+  animation: scan 4s linear infinite;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.monitor-status-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgb(7 9 11 / 80%);
+  border-top: 1px solid var(--c-bdr);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 6;
+}
+
 /* Video stays rendered (never display:none — browsers throttle decoding of
    invisible video) but shrinks to nothing when the preview is hidden. */
 .stage-collapsed .camera-feed {
@@ -590,13 +628,6 @@ textarea {
   display: none;
 }
 
-.camera-feed {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
 .flash-overlay {
   position: absolute;
   inset: 0;
@@ -609,37 +640,6 @@ textarea {
 
 .flash-overlay.on {
   animation: alertflash 0.7s ease-out forwards;
-}
-
-.scan-line {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgb(74 213 138 / 60%),
-    transparent
-  );
-  animation: scan 4s linear infinite;
-  pointer-events: none;
-  z-index: 5;
-}
-
-.monitor-status-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: rgb(7 9 11 / 80%);
-  border-top: 1px solid var(--c-bdr);
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  z-index: 6;
 }
 
 .status-row {
@@ -866,15 +866,19 @@ textarea {
   gap: 6px;
 }
 
-.alert-row {
+.alert-row,
+.train-example-item {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
   padding: 8px 10px;
   background: var(--c-bg-1);
   border: 1px solid var(--c-bdr);
   border-radius: var(--radius);
   font-size: 11px;
+}
+
+.alert-row {
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .alert-thumb {
@@ -982,14 +986,8 @@ textarea {
 }
 
 .train-example-item {
-  display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 7px 10px;
-  background: var(--c-bg-1);
-  border: 1px solid var(--c-bdr);
-  border-radius: var(--radius);
-  font-size: 11px;
 }
 
 .example-label {
@@ -1071,7 +1069,7 @@ textarea {
   width: 100%;
 }
 
-.eval-label-toggle .mode-segment {
+.eval-label-option {
   flex: 1;
   padding-inline: 8px;
 }
@@ -1173,8 +1171,8 @@ textarea {
   color: var(--c-red);
 }
 
-.eval-agg-row th,
-.eval-agg-row td {
+.eval-agg-heading,
+.eval-agg-cell {
   background: rgb(232 161 58 / 8%);
   color: var(--c-amber);
   font-weight: 700;
@@ -1258,7 +1256,7 @@ textarea {
 }
 
 /* ── Responsive ────────────────────────────────────────────────────────── */
-@media (max-width: 600px) {
+@media (max-width: 600px), (orientation: landscape) and (max-height: 520px) {
   .nav-rail {
     width: 48px;
     padding-left: env(safe-area-inset-left);
@@ -1310,20 +1308,6 @@ textarea {
 /* Mobile landscape: keep the row but flip the proportions — minimized side
    preview, controls take the majority of the width. */
 @media (orientation: landscape) and (max-height: 520px) {
-  .nav-rail {
-    width: 48px;
-    padding-left: env(safe-area-inset-left);
-  }
-
-  .nav-label {
-    display: none;
-  }
-
-  .nav-num {
-    font-size: 11px;
-    opacity: 1;
-  }
-
   .stage-full {
     flex: 0 0 clamp(120px, 30vw, 260px);
   }
