@@ -279,6 +279,20 @@ export default function EvalScreen({
     : null;
   const imageById = Object.fromEntries(images.map((i) => [i.id, i]));
 
+  // One footer row per metric — the combo lookup is shared so the three
+  // aggregate rows don't repeat it.
+  function renderAggRow(label, renderAgg) {
+    return (
+      <tr className="eval-agg-row">
+        <td className="eval-row-head">{label}</td>
+        {runCombos.map((c) => {
+          const agg = summary.combos.find((x) => x.model === c.model && x.variantId === c.variant.id);
+          return <td key={c.key} className="eval-cell">{renderAgg(agg)}</td>;
+        })}
+      </tr>
+    );
+  }
+
   function expectedBadge(expected) {
     if (expected === true) return <span className="eval-expected trig">EXPECT TRIG</span>;
     if (expected === false) return <span className="eval-expected clear">EXPECT CLEAR</span>;
@@ -470,40 +484,12 @@ export default function EvalScreen({
                 ))}
                 {summary && (
                   <>
-                    <tr className="eval-agg-row">
-                      <td className="eval-row-head">ACCURACY</td>
-                      {runCombos.map((c) => {
-                        const agg = summary.combos.find((x) => x.model === c.model && x.variantId === c.variant.id);
-                        return (
-                          <td key={c.key} className="eval-cell">
-                            {agg?.labeled ? `${agg.labeled.correct}/${agg.labeled.n} (${Math.round(agg.labeled.accuracy * 100)}%)` : '—'}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                    <tr className="eval-agg-row">
-                      <td className="eval-row-head">AVG LATENCY</td>
-                      {runCombos.map((c) => {
-                        const agg = summary.combos.find((x) => x.model === c.model && x.variantId === c.variant.id);
-                        return (
-                          <td key={c.key} className="eval-cell">
-                            {agg?.meanLatencyMs != null ? `${(agg.meanLatencyMs / 1000).toFixed(1)}s` : '—'}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                    <tr className="eval-agg-row">
-                      <td className="eval-row-head">TOKENS / COST</td>
-                      {runCombos.map((c) => {
-                        const agg = summary.combos.find((x) => x.model === c.model && x.variantId === c.variant.id);
-                        return (
-                          <td key={c.key} className="eval-cell">
-                            {agg ? `${agg.totalTokens} · $${agg.estCost.toFixed(4)}` : '—'}
-                            {agg?.errorCount ? ` · ${agg.errorCount} err` : ''}
-                          </td>
-                        );
-                      })}
-                    </tr>
+                    {renderAggRow('ACCURACY', (agg) =>
+                      agg?.labeled ? `${agg.labeled.correct}/${agg.labeled.n} (${Math.round(agg.labeled.accuracy * 100)}%)` : '—')}
+                    {renderAggRow('AVG LATENCY', (agg) =>
+                      agg?.meanLatencyMs != null ? `${(agg.meanLatencyMs / 1000).toFixed(1)}s` : '—')}
+                    {renderAggRow('TOKENS / COST', (agg) =>
+                      agg ? `${agg.totalTokens} · $${agg.estCost.toFixed(4)}${agg.errorCount ? ` · ${agg.errorCount} err` : ''}` : '—')}
                   </>
                 )}
               </tbody>

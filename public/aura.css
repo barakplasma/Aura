@@ -1320,9 +1320,16 @@ textarea {
   margin: 0 auto 3px;
 }
 
-.eval-row-missing { color: var(--c-dim); font-size: 10px; }
+.eval-row-missing {
+  color: var(--c-dim);
+  font-size: 10px;
+}
 
-.eval-cell .eval-trig { color: var(--c-red); font-weight: 700; }
+.eval-cell .eval-trig {
+  color: var(--c-red);
+  font-weight: 700;
+}
+
 .eval-cell .eval-clear { color: var(--c-green); }
 
 .eval-cell .eval-latency {
