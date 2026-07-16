@@ -91,15 +91,16 @@ export default function EvalScreen({
   async function handleFiles(e) {
     const files = [...(e.target.files || [])];
     e.target.value = '';
+    const added = [];
     for (const file of files) {
       try {
         const dataUrl = await fileToFrameDataUrl(file);
-        await store.addImage({ dataUrl, source: 'upload' });
+        added.push(await store.addImage({ dataUrl, source: 'upload' }));
       } catch (err) {
         setStatusMsg(`Could not read ${file.name}: ${err.message}`);
       }
     }
-    setImages(await store.listImages());
+    if (added.length) setImages((imgs) => [...imgs, ...added]);
   }
 
   async function handleCapture() {
@@ -108,20 +109,20 @@ export default function EvalScreen({
       setStatusMsg('Start monitoring first — the camera stage must be live to capture a frame.');
       return;
     }
-    await store.addImage({ dataUrl, source: 'camera' });
-    setImages(await store.listImages());
+    const record = await store.addImage({ dataUrl, source: 'camera' });
+    setImages((imgs) => [...imgs, record]);
   }
 
   // Cycle the optional label: unlabeled → should trigger → should stay clear.
   async function handleCycleExpected(img) {
     const next = img.expected === null ? true : img.expected === true ? false : null;
-    await store.setImageExpected(img.id, next);
-    setImages(await store.listImages());
+    const updated = await store.setImageExpected(img.id, next);
+    if (updated) setImages((imgs) => imgs.map((i) => (i.id === img.id ? updated : i)));
   }
 
   async function handleRemoveImage(id) {
     await store.removeImage(id);
-    setImages(await store.listImages());
+    setImages((imgs) => imgs.filter((i) => i.id !== id));
   }
 
   // ----- Prompt variants -----
