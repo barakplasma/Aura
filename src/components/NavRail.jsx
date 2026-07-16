@@ -5,7 +5,8 @@ const SCREENS = [
   { id: 'monitor', label: 'MONITOR', num: '02' },
   { id: 'history', label: 'HISTORY', num: '03' },
   { id: 'optimize', label: 'OPTIMIZE', num: '04' },
-  { id: 'settings', label: 'SETTINGS', num: '05' },
+  { id: 'eval', label: 'EVAL', num: '05' },
+  { id: 'settings', label: 'SETTINGS', num: '06' },
 ];
 
 // Memoized — per-scan telemetry updates re-render App, but the rail only
