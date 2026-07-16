@@ -26,13 +26,15 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 |-----------------------------------|---------------------------------------------------------------------------------------------------------------------|
 | `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                         |
 | `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches |
-| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen (lazy-loaded), SettingsScreen          |
+| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen and EvalScreen (lazy-loaded), SettingsScreen |
 | `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                             |
 | `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                          |
 | `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                |
 | `public/index.html`               | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                   |
 | `public/feedback.js`              | Web Speech + Web Vibration                                                                                          |
 | `lib/aura.js`                     | Browser engine: `scanClient()` calls provider directly, `fetchModels()` lists models                                |
+| `lib/eval.js`                     | Pure prompt/model evaluation engine: matrix expansion, run loop, scoring                                            |
+| `lib/eval-store.js`               | IndexedDB persistence for eval images and last run, with injectable test adapter                                    |
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + tests)                        |
 | `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                     |
 | `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                             |
