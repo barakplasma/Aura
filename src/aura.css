@@ -1188,3 +1188,160 @@ textarea {
     font-size: 16px;
   }
 }
+
+/* ── Eval Screen ───────────────────────────────────────────────────────── */
+.eval-thumb-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.eval-thumb {
+  position: relative;
+  width: 128px;
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+  background: var(--c-bg-1);
+}
+
+.eval-thumb img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.eval-thumb-label {
+  display: block;
+  width: 100%;
+  padding: 3px 2px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--c-bdr);
+  cursor: pointer;
+}
+
+.eval-expected {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.eval-expected.trig { color: var(--c-red); }
+.eval-expected.clear { color: var(--c-green); }
+.eval-expected.none { color: var(--c-dim); }
+
+.eval-thumb-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  background: rgb(0 0 0 / 60%);
+  color: var(--c-text);
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.eval-thumb-del:hover { color: var(--c-red); }
+
+.eval-variant {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+  background: var(--c-bg-1);
+}
+
+.eval-variant-name { flex: 1; }
+
+.eval-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.eval-model-item span { word-break: break-all; }
+
+/* Results grid — wide fast; scrolls inside its own wrapper with the image
+   column pinned so rows stay identifiable. */
+.eval-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+}
+
+.eval-table {
+  border-collapse: collapse;
+  font-size: 11px;
+  min-width: 100%;
+}
+
+.eval-table th,
+.eval-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--c-bdr);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.eval-table .eval-model-head {
+  color: var(--c-amber);
+  letter-spacing: 0.06em;
+}
+
+.eval-table .eval-variant-head {
+  color: var(--c-dim);
+  font-weight: 400;
+}
+
+.eval-row-head,
+.eval-table th:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--c-bg-1);
+  z-index: 1;
+}
+
+.eval-row-thumb {
+  display: block;
+  width: 64px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  margin: 0 auto 3px;
+}
+
+.eval-row-missing { color: var(--c-dim); font-size: 10px; }
+
+.eval-cell .eval-trig { color: var(--c-red); font-weight: 700; }
+.eval-cell .eval-clear { color: var(--c-green); }
+
+.eval-cell .eval-latency {
+  display: block;
+  color: var(--c-dim);
+  font-size: 9px;
+}
+
+.eval-cell-match { background: rgb(74 213 138 / 10%); }
+.eval-cell-mismatch { background: rgb(232 80 58 / 14%); }
+.eval-cell-error { color: var(--c-red); }
+
+.eval-agg-row td {
+  border-top: 2px solid var(--c-bdr);
+  color: var(--c-dim);
+}
+
+.eval-agg-row .eval-row-head {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}

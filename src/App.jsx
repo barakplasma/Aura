@@ -12,6 +12,7 @@ import SettingsScreen from './screens/SettingsScreen.jsx';
 // Lazy — keeps the optimizer screen (and, transitively, @ax-llm/ax) out of
 // the initial bundle.
 const OptimizeScreen = lazy(() => import('./screens/OptimizeScreen.jsx'));
+const EvalScreen = lazy(() => import('./screens/EvalScreen.jsx'));
 
 export default function App() {
   const [screen, setScreen] = useState('monitor');
@@ -60,7 +61,7 @@ export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
-  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, start, stop, switchCamera } = useMonitor({ settingsRef, videoRef, canvasRef });
+  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, captureFrame, start, stop, switchCamera } = useMonitor({ settingsRef, videoRef, canvasRef });
 
   function handleToggle() {
     if (running) stop();
@@ -83,6 +84,13 @@ export default function App() {
   function handleStatusMsg(msg) {
     // Used by SettingsScreen to surface transient messages
     console.info('[aura]', msg);
+  }
+
+  // Eval-screen frame capture — only meaningful while the video element has
+  // a live frame (same readiness gate the scan loop uses).
+  function handleCaptureEvalFrame() {
+    const v = videoRef.current;
+    return v && v.readyState >= 2 ? captureFrame() : null;
   }
 
   function handleFlipCamera() {
@@ -154,6 +162,19 @@ export default function App() {
           {screen === 'optimize' && (
             <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
               <OptimizeScreen />
+            </Suspense>
+          )}
+          {screen === 'eval' && (
+            <Suspense fallback={<div className="screen"><p className="status-msg">Loading evaluation…</p></div>}>
+              <EvalScreen
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                rate={rate}
+                configuredModel={model}
+                mission={mission}
+                captureFrame={handleCaptureEvalFrame}
+                monitorRunning={running}
+              />
             </Suspense>
           )}
           {screen === 'settings' && (

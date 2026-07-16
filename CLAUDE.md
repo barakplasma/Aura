@@ -26,7 +26,7 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 |-----------------------------------|---------------------------------------------------------------------------------------------------------------------|
 | `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                         |
 | `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches |
-| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen (lazy-loaded), SettingsScreen          |
+| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen |
 | `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                             |
 | `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                          |
 | `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                |
@@ -35,6 +35,8 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `lib/aura.js`                     | Browser engine: `scanClient()` calls provider directly, `fetchModels()` lists models                                |
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + tests)                        |
 | `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                     |
+| `lib/eval.js`                     | Prompt-evaluation engine: expands the image × model × prompt matrix, runs detection-only scans, scores results       |
+| `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                    |
 | `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                             |
 | `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                      |
 | `test/`                           | Unit tests for monitor.js helpers, demo.js, and scanClient validation                                               |
