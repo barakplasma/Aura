@@ -610,6 +610,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     stats,
     markedIds,
     markExample,
+    captureFrame,
     start,
     stop,
     switchCamera,
