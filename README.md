@@ -107,7 +107,11 @@ Prefer `localhost` or `127.0.0.1` over `0.0.0.0` in the base URL — browsers bl
 
 ### Offline app shell
 
-`npm run build` generates `public/sw.js`, a service worker that precaches the app shell (HTML, CSS, icons, and every JS chunk) so the installed PWA boots with the network fully off. It only ever intercepts same-origin `GET` requests — provider calls and webhooks always go straight to the network, and are never cached. Each build stamps a new version, so a redeploy replaces the cached shell on the next visit.
+`npm run build` generates `public/sw.js`, a service worker that precaches the app shell
+(HTML, CSS, icons, and every JS chunk) so the installed PWA boots with the network fully off.
+It only ever intercepts same-origin `GET` requests — provider calls and webhooks always go
+straight to the network, and are never cached. Each build stamps a new version, so a redeploy
+replaces the cached shell on the next visit.
 
 One cosmetic caveat: the UI fonts come from Google Fonts, so offline they fall back to the system monospace and sans-serif. Everything remains legible and correctly laid out — only the typeface changes.
 

@@ -30,6 +30,17 @@ function okCompletion() {
   };
 }
 
+// Swap in a fetch stub that records each call's headers into `seenHeaders`.
+// Returns the real fetch so the caller can restore it in a finally block.
+function stubFetchCapturingHeaders(seenHeaders, reply = okCompletion) {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, opts) => {
+    seenHeaders.push(opts.headers);
+    return reply();
+  };
+  return realFetch;
+}
+
 test("buildDetectionPrompt embeds the mission and schema", () => {
   const p = buildDetectionPrompt("alert if a person is near the pool");
   assert.match(p, /alert if a person is near the pool/);
@@ -116,12 +127,8 @@ test("scanClient still refuses to run without a provider (no silent mock)", asyn
 });
 
 test("scanClient runs keyless against a local server and sends no Authorization", async () => {
-  const realFetch = globalThis.fetch;
   const seenHeaders = [];
-  globalThis.fetch = async (_url, opts) => {
-    seenHeaders.push(opts.headers);
-    return okCompletion();
-  };
+  const realFetch = stubFetchCapturingHeaders(seenHeaders);
   try {
     const result = await scanClient({
       baseUrl: "http://localhost:11434/v1",
@@ -150,15 +157,11 @@ test("scanClient runs keyless against a local server and sends no Authorization"
 });
 
 test("fetchModels omits Authorization when no key is configured", async () => {
-  const realFetch = globalThis.fetch;
   const seenHeaders = [];
-  globalThis.fetch = async (_url, opts) => {
-    seenHeaders.push(opts.headers);
-    return {
-      ok: true,
-      json: async () => ({ data: [{ id: "b" }, { id: "a" }] }),
-    };
-  };
+  const realFetch = stubFetchCapturingHeaders(seenHeaders, () => ({
+    ok: true,
+    json: async () => ({ data: [{ id: "b" }, { id: "a" }] }),
+  }));
   try {
     const list = await fetchModels("http://localhost:11434/v1", "");
     assert.deepEqual(list, ["a", "b"]);
@@ -431,24 +434,8 @@ test("scanClient applies no forced timeout when requestTimeout is null (MAX mode
 });
 
 test("scanClient sends OpenRouter attribution headers only for an OpenRouter baseUrl", async () => {
-  const realFetch = globalThis.fetch;
   const seenHeaders = [];
-  globalThis.fetch = async (_url, opts) => {
-    seenHeaders.push(opts.headers);
-    return {
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              content: '{"triggered":false,"confidence":0,"reason":"clear"}',
-            },
-          },
-        ],
-        usage: {},
-      }),
-    };
-  };
+  const realFetch = stubFetchCapturingHeaders(seenHeaders);
   try {
     await scanClient({
       baseUrl: "https://openrouter.ai/api/v1",
