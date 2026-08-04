@@ -21,3 +21,14 @@ createRoot(document.getElementById('root')).render(
     <App />
   </StrictMode>
 );
+
+// Offline app shell — lets the installed PWA boot with no internet at all,
+// which is what makes a local inference server (Ollama, LM Studio, llama.cpp)
+// usable off-grid. './sw.js' resolves against the document base, so it works
+// both at the GitHub Pages sub-path and at a localhost root. The worker never
+// touches provider or webhook requests (see scripts/sw-template.js).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}

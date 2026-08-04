@@ -505,8 +505,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
 
   const start = useCallback(async () => {
     const s = settingsRef.current;
-    if (!s.demo && !s.apiKey) {
-      setStatus("No API key — add one in Settings, or use Demo Mode.");
+    // The API key is deliberately not required — a local server (Ollama, LM
+    // Studio, llama.cpp) needs none. Base URL + model are what "configured" means.
+    if (!s.demo && (!s.baseUrl || !s.model)) {
+      setStatus(
+        "Set a provider Base URL and model in Settings, or use Demo Mode.",
+      );
       return;
     }
     if (!s.demo && !s.mission.trim()) {

@@ -57,12 +57,14 @@ npm run deploy            # Build + gh-pages -d public
 
 Users configure three fields in the UI, stored in localStorage:
 
-- `aura.baseUrl` — e.g. `https://api.cerebras.ai/v1`
-- `aura.apiKey` — user's provider API key
+- `aura.baseUrl` — e.g. `https://api.cerebras.ai/v1` or `http://localhost:11434/v1`
+- `aura.apiKey` — user's provider API key; **blank is valid** (local servers need none)
 - `aura.model` — model name, e.g. `gemma-4-31b`
 
 `scanClient()` calls `POST {baseUrl}/chat/completions` with the OpenAI schema.
 `fetchModels()` calls `GET {baseUrl}/models` to list available models.
+Base URL + model are what "configured" means — never gate the UI on the API key.
+`Authorization` is omitted entirely when the key is blank.
 
 ## Conventions
 
@@ -70,16 +72,26 @@ Users configure three fields in the UI, stored in localStorage:
 - Match the surrounding comment density and naming.
 - All AI logic must be browser-compatible (uses `fetch`, `AbortController`, no Node APIs).
 - After changing the engine, add/extend a test in `test/`.
-- No API key means `scanClient()` throws — there is no silent mock. Demo mode is
-  explicit opt-in (TRY DEMO on the Monitor screen), isolated in `lib/demo.js`,
-  clearly bannered while active, and never fires webhooks.
+- There is no silent mock: a misconfigured or unreachable provider throws. A blank
+  API key is *not* misconfiguration — it's the normal local-server setup, and the
+  request goes out for real. Demo mode is the only simulated path: explicit opt-in
+  (TRY DEMO on the Monitor screen), isolated in `lib/demo.js`, clearly bannered
+  while active, and never fires webhooks.
 - Don't commit secrets. The API key stays in the user's localStorage.
-- Don't add an offline service worker — the app needs the network for API calls.
+- `public/sw.js` is **generated** by `npm run build` — edit `scripts/sw-template.js`.
+  It caches the app shell only, so the PWA boots offline against a local model. It
+  must never intercept anything but same-origin `GET`s: provider calls and webhooks
+  always go straight to the network.
 
 ## Limitations
 
-- Provider must support OpenAI-compatible `/v1/chat/completions` with vision + `response_format: json_object`.
-- Provider must support CORS (most do, incl. Cerebras, Groq).
+- Provider must support OpenAI-compatible `/v1/chat/completions` with vision. JSON
+  mode is preferred but optional — a server that rejects `response_format` gets one
+  retry without it, remembered for the session.
+- Provider must support CORS (most do, incl. Cerebras, Groq). Local servers need it
+  switched on: `OLLAMA_ORIGINS`, `llama-server --cors`.
+- An HTTPS deployment can't reliably reach `http://localhost` (Chrome's Private
+  Network Access preflight) — offline use means serving the app locally too.
 - iOS Safari has no Vibration API — haptics disabled there.
 - Speech/vibration require a secure context (HTTPS or localhost).
 - Cost is estimated from token usage returned by the provider.
