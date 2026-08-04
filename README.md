@@ -107,7 +107,7 @@ Prefer `localhost` or `127.0.0.1` over `0.0.0.0` in the base URL — browsers bl
 
 ### Offline app shell
 
-`npm run build` generates `public/sw.js`, a service worker that precaches the app shell
+`npm run build` generates `public/sw.js` (a build artifact, not checked in), a service worker that precaches the app shell
 (HTML, CSS, icons, and every JS chunk) so the installed PWA boots with the network fully off.
 It only ever intercepts same-origin `GET` requests — provider calls and webhooks always go
 straight to the network, and are never cached. Each build stamps a new version, so a redeploy

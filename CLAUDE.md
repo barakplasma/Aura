@@ -78,7 +78,8 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
   (TRY DEMO on the Monitor screen), isolated in `lib/demo.js`, clearly bannered
   while active, and never fires webhooks.
 - Don't commit secrets. The API key stays in the user's localStorage.
-- `public/sw.js` is **generated** by `npm run build` — edit `scripts/sw-template.js`.
+- `public/sw.js` is **generated** by `npm run build` (and gitignored — it isn't in
+  a fresh clone until you build) — edit `scripts/sw-template.js`.
   It caches the app shell only, so the PWA boots offline against a local model. It
   must never intercept anything but same-origin `GET`s: provider calls and webhooks
   always go straight to the network.

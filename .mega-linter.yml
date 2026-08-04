@@ -7,7 +7,8 @@ DISABLE_LINTERS:
 
 # public/assets is esbuild output (minified, code-split bundles + sourcemaps);
 # public/aura.css is a build copy of src/aura.css; public/sw.js is generated
-# from scripts/sw-template.js. Don't lint generated files.
+# from scripts/sw-template.js and gitignored, so CI never sees it — the entry
+# below only matters when linting a locally built tree. Don't lint generated files.
 FILTER_REGEX_EXCLUDE: "(public/assets/|public/aura\\.css|public/sw\\.js|\\.map$)"
 
 # jscpd runs in project mode (scans the whole tree itself, ignoring
