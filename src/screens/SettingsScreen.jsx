@@ -1,6 +1,15 @@
 import { useState } from 'react';
-import { fetchModels } from '../../lib/aura.js';
+import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
+
+// One-click base URLs. The local ones need no API key, and cost nothing —
+// picking one zeroes the cost rate so the telemetry doesn't invent dollars.
+const PROVIDER_PRESETS = [
+  { id: 'ollama', label: 'OLLAMA', url: 'http://localhost:11434/v1', local: true },
+  { id: 'lmstudio', label: 'LM STUDIO', url: 'http://localhost:1234/v1', local: true },
+  { id: 'llamacpp', label: 'LLAMA.CPP', url: 'http://localhost:8080/v1', local: true },
+  { id: 'cerebras', label: 'CEREBRAS', url: 'https://api.cerebras.ai/v1', local: false },
+];
 
 const SCAN_MODES = [
   { id: 'interval', label: 'INTERVAL' },
@@ -32,6 +41,7 @@ export default function SettingsScreen({
   webhookHeaders, setWebhookHeaders,
   webhookAction, setWebhookAction,
   webhookSchema, setWebhookSchema,
+  statusMsg,
   onStatusMsg,
 }) {
   const [models, setModels] = useState([]);
@@ -42,9 +52,9 @@ export default function SettingsScreen({
   const [cameras, setCameras] = useState([]);
   const [cameraStatus, setCameraStatus] = useState('');
 
+  // No API-key guard: a local server lists its models without one.
   async function handleFetchModels() {
     if (!baseUrl) { onStatusMsg('Enter a Base URL first.'); return; }
-    if (!apiKey) { onStatusMsg('Enter an API key first.'); return; }
     setFetchingModels(true);
     try {
       const list = await fetchModels(baseUrl, apiKey);
@@ -63,6 +73,22 @@ export default function SettingsScreen({
     setModel(m);
     setShowDropdown(false);
   }
+
+  // Switching providers drops the stored key. Keeping it would send one
+  // provider's credential to another endpoint on the very next request —
+  // a Cerebras key to localhost, or an OpenAI key to Cerebras. Re-picking the
+  // provider that's already configured leaves the key alone.
+  function selectPreset(preset) {
+    if (apiKey && !sameOrigin(baseUrl, preset.url)) {
+      setApiKey('');
+      onStatusMsg(`Switched provider — API key cleared. Enter ${preset.label}'s key if it needs one.`);
+    }
+    setBaseUrl(preset.url);
+    setModels([]);
+    if (preset.local) setRate('0');
+  }
+
+  const isLocal = isLocalBaseUrl(baseUrl);
 
   const filteredModels = models.filter(m => m.toLowerCase().includes((model || '').toLowerCase()));
 
@@ -111,12 +137,34 @@ export default function SettingsScreen({
       <div className="settings-section">
         <div className="section-label">PROVIDER</div>
         <div className="form-group">
+          <label className="field-label">PRESET</label>
+          <div className="mode-segments" role="group" aria-label="Provider preset">
+            {PROVIDER_PRESETS.map(p => (
+              <button
+                key={p.id}
+                className={`mode-segment ${baseUrl === p.url ? 'active' : ''}`}
+                onClick={() => selectPreset(p)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="form-group">
           <label className="field-label">BASE URL</label>
           <input id="provider-baseurl" type="url" className="dc-input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.cerebras.ai/v1" />
+          {isLocal && (
+            <div className="field-hint">
+              Local server — allow this page's origin in its CORS config
+              (<code>OLLAMA_ORIGINS='*'</code> for Ollama, <code>--cors</code> for llama-server).
+              Prefer <code>localhost</code> or <code>127.0.0.1</code>: browsers block <code>0.0.0.0</code> as a request target.
+            </div>
+          )}
         </div>
         <div className="form-group">
           <label className="field-label">API KEY</label>
-          <input id="provider-apikey" type="password" className="dc-input" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="csk-xxxx or sk-xxxx" />
+          <input id="provider-apikey" type="password" className="dc-input" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="blank for a local server" />
+          <div className="field-hint">Leave blank for a local server (Ollama, LM Studio, llama.cpp) that needs no key — no Authorization header is sent.</div>
         </div>
         <div className="form-group model-row">
           <div style={{ flex: 1 }}>
@@ -141,6 +189,7 @@ export default function SettingsScreen({
             {fetchingModels ? 'FETCHING…' : 'FETCH MODELS'}
           </button>
         </div>
+        {statusMsg && <p id="provider-status" className="status-msg" role="status">{statusMsg}</p>}
       </div>
 
       <div className="settings-section">

@@ -19,6 +19,8 @@ export default function App() {
   // Session-only on purpose: a reload always exits demo mode.
   const [demoMode, setDemoMode] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useLocalStorage('aura.previewCollapsed', false);
+  // Transient provider messages (model fetch results/failures) shown in Settings.
+  const [statusMsg, setStatusMsg] = useState('');
 
   // Settings — persisted via localStorage (JSON-serialized by @uidotdev/usehooks)
   const [baseUrl, setBaseUrl] = useLocalStorage('aura.baseUrl', 'https://api.cerebras.ai/v1');
@@ -82,8 +84,10 @@ export default function App() {
   }
 
   function handleStatusMsg(msg) {
-    // Used by SettingsScreen to surface transient messages
+    // Surfaced in the Settings PROVIDER section — a failed model fetch against
+    // a local server (CORS, server down) is otherwise invisible to the user.
     console.info('[aura]', msg);
+    setStatusMsg(msg);
   }
 
   // Eval-screen frame capture — only meaningful while the video element has
@@ -150,7 +154,7 @@ export default function App() {
               progress={progress}
               stats={stats}
               onToggle={handleToggle}
-              hasApiKey={Boolean(apiKey)}
+              providerReady={Boolean(baseUrl && model)}
               demoMode={demoMode}
               onStartDemo={handleStartDemo}
               onOpenSettings={() => setScreen('settings')}
@@ -196,6 +200,7 @@ export default function App() {
               webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}
               webhookAction={webhookAction} setWebhookAction={setWebhookAction}
               webhookSchema={webhookSchema} setWebhookSchema={setWebhookSchema}
+              statusMsg={statusMsg}
               onStatusMsg={handleStatusMsg}
             />
           )}

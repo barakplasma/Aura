@@ -152,8 +152,8 @@ export default function EvalScreen({
   // ----- Models -----
 
   async function handleFetchModels() {
-    if (!baseUrl || !apiKey) {
-      setStatusMsg('Configure the provider Base URL and API key in Settings first.');
+    if (!baseUrl) {
+      setStatusMsg('Configure the provider Base URL in Settings first.');
       return;
     }
     setFetchingModels(true);
@@ -194,7 +194,8 @@ export default function EvalScreen({
   const totalCalls = images.length * selectedModels.length * usableVariants.length;
   const running = Boolean(activeRun);
   const blockers = [];
-  if (!apiKey) blockers.push('API key (Settings)');
+  // No API key blocker — a local provider needs none.
+  if (!baseUrl) blockers.push('provider Base URL (Settings)');
   if (!images.length) blockers.push('sample images');
   if (!usableVariants.length) blockers.push('a prompt variant with a mission');
   if (!selectedModels.length) blockers.push('a model');
