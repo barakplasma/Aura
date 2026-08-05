@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { fetchModels, isLocalBaseUrl } from '../../lib/aura.js';
+import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 
 // One-click base URLs. The local ones need no API key, and cost nothing —
@@ -74,9 +74,15 @@ export default function SettingsScreen({
     setShowDropdown(false);
   }
 
-  // Presets only fill the base URL — a stored cloud key is left untouched so
-  // switching back to a paid provider doesn't mean re-entering it.
+  // Switching providers drops the stored key. Keeping it would send one
+  // provider's credential to another endpoint on the very next request —
+  // a Cerebras key to localhost, or an OpenAI key to Cerebras. Re-picking the
+  // provider that's already configured leaves the key alone.
   function selectPreset(preset) {
+    if (apiKey && !sameOrigin(baseUrl, preset.url)) {
+      setApiKey('');
+      onStatusMsg(`Switched provider — API key cleared. Enter ${preset.label}'s key if it needs one.`);
+    }
     setBaseUrl(preset.url);
     setModels([]);
     if (preset.local) setRate('0');

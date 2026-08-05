@@ -10,6 +10,7 @@ import {
   parseWebhookAction,
   normalizeUsage,
   isLocalBaseUrl,
+  sameOrigin,
 } from "../lib/monitor.js";
 import { scanClient, fetchModels, _resetJsonModeCache } from "../lib/aura.js";
 
@@ -241,6 +242,23 @@ test("scanClient retries without response_format when the server rejects JSON mo
     });
     assert.equal(bodies.length, 3);
     assert.equal(bodies[2].response_format, undefined);
+
+    // ...but only for that model. An eval matrix runs several models against
+    // one base URL, so one model's refusal must not disable JSON mode for the
+    // rest.
+    await scanClient({
+      baseUrl: "http://localhost:8080/v1",
+      model: "qwen2.5vl",
+      apiKey: "",
+      mission: "watch the door",
+      image: "x".repeat(64),
+      requestTimeout: 30,
+    });
+    assert.equal(bodies.length, 4);
+    assert.ok(
+      bodies[3].response_format,
+      "a different model still gets JSON mode",
+    );
   } finally {
     globalThis.fetch = realFetch;
     _resetJsonModeCache();
@@ -306,6 +324,29 @@ test("an unreachable local server names the likely causes", async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("sameOrigin compares scheme, host and port", () => {
+  const same = [
+    ["http://localhost:11434/v1", "http://localhost:11434/v1"],
+    ["http://localhost:11434/v1", "http://localhost:11434/openai/v1"],
+    ["https://api.cerebras.ai/v1", "https://api.cerebras.ai/v1/"],
+  ];
+  for (const [a, b] of same) assert.equal(sameOrigin(a, b), true, `${a} ${b}`);
+
+  const different = [
+    ["http://localhost:11434/v1", "http://localhost:1234/v1"], // port
+    ["http://localhost:11434/v1", "http://127.0.0.1:11434/v1"], // host
+    ["http://localhost:11434/v1", "https://localhost:11434/v1"], // scheme
+    ["https://api.cerebras.ai/v1", "https://api.openai.com/v1"],
+    // Unparseable input must never read as a match — that would skip clearing
+    // the stored key when switching providers.
+    ["", "https://api.cerebras.ai/v1"],
+    ["not a url", "https://api.cerebras.ai/v1"],
+    [undefined, "https://api.cerebras.ai/v1"],
+  ];
+  for (const [a, b] of different)
+    assert.equal(sameOrigin(a, b), false, `${a} ${b}`);
 });
 
 test("isLocalBaseUrl recognizes loopback and LAN hosts", () => {
