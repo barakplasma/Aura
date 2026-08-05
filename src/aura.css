@@ -550,19 +550,6 @@ textarea {
   flex: 0 0 40px;
 }
 
-/* Video stays rendered (never display:none — browsers throttle decoding of
-   invisible video) but shrinks to nothing when the preview is hidden. */
-.stage-collapsed .camera-feed {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  opacity: 0;
-}
-
-.stage-collapsed .scan-line {
-  display: none;
-}
-
 /* Floating mini preview while armed on another tab; tap returns to Monitor. */
 .stage-pip {
   position: fixed;
@@ -577,10 +564,6 @@ textarea {
   box-shadow: 0 2px 12px rgb(0 0 0 / 60%);
 }
 
-.stage-pip .monitor-status-bar {
-  display: none;
-}
-
 /* Idle on another tab: nothing is capturing, safe to fully hide. */
 .stage-parked {
   display: none;
@@ -591,6 +574,15 @@ textarea {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* Video stays rendered (never display:none — browsers throttle decoding of
+   invisible video) but shrinks to nothing when the preview is hidden. */
+.stage-collapsed .camera-feed {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  opacity: 0;
 }
 
 .flash-overlay {
@@ -624,6 +616,10 @@ textarea {
   z-index: 5;
 }
 
+.stage-collapsed .scan-line {
+  display: none;
+}
+
 .monitor-status-bar {
   position: absolute;
   bottom: 0;
@@ -636,6 +632,10 @@ textarea {
   flex-direction: column;
   gap: 6px;
   z-index: 6;
+}
+
+.stage-pip .monitor-status-bar {
+  display: none;
 }
 
 .status-row {
@@ -862,15 +862,19 @@ textarea {
   gap: 6px;
 }
 
+.alert-row,
+.train-example-item {
+  background: var(--c-bg-1);
+  border: 1px solid var(--c-bdr);
+  border-radius: var(--radius);
+  font-size: 11px;
+}
+
 .alert-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 8px 10px;
-  background: var(--c-bg-1);
-  border: 1px solid var(--c-bdr);
-  border-radius: var(--radius);
-  font-size: 11px;
 }
 
 .alert-thumb {
@@ -982,10 +986,6 @@ textarea {
   justify-content: space-between;
   align-items: center;
   padding: 7px 10px;
-  background: var(--c-bg-1);
-  border: 1px solid var(--c-bdr);
-  border-radius: var(--radius);
-  font-size: 11px;
 }
 
 .example-label {
@@ -1103,7 +1103,10 @@ textarea {
 }
 
 /* ── Responsive ────────────────────────────────────────────────────────── */
-@media (max-width: 600px) {
+
+/* Narrow nav rail: shared by portrait mobile (max-width) and landscape
+   mobile (short viewport), so it's factored out of both breakpoints below. */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 520px) {
   .nav-rail {
     width: 48px;
     padding-left: env(safe-area-inset-left);
@@ -1117,7 +1120,9 @@ textarea {
     font-size: 11px;
     opacity: 1;
   }
+}
 
+@media (max-width: 600px) {
   .top-bar-right {
     display: none;
   }
@@ -1155,20 +1160,6 @@ textarea {
 /* Mobile landscape: keep the row but flip the proportions — minimized side
    preview, controls take the majority of the width. */
 @media (orientation: landscape) and (max-height: 520px) {
-  .nav-rail {
-    width: 48px;
-    padding-left: env(safe-area-inset-left);
-  }
-
-  .nav-label {
-    display: none;
-  }
-
-  .nav-num {
-    font-size: 11px;
-    opacity: 1;
-  }
-
   .stage-full {
     flex: 0 0 clamp(120px, 30vw, 260px);
   }
