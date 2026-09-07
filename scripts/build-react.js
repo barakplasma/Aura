@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { copyFile, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -28,15 +28,49 @@ await Promise.all([
     // them when devtools is open, so users never pay for them.
     sourcemap: "linked",
   }),
+  // Separate entry point: the ONLY bundle that pulls in
+  // @huggingface/transformers (see CLAUDE.md's bundle rule). No splitting —
+  // a worker script is a single file, not a lazily-loaded chunk graph.
+  esbuild.build({
+    entryPoints: [path.join(root, "src", "workers", "ml.worker.js")],
+    outdir,
+    entryNames: "ml.worker",
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2020",
+    minify: true,
+    sourcemap: "linked",
+  }),
   copyFile(
     path.join(root, "src", "aura.css"),
     path.join(root, "public", "aura.css"),
   ),
+  copyOnnxRuntimeFiles(),
 ]);
 
 await buildServiceWorker();
 
 console.log("React bundle built.");
+
+// The BROWSER engine's worker points ONNX Runtime Web at these same-origin
+// files (env.backends.onnx.wasm.wasmPaths in src/workers/ml.worker.js)
+// instead of its default CDN, so the app keeps working offline once cached.
+// onnxruntime-web ships one universal WASM binary (SIMD + threading + JSEP/
+// WebGPU support merged) — copy just that pair rather than the whole dist/.
+async function copyOnnxRuntimeFiles() {
+  const ortDist = path.join(root, "node_modules", "onnxruntime-web", "dist");
+  const ortOut = path.join(root, "public", "ort");
+  await rm(ortOut, { recursive: true, force: true });
+  await mkdir(ortOut, { recursive: true });
+  const files = [
+    "ort-wasm-simd-threaded.asyncify.wasm",
+    "ort-wasm-simd-threaded.asyncify.mjs",
+  ];
+  await Promise.all(
+    files.map((f) => copyFile(path.join(ortDist, f), path.join(ortOut, f))),
+  );
+}
 
 // Generate public/sw.js from the template with a precache list of the shell
 // (every emitted chunk included, so the lazy-loaded screens work offline) and

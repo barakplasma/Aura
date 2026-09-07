@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@ax-llm/ax": "^22.0.7",
+    "@huggingface/transformers": "^4.2.0",
     "@sentry/browser": "^10.65.0",
     "@uidotdev/usehooks": "^2.4.1",
     "react": "^19.2.7",

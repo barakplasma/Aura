@@ -1,6 +1,7 @@
 import { useState, useRef, lazy, Suspense } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
+import { DEFAULT_BROWSER_MODEL } from '../lib/browser-engine.js';
 import TopBar from './components/TopBar.jsx';
 import NavRail from './components/NavRail.jsx';
 import MonitorStage from './components/MonitorStage.jsx';
@@ -26,6 +27,8 @@ export default function App() {
   const [baseUrl, setBaseUrl] = useLocalStorage('aura.baseUrl', 'https://api.cerebras.ai/v1');
   const [apiKey, setApiKey] = useLocalStorage('aura.apiKey', '');
   const [model, setModel] = useLocalStorage('aura.model', '');
+  const [engine, setEngine] = useLocalStorage('aura.engine', 'provider');
+  const [browserModel, setBrowserModel] = useLocalStorage('aura.browserModel', DEFAULT_BROWSER_MODEL);
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
@@ -50,11 +53,20 @@ export default function App() {
   const SCAN_EVERY_UNIT_SECONDS = { s: 1, m: 60, h: 3600 };
   const scanEvery = (parseFloat(scanEveryValue) || 0) * (SCAN_EVERY_UNIT_SECONDS[scanEveryUnit] || 1);
 
+  // "Configured" means a model is selected for BROWSER, or a base URL + model
+  // for PROVIDER — never gate on the API key (see CLAUDE.md's provider format).
+  const providerReady = engine === 'browser' ? Boolean(browserModel) : Boolean(baseUrl && model);
+  // The BROWSER engine never spends a cent — force the telemetry rate to 0
+  // rather than have it silently invent cost from a stale cloud rate (same
+  // effect as picking a local preset in SettingsScreen).
+  const effectiveRate = engine === 'browser' ? '0' : rate;
+
   // Live settings ref — updated every render so tick() sees current values without stale closures
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
-    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate,
+    engine, browserModel,
+    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate: effectiveRate,
     cameraFacing, cameraDeviceId, videoSource,
     speech, haptics, demo: demoMode,
     webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
@@ -154,7 +166,8 @@ export default function App() {
               progress={progress}
               stats={stats}
               onToggle={handleToggle}
-              providerReady={Boolean(baseUrl && model)}
+              providerReady={providerReady}
+              engine={engine}
               demoMode={demoMode}
               onStartDemo={handleStartDemo}
               onOpenSettings={() => setScreen('settings')}
@@ -183,6 +196,8 @@ export default function App() {
           )}
           {screen === 'settings' && (
             <SettingsScreen
+              engine={engine} setEngine={setEngine}
+              browserModel={browserModel} setBrowserModel={setBrowserModel}
               baseUrl={baseUrl} setBaseUrl={setBaseUrl}
               apiKey={apiKey} setApiKey={setApiKey}
               model={model} setModel={setModel}
@@ -202,6 +217,7 @@ export default function App() {
               webhookSchema={webhookSchema} setWebhookSchema={setWebhookSchema}
               statusMsg={statusMsg}
               onStatusMsg={handleStatusMsg}
+              captureFrame={handleCaptureEvalFrame}
             />
           )}
         </main>

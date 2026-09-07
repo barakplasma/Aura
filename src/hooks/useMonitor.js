@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { scanClient } from "../../lib/aura.js";
 import { demoScan } from "../../lib/demo.js";
+import { scanBrowser, BROWSER_MODELS } from "../../lib/browser-engine.js";
 import {
   getExamples,
   getOptimizedArtifact,
@@ -17,8 +18,12 @@ const JPEG_QUALITY = 0.4;
 // Self-tuning timeout never dips below this, so ordinary latency variance
 // doesn't kill a scan mid-flight. There is no operator-set ceiling — beyond
 // the floor, the bound is derived entirely from this session's own latency
-// history (mean + 3 stddev, once enough samples have landed).
-const TIMEOUT_FLOOR_MS = 4000;
+// history (mean + 3 stddev, once enough samples have landed). The BROWSER
+// engine needs a much higher floor: a phone doing WebGPU (or WASM-fallback)
+// inference can take many seconds, especially on the first scan while the
+// model is still warming up.
+const TIMEOUT_FLOOR_MS_PROVIDER = 4000;
+const TIMEOUT_FLOOR_MS_BROWSER = 30000;
 const TIMEOUT_MIN_SAMPLES = 5;
 // How many recent non-alert frames to keep for false-negative review, and how
 // far apart to sample them (they're near-duplicates otherwise).
@@ -287,10 +292,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       // this session's own latency history (mean + 3 stddev) — no operator
       // ceiling involved.
       const isMaxMode = s.scanMode === "max";
+      const isBrowserEngine = s.engine === "browser";
+      const timeoutFloorMs = isBrowserEngine
+        ? TIMEOUT_FLOOR_MS_BROWSER
+        : TIMEOUT_FLOOR_MS_PROVIDER;
       const effTimeoutMs = isMaxMode
         ? null
         : tunedTimeoutMs(st.samples, {
-            floorMs: TIMEOUT_FLOOR_MS,
+            floorMs: timeoutFloorMs,
             minSamples: TIMEOUT_MIN_SAMPLES,
           });
       try {
@@ -299,27 +308,50 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
         const examples = getExamples();
         const optimizedInstruction =
           getOptimizedArtifact()?.program?.instruction;
+        // Model-download progress (first arm, or a model switch) is surfaced
+        // as the monitor status so the operator sees "Loading SmolVLM2 256M —
+        // 61%" instead of a blank screen while the weights fetch.
+        const onProgress = isBrowserEngine
+          ? (msg) => {
+              if (!internalRef.current.running || msg.pct == null) return;
+              const label =
+                BROWSER_MODELS[s.browserModel]?.label || "browser model";
+              setStatus(`Loading ${label} — ${msg.pct}%`);
+            }
+          : undefined;
         const result = s.demo
           ? demoScan({
               mission: s.mission,
               action: s.action,
               threshold: s.threshold ?? 0,
             })
-          : await scanClient({
-              baseUrl: s.baseUrl || undefined,
-              model: s.model || undefined,
-              apiKey: s.apiKey || undefined,
-              mission: s.mission,
-              action: s.action,
-              image: frame,
-              threshold: s.threshold ?? 0,
-              webhookAction: s.webhookAction || undefined,
-              webhookSchema: parseWebhookSchema() || undefined,
-              examples: examples.length > 0 ? examples : undefined,
-              optimizedInstruction: optimizedInstruction || undefined,
-              requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
-              signal: abort.signal,
-            });
+          : isBrowserEngine
+            ? await scanBrowser({
+                model: s.browserModel || undefined,
+                mission: s.mission,
+                action: s.action,
+                image: frame,
+                threshold: s.threshold ?? 0,
+                webhookAction: s.webhookAction || undefined,
+                webhookSchema: parseWebhookSchema() || undefined,
+                signal: abort.signal,
+                onProgress,
+              })
+            : await scanClient({
+                baseUrl: s.baseUrl || undefined,
+                model: s.model || undefined,
+                apiKey: s.apiKey || undefined,
+                mission: s.mission,
+                action: s.action,
+                image: frame,
+                threshold: s.threshold ?? 0,
+                webhookAction: s.webhookAction || undefined,
+                webhookSchema: parseWebhookSchema() || undefined,
+                examples: examples.length > 0 ? examples : undefined,
+                optimizedInstruction: optimizedInstruction || undefined,
+                requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
+                signal: abort.signal,
+              });
         if (!internalRef.current.running) return;
         const rtt = Math.round(performance.now() - started);
         // Record the per-frame latency and refresh the percentile stats.
@@ -332,7 +364,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
         const timeoutMs = isMaxMode
           ? Infinity
           : tunedTimeoutMs(st.samples, {
-              floorMs: TIMEOUT_FLOOR_MS,
+              floorMs: timeoutFloorMs,
               minSamples: TIMEOUT_MIN_SAMPLES,
             });
         setStats({ p50, p90, timeoutMs, count: st.samples.length });
@@ -356,7 +388,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
               ? "live"
               : result.mode === "demo"
                 ? "demo"
-                : "off";
+                : result.mode === "browser"
+                  ? "browser"
+                  : "off";
           return prev === next ? prev : next;
         });
         setTelemetry((prev) => {
@@ -506,10 +540,16 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const start = useCallback(async () => {
     const s = settingsRef.current;
     // The API key is deliberately not required — a local server (Ollama, LM
-    // Studio, llama.cpp) needs none. Base URL + model are what "configured" means.
-    if (!s.demo && (!s.baseUrl || !s.model)) {
+    // Studio, llama.cpp) needs none. Base URL + model are what "configured"
+    // means for the PROVIDER engine; the BROWSER engine only needs a model
+    // selection (base URL/API key are irrelevant to it).
+    const providerReady =
+      s.engine === "browser" ? Boolean(s.browserModel) : Boolean(s.baseUrl && s.model);
+    if (!s.demo && !providerReady) {
       setStatus(
-        "Set a provider Base URL and model in Settings, or use Demo Mode.",
+        s.engine === "browser"
+          ? "Pick a BROWSER MODEL in Settings, or use Demo Mode."
+          : "Set a provider Base URL and model in Settings, or use Demo Mode.",
       );
       return;
     }

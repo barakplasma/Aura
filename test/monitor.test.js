@@ -4,7 +4,9 @@ import {
   buildDetectionPrompt,
   buildActionPrompt,
   buildWebhookActionPrompt,
+  buildCompactDetectionPrompt,
   parseDetection,
+  parseLooseDetection,
   normalizeDetection,
   parseAction,
   parseWebhookAction,
@@ -78,6 +80,74 @@ test("parseAction extracts and defaults the message", () => {
     "Please leave.",
   );
   assert.ok(parseAction('{"message":""}').message.length > 0);
+});
+
+test("parseAction falls back to the raw reply when there's no JSON object", () => {
+  // A small in-browser model rarely emits JSON — use its prose verbatim
+  // rather than the generic fallback.
+  assert.equal(
+    parseAction("Please leave the area immediately.").message,
+    "Please leave the area immediately.",
+  );
+  assert.equal(
+    parseAction("  wrapped in whitespace  ").message,
+    "wrapped in whitespace",
+  );
+});
+
+test("parseAction only uses the generic fallback for an empty reply", () => {
+  assert.equal(parseAction("").message, "Attention please.");
+  assert.equal(parseAction("   ").message, "Attention please.");
+  assert.equal(parseAction(null).message, "Attention please.");
+});
+
+test("buildCompactDetectionPrompt embeds the mission and answer format", () => {
+  const p = buildCompactDetectionPrompt("a person is at the door");
+  assert.match(p, /a person is at the door/);
+  assert.match(p, /YES or NO/);
+  assert.match(buildCompactDetectionPrompt(""), /anything unusual/);
+  assert.match(buildCompactDetectionPrompt(), /anything unusual/);
+});
+
+test("parseLooseDetection still parses the strict JSON schema", () => {
+  const r = parseLooseDetection(
+    '{"triggered":true,"confidence":90,"reason":"a person at the door"}',
+  );
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 90);
+  assert.equal(r.reason, "a person at the door");
+});
+
+test("parseLooseDetection parses a loose YES/NO line", () => {
+  const r = parseLooseDetection("YES 80 someone at the door");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 80);
+  assert.equal(r.reason, "someone at the door");
+
+  const r2 = parseLooseDetection("no, 5, nothing happening here");
+  assert.equal(r2.triggered, false);
+  assert.equal(r2.confidence, 5);
+  assert.equal(r2.reason, "nothing happening here");
+});
+
+test("parseLooseDetection tolerates extra whitespace/punctuation and missing parts", () => {
+  const r = parseLooseDetection("  YES.\n");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 100); // no confidence given — defaults from triggered
+  assert.ok(r.reason.length > 0);
+
+  const r2 = parseLooseDetection("no");
+  assert.equal(r2.triggered, false);
+  assert.equal(r2.confidence, 0);
+});
+
+test("parseLooseDetection degrades to sensible defaults on garbage input, never throws", () => {
+  for (const bad of ["", "   ", "asdkjaskjd nonsense", null, undefined, "{}", "{malformed"]) {
+    const r = parseLooseDetection(bad);
+    assert.equal(typeof r.triggered, "boolean");
+    assert.ok(Number.isFinite(r.confidence));
+    assert.equal(typeof r.reason, "string");
+  }
 });
 
 test("buildWebhookActionPrompt embeds action, reason, and optional schema", () => {

@@ -1,11 +1,36 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
-import { fetchModels } from '../../lib/aura.js';
+import { fetchModels, scanClient } from '../../lib/aura.js';
 import { expandMatrix, comboKey, runEvalMatrix, summarizeResults } from '../../lib/eval.js';
 import { createEvalStore, makeId } from '../../lib/eval-store.js';
+import { scanBrowser, BROWSER_MODELS } from '../../lib/browser-engine.js';
 import ProgressBar from '../components/ProgressBar.jsx';
 
 const store = createEvalStore();
+
+// "browser:<key>" model ids (into BROWSER_MODELS) let the eval matrix compare
+// the in-page BROWSER engine against cloud/local models side by side. Only
+// offered when WebGPU is present — the eval screen's own way of measuring
+// "is the on-device model good enough for my mission" without ever running it
+// on a phone with no GPU.
+const BROWSER_MODEL_PREFIX = 'browser:';
+const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
+const browserEvalModelIds = hasWebGpu
+  ? Object.keys(BROWSER_MODELS).map((k) => `${BROWSER_MODEL_PREFIX}${k}`)
+  : [];
+
+// Routes a cell's scan to the BROWSER engine or the configured provider,
+// depending on which kind of model id it carries — everything else about the
+// call (mission, image, threshold, signal) is the same either way.
+async function scanForEval(params) {
+  if (params.model.startsWith(BROWSER_MODEL_PREFIX)) {
+    return scanBrowser({
+      ...params,
+      model: params.model.slice(BROWSER_MODEL_PREFIX.length),
+    });
+  }
+  return scanClient(params);
+}
 
 // Sample images are normalized to the same frame the live monitor sends.
 const FRAME_W = 640;
@@ -184,8 +209,9 @@ export default function EvalScreen({
   }
 
   // The checkbox list shows fetched models plus anything already selected
-  // (manual entries, or models the provider no longer lists).
-  const visibleModels = [...new Set([...modelList, ...selectedModels])];
+  // (manual entries, or models the provider no longer lists) plus the
+  // BROWSER engine's own model(s), when WebGPU is available.
+  const visibleModels = [...new Set([...modelList, ...selectedModels, ...browserEvalModelIds])];
   if (visibleModels.length === 0 && configuredModel) visibleModels.push(configuredModel);
 
   // ----- Run -----
@@ -193,9 +219,11 @@ export default function EvalScreen({
   const usableVariants = variants.filter((v) => (v.mission || '').trim());
   const totalCalls = images.length * selectedModels.length * usableVariants.length;
   const running = Boolean(activeRun);
+  // A run made up entirely of "browser:*" models needs no provider at all.
+  const needsProvider = selectedModels.some((m) => !m.startsWith(BROWSER_MODEL_PREFIX));
   const blockers = [];
   // No API key blocker — a local provider needs none.
-  if (!baseUrl) blockers.push('provider Base URL (Settings)');
+  if (needsProvider && !baseUrl) blockers.push('provider Base URL (Settings)');
   if (!images.length) blockers.push('sample images');
   if (!usableVariants.length) blockers.push('a prompt variant with a mission');
   if (!selectedModels.length) blockers.push('a model');
@@ -236,6 +264,7 @@ export default function EvalScreen({
       concurrency,
       requestTimeout: 60,
       signal: controller.signal,
+      scanFn: scanForEval,
       onResult: (result, done) => {
         if (!activeRun) return;
         activeRun.run.results.push(result);
@@ -402,7 +431,11 @@ export default function EvalScreen({
                 checked={selectedModels.includes(m)}
                 onChange={() => toggleModel(m)}
               />
-              <span>{m}</span>
+              <span>
+                {m.startsWith(BROWSER_MODEL_PREFIX)
+                  ? `${BROWSER_MODELS[m.slice(BROWSER_MODEL_PREFIX.length)]?.label || m} (browser)`
+                  : m}
+              </span>
             </label>
           ))}
         </div>
