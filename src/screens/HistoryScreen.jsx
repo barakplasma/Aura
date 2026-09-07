@@ -1,17 +1,66 @@
+import { useState } from 'react';
+
 // Alert history + review. Every alert keeps the exact frame it fired on so the
 // operator can eyeball it and, if it was wrong, mark it a FALSE POSITIVE — that
 // writes a "don't fire on this" training example. A few recent non-alert frames
 // are also kept so a genuine miss can be marked a FALSE NEGATIVE ("should have
 // fired").
-export default function HistoryScreen({ alerts, missed, markedIds, onMarkExample }) {
+export default function HistoryScreen({ alerts, missed, markedIds, onMarkExample, onClearHistory }) {
+  const [includeFrames, setIncludeFrames] = useState(false);
   const marked = markedIds || {};
   const missedFrames = missed || [];
+  const hasHistory = alerts.length > 0 || missedFrames.length > 0;
+
+  function handleClear() {
+    if (window.confirm('Clear all alert history? This cannot be undone.')) {
+      onClearHistory();
+    }
+  }
+
+  // Alerts/missed frames go out as-is; images are only ~30-60KB but they
+  // dominate the file size, so leaving them out is the default.
+  function handleExport() {
+    const strip = (list) =>
+      list.map(({ image, ...rest }) => (includeFrames ? { ...rest, image } : rest));
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      alerts: strip(alerts),
+      missed: strip(missedFrames),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aura-history-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="screen screen-history">
       <div className="screen-header">
         <span className="screen-title">ALERT HISTORY</span>
         <span className="screen-subtitle">{alerts.length} event{alerts.length !== 1 ? 's' : ''}</span>
       </div>
+
+      {hasHistory && (
+        <div className="history-actions">
+          <label className="toggle-label">
+            <input
+              id="export-include-frames"
+              type="checkbox"
+              className="dc-checkbox"
+              checked={includeFrames}
+              onChange={e => setIncludeFrames(e.target.checked)}
+            />
+            <span>INCLUDE FRAMES</span>
+          </label>
+          <button className="dc-btn" onClick={handleExport}>⇩ EXPORT JSON</button>
+          <button className="dc-btn outline" onClick={handleClear}>✗ CLEAR HISTORY</button>
+        </div>
+      )}
 
       {alerts.length === 0 ? (
         <div className="empty-state">NO EVENTS LOGGED</div>

@@ -36,6 +36,7 @@ export default function SettingsScreen({
   videoSource, setVideoSource,
   cameraFacing, setCameraFacing,
   cameraDeviceId, setCameraDeviceId,
+  keepScreenOn, setKeepScreenOn,
   webhookUrl, setWebhookUrl,
   webhookMethod, setWebhookMethod,
   webhookHeaders, setWebhookHeaders,
@@ -89,6 +90,7 @@ export default function SettingsScreen({
   }
 
   const isLocal = isLocalBaseUrl(baseUrl);
+  const wakeLockSupported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 
   const filteredModels = models.filter(m => m.toLowerCase().includes((model || '').toLowerCase()));
 
@@ -325,6 +327,22 @@ export default function SettingsScreen({
             {cameraStatus && <p id="camera-status" className="status-msg" role="status">{cameraStatus}</p>}
           </>
         )}
+        <div className="form-group">
+          <label className="toggle-label">
+            <input
+              id="keep-screen-on-toggle"
+              type="checkbox"
+              className="dc-checkbox"
+              checked={keepScreenOn}
+              onChange={e => setKeepScreenOn(e.target.checked)}
+            />
+            <span>KEEP SCREEN ON</span>
+          </label>
+          <div className="field-hint">
+            Holds a screen wake lock while armed so the phone doesn't sleep and freeze the camera.
+            {!wakeLockSupported && ' This browser has no Wake Lock API — the screen may still sleep regardless.'}
+          </div>
+        </div>
       </div>
 
       <div className="settings-section">

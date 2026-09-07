@@ -115,6 +115,16 @@ replaces the cached shell on the next visit.
 
 One cosmetic caveat: the UI fonts come from Google Fonts, so offline they fall back to the system monospace and sans-serif. Everything remains legible and correctly laid out — only the typeface changes.
 
+## Leaving it running
+
+Aura is meant to be propped on a shelf and left armed for hours, so it tries to survive the ordinary ways a phone session gets interrupted — but what it recovers from depends on the platform and what actually happened.
+
+**Backgrounding the tab (switch apps, lock screen, phone call).** With **KEEP SCREEN ON** enabled (Settings → Camera, on by default) Aura holds a screen wake lock while armed, so an Android phone's screen won't dim and lock in the first place. If it's hidden anyway — another app took focus, or the lock screen still engaged — the browser throttles the scan loop but doesn't stop it, and the status line says so ("Background — scans throttled by the browser"). Coming back to the tab fires an immediate scan if the gap blew past what was scheduled, instead of waiting out a throttled interval. If the OS reclaims the camera outright (another app opens it, or the browser drops the track under memory pressure), Aura detects the lost/muted track and reconnects automatically, retrying up to three times before giving up with a "Camera lost — tap ARM to retry" status.
+
+**A reload** (OS killing a backgrounded PWA, an accidental pull-to-refresh, a redeploy) loses the live camera stream and scan loop — nothing can carry a `MediaStream` across a page load. What survives is the *decision to be armed*: on boot, if the app was armed within the last 12 hours, a **RESUME MONITORING** banner offers one tap to re-arm. It's one tap and not automatic because both `getUserMedia` and speech synthesis need a real user gesture on Safari (and on Chrome without a previously granted permission). Alert history, missed frames, and FALSE POSITIVE/NEGATIVE marks are persisted to IndexedDB as they happen, so they're intact whether you resume or not — capped at 200 alerts and 4 recent frames so storage never grows unbounded.
+
+**iOS Safari cannot be made to background-monitor.** Safari suspends camera access for hidden pages, and there is no Wake Lock or other workaround for that — a locked or backgrounded iPhone stops scanning immediately, full stop. Speech is also blocked on a re-arm until the very next tap (vibration is unavailable on iOS Safari regardless — see Features above). This is a platform restriction Aura documents rather than fights: for real background monitoring, use an Android device or a plugged-in machine with the tab kept in the foreground.
+
 ## Project layout
 
 ```text

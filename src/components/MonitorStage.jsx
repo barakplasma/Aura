@@ -7,7 +7,7 @@ import ProgressBar, { progressLabel } from './ProgressBar.jsx';
 //   stage-collapsed Monitor tab, preview hidden (thin status strip)
 //   stage-pip       other tab while armed — floating mini thumbnail
 //   stage-parked    other tab, idle — fully hidden (no capture running)
-export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActive, dotClass, status, progress, collapsed, onToggleCollapse, onTap, videoSource, running, onFlipCamera }) {
+export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActive, dotClass, status, progress, collapsed, onToggleCollapse, onTap, videoSource, running, onFlipCamera, wakeLockHeld }) {
   const pip = stageMode === 'stage-pip';
   const showProgress = progress && progress.phase !== 'idle';
   // Flip only applies to a live camera stream — hidden for screen share.
@@ -31,6 +31,9 @@ export default function MonitorStage({ videoRef, canvasRef, stageMode, flashActi
       <div className="monitor-status-bar">
         <div className="status-row">
           <span className={`status-dot ${dotClass}`} />
+          {wakeLockHeld && (
+            <span className="wake-lock-indicator" title="Screen wake lock held — this device won't sleep">☾</span>
+          )}
           <span className="monitor-status-text" role="status" aria-live="polite">{status}</span>
           <button className="preview-toggle" onClick={onToggleCollapse} aria-pressed={collapsed}>
             {collapsed ? '▣ SHOW CAM' : '▢ HIDE CAM'}

@@ -8,7 +8,15 @@ import {
 } from "../../lib/training-store.js";
 import { recordLatency, percentile, tunedTimeoutMs } from "../../lib/stats.js";
 import { computeGapMs, emaUpdate } from "../../lib/scheduler.js";
+import { shouldCatchUp, nextReconnectDelayMs } from "../../lib/keepalive.js";
+import { createAlertStore } from "../../lib/alert-store.js";
 import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
+import { useWakeLock } from "./useWakeLock.js";
+
+// One store per page load — its IndexedDB adapter is lazy (never touches the
+// indexedDB global until an operation runs), so creating it here is safe even
+// before a monitoring session ever starts.
+const alertStore = createAlertStore();
 
 const CAPTURE_W = 640;
 const CAPTURE_H = 480;
@@ -30,6 +38,12 @@ const PROMPT_OVERHEAD_BYTES = 1500;
 // Progress ticker cadence — drives the countdown + fill smoothly without
 // re-rendering the tree on every animation frame.
 const PROGRESS_INTERVAL_MS = 250;
+// A track muted this long while the page is visible is treated the same as
+// "ended" — some Android builds mute the track instead of ending it when the
+// OS reclaims the camera.
+const VISIBLE_MUTE_TIMEOUT_MS = 10000;
+// Reconnect attempts before giving up and stopping (see nextReconnectDelayMs).
+const MAX_RECONNECT_ATTEMPTS = 3;
 
 const IDLE_PROGRESS = {
   phase: "idle",
@@ -49,7 +63,7 @@ function releaseStream(internalRef, videoRef) {
   if (videoRef.current) videoRef.current.srcObject = null;
 }
 
-export function useMonitor({ settingsRef, videoRef, canvasRef }) {
+export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn }) {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("Configure a provider and press Start.");
   const [dotClass, setDotClass] = useState("off");
@@ -62,7 +76,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     cost: "0.0000",
     scansPerHr: "—",
     costPerHr: "0.0000",
+    skipped: 0,
   });
+  // Holds a screen wake lock while actually armed and live (demo mode has no
+  // camera to protect, and an operator can opt out via aura.keepScreenOn).
+  const { held: wakeLockHeld, hint: wakeLockHint } = useWakeLock(
+    running && !demoMode && keepScreenOn,
+  );
   const [alerts, setAlerts] = useState([]);
   const [missed, setMissed] = useState([]);
   const [progress, setProgress] = useState(IDLE_PROGRESS);
@@ -90,8 +110,45 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     emaBytes: null,
     emaDuration: null,
     budgetWarned: false,
+    // Keepalive: when the last scan completed (for the visibility catch-up
+    // check), the gap it was scheduled with, and the current camera track's
+    // mute/reconnect state.
+    lastScanAt: null,
+    lastGapMs: 0,
+    trackMuted: false,
+    mutedSince: 0,
+    reconnecting: false,
   });
   const ctxRef = useRef(null);
+  // acquireStream/reconnect are mutually recursive (a track's onended handler
+  // starts a reconnect loop that itself calls acquireStream) — a ref avoids
+  // an import-order/useCallback ordering problem between the two.
+  const reconnectRef = useRef(null);
+
+  // Hydrate alert/missed/mark history from IndexedDB on mount, so a reload
+  // doesn't wipe out an armed session's history. Runs once; a failed read
+  // just leaves the screen empty rather than blocking the app.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [alertsList, missedList, marks] = await Promise.all([
+          alertStore.listAlerts(),
+          alertStore.listMissed(),
+          alertStore.listMarks(),
+        ]);
+        if (cancelled) return;
+        if (alertsList.length) setAlerts(alertsList.slice(0, 20));
+        if (missedList.length) setMissed(missedList.slice(0, MISSED_MAX));
+        if (Object.keys(marks).length) setMarkedIds(marks);
+      } catch (err) {
+        console.warn("[aura] failed to load alert history", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const captureFrame = useCallback(() => {
     const canvas = canvasRef.current;
@@ -121,22 +178,21 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   }, [canvasRef, videoRef, settingsRef]);
 
   const logAlert = useCallback((message, confidence, image, reason) => {
-    const time = new Date().toLocaleTimeString();
     const conf = Number.isFinite(confidence) ? Math.round(confidence) : null;
-    setAlerts((prev) => {
-      const next = [
-        {
-          id: Date.now(),
-          time,
-          conf,
-          message,
-          reason: reason || "",
-          image: image || null,
-        },
-        ...prev,
-      ];
-      return next.slice(0, 20);
-    });
+    const record = {
+      id: Date.now(),
+      at: new Date().toISOString(),
+      time: new Date().toLocaleTimeString(),
+      conf,
+      message,
+      reason: reason || "",
+      image: image || null,
+    };
+    setAlerts((prev) => [record, ...prev].slice(0, 20));
+    // Fire-and-forget: a failed write must never break the scan loop.
+    alertStore
+      .addAlert(record)
+      .catch((err) => console.warn("[aura] failed to persist alert", err));
   }, []);
 
   // Keep a handful of recent non-alert frames, spaced out in time, so the
@@ -147,14 +203,19 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     const now = performance.now();
     if (now - internalRef.current.lastMissedAt < MISSED_SPACING_MS) return;
     internalRef.current.lastMissedAt = now;
-    const time = new Date().toLocaleTimeString();
     const conf = Number.isFinite(confidence) ? Math.round(confidence) : null;
-    setMissed((prev) =>
-      [
-        { id: Date.now(), time, reason: reason || "", conf, image },
-        ...prev,
-      ].slice(0, MISSED_MAX),
-    );
+    const record = {
+      id: Date.now(),
+      at: new Date().toISOString(),
+      time: new Date().toLocaleTimeString(),
+      reason: reason || "",
+      conf,
+      image,
+    };
+    setMissed((prev) => [record, ...prev].slice(0, MISSED_MAX));
+    alertStore
+      .addMissed(record)
+      .catch((err) => console.warn("[aura] failed to persist missed frame", err));
   }, []);
 
   // Turn a reviewed frame into a training example. A false positive teaches the
@@ -171,6 +232,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
         : "Operator marked this alert as a false positive.",
     });
     setMarkedIds((prev) => ({ ...prev, [entry.id]: kind }));
+    alertStore
+      .setMark(entry.id, kind)
+      .catch((err) => console.warn("[aura] failed to persist mark", err));
+  }, []);
+
+  // Wipes both the in-memory history and the store behind it. Called from
+  // HistoryScreen's CLEAR HISTORY button, which confirms first.
+  const clearHistory = useCallback(() => {
+    setAlerts([]);
+    setMissed([]);
+    setMarkedIds({});
+    alertStore
+      .clearAll()
+      .catch((err) => console.warn("[aura] failed to clear alert history", err));
   }, []);
 
   const flashAlert = useCallback(() => {
@@ -231,6 +306,18 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
   const pumpProgress = useCallback(() => {
     const st = internalRef.current;
     if (!st.running) return;
+    // A track muted this long while the page is visible is likely a camera
+    // the OS reclaimed rather than one merely paused by backgrounding — some
+    // Android builds mute instead of firing `ended`. Treat it the same way.
+    if (
+      st.trackMuted &&
+      !st.reconnecting &&
+      st.mutedSince &&
+      document.visibilityState === "visible" &&
+      performance.now() - st.mutedSince > VISIBLE_MUTE_TIMEOUT_MS
+    ) {
+      reconnectRef.current?.(1);
+    }
     const elapsed = performance.now() - st.phaseStart;
     const est = st.phaseEstimate;
     setProgress((prev) => {
@@ -267,7 +354,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     // Demo mode simulates scans without a camera frame; live mode needs a
     // decodable video frame before it can capture.
     const ready = s.demo || (video && video.readyState >= 2);
-    if (!internalRef.current.inFlight && ready) {
+    // A muted track (browser paused the camera, usually while hidden) means
+    // the frame is a frozen copy of whatever was last visible — skip the AI
+    // call rather than burn tokens scoring a still image.
+    if (!s.demo && internalRef.current.trackMuted) {
+      setTelemetry((prev) => ({ ...prev, skipped: (prev.skipped || 0) + 1 }));
+    } else if (!internalRef.current.inFlight && ready) {
       internalRef.current.inFlight = true;
       const started = performance.now();
       // Enter the processing phase — the bar fills toward the median estimate.
@@ -326,6 +418,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
         const measured = Number.isFinite(result.latencyMs)
           ? result.latencyMs
           : rtt;
+        st.lastScanAt = performance.now();
         st.samples = recordLatency(st.samples, measured);
         const p50 = percentile(st.samples, 50);
         const p90 = percentile(st.samples, 90);
@@ -439,6 +532,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
           durationMs: st.emaDuration,
         },
       );
+      // Remembered for the visibilitychange catch-up check — "how far behind
+      // is this session, relative to what it was scheduled to do".
+      st.lastGapMs = gapMs;
       // Projected throughput/cost from the cycle period (duration + gap).
       const cyclePeriodMs = (st.emaDuration || 0) + gapMs;
       const scansPerHr =
@@ -483,6 +579,28 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     setProgress(IDLE_PROGRESS);
   }, [videoRef]);
 
+  // Wires mute/unmute/ended handlers onto a freshly acquired camera track, so
+  // the scan loop can react to the OS reclaiming the camera or backgrounding
+  // pausing it. Screen-share tracks keep their own simpler onended (stop()) —
+  // a screen share ending is an intentional "I'm done", not something to
+  // reconnect from.
+  const attachTrackHandlers = useCallback((stream) => {
+    const track = stream.getVideoTracks()[0];
+    if (!track) return;
+    const st = internalRef.current;
+    track.onmute = () => {
+      st.trackMuted = true;
+      st.mutedSince = performance.now();
+    };
+    track.onunmute = () => {
+      st.trackMuted = false;
+      st.mutedSince = 0;
+    };
+    track.onended = () => {
+      if (st.running && !st.reconnecting) reconnectRef.current?.(1);
+    };
+  }, []);
+
   // Build capture constraints from current settings and acquire a MediaStream.
   // Screen source uses getDisplayMedia (desktop, one gesture per share — its
   // track.onended stops monitoring cleanly); camera source prefers an explicit
@@ -500,9 +618,65 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     const video = { width: { ideal: CAPTURE_W }, height: { ideal: CAPTURE_H } };
     if (s.cameraDeviceId) video.deviceId = { exact: s.cameraDeviceId };
     else video.facingMode = { ideal: s.cameraFacing || "environment" };
-    return navigator.mediaDevices.getUserMedia({ audio: false, video });
-  }, [settingsRef, stop]);
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video,
+    });
+    attachTrackHandlers(stream);
+    return stream;
+  }, [attachTrackHandlers, settingsRef, stop]);
 
+  // Reconnect loop for a lost/ended camera track: retries acquireStream()
+  // with the keepalive backoff (1s, 3s, 8s), then gives up and stop()s with
+  // an explanatory status so the operator knows to re-arm by hand.
+  const reconnect = useCallback(
+    async (attempt = 1) => {
+      const st = internalRef.current;
+      if (!st.running) return;
+      st.reconnecting = true;
+      setStatus(
+        `Camera lost — reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})…`,
+      );
+      if (st.stream) {
+        st.stream.getTracks().forEach((t) => t.stop());
+        st.stream = null;
+      }
+      try {
+        const stream = await acquireStream();
+        if (!internalRef.current.running) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        st.stream = stream;
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          await video.play();
+        }
+        st.trackMuted = false;
+        st.mutedSince = 0;
+        st.reconnecting = false;
+        setStatus("Monitoring…");
+      } catch (err) {
+        const delay = nextReconnectDelayMs(attempt);
+        if (delay == null) {
+          st.reconnecting = false;
+          stop();
+          setStatus(`Camera lost — tap ARM to retry. (${err.message})`);
+          return;
+        }
+        setTimeout(() => reconnectRef.current?.(attempt + 1), delay);
+      }
+    },
+    [acquireStream, stop, videoRef],
+  );
+  // Kept fresh on every render so track.onended / the mute-timeout check
+  // (both outside React's render cycle) always call the latest closure.
+  reconnectRef.current = reconnect;
+
+  // Returns whether the session actually armed — callers (App.jsx) use this
+  // to decide whether to persist aura.armed, so a rejected/misconfigured
+  // start() never leaves a phantom RESUME offer for a session that never ran.
   const start = useCallback(async () => {
     const s = settingsRef.current;
     // The API key is deliberately not required — a local server (Ollama, LM
@@ -511,11 +685,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       setStatus(
         "Set a provider Base URL and model in Settings, or use Demo Mode.",
       );
-      return;
+      return false;
     }
     if (!s.demo && !s.mission.trim()) {
       setStatus("Describe the mission (what to watch for) first.");
-      return;
+      return false;
     }
     try {
       setStatus(
@@ -537,7 +711,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
         setStatus(
           `${s.videoSource === "screen" ? "Screen share" : "Camera"} unavailable: ${err.message}`,
         );
-        return;
+        return false;
       }
     }
     internalRef.current.running = true;
@@ -552,6 +726,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     internalRef.current.emaBytes = null;
     internalRef.current.emaDuration = null;
     internalRef.current.budgetWarned = false;
+    // Fresh keepalive state each session too.
+    internalRef.current.lastScanAt = null;
+    internalRef.current.lastGapMs = 0;
+    internalRef.current.trackMuted = false;
+    internalRef.current.mutedSince = 0;
+    internalRef.current.reconnecting = false;
+    setTelemetry((prev) => ({ ...prev, skipped: 0 }));
     setStats(EMPTY_STATS);
     setProgress(IDLE_PROGRESS);
     setRunning(true);
@@ -563,6 +744,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
       PROGRESS_INTERVAL_MS,
     );
     tick();
+    return true;
   }, [acquireStream, pumpProgress, settingsRef, tick, videoRef]);
 
   // Restart the stream in place (camera flip / source switch) without stopping
@@ -598,6 +780,28 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     }
   }, [acquireStream, settingsRef, stop, videoRef]);
 
+  // Background/visibility handling: a hidden tab still gets throttled ticks
+  // from the browser (don't stop scanning outright — a stale scan beats
+  // none), but on return, fire an immediate scan when the gap since the last
+  // one blew past what was scheduled, instead of waiting out a throttled
+  // interval the operator has already come back from.
+  useEffect(() => {
+    function onVisibility() {
+      const st = internalRef.current;
+      if (!st.running) return;
+      if (document.visibilityState === "visible") {
+        if (shouldCatchUp(st.lastScanAt, st.lastGapMs, performance.now())) {
+          clearTimeout(st.loopTimer);
+          tick();
+        }
+      } else {
+        setStatus("Background — scans throttled by the browser.");
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [tick]);
+
   // On unmount, tear everything down — otherwise the camera track, the scan
   // timeout, and the progress interval keep running in the background.
   useEffect(() => stop, [stop]);
@@ -614,10 +818,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef }) {
     stats,
     markedIds,
     markExample,
+    clearHistory,
     captureFrame,
     start,
     stop,
     switchCamera,
     sendWebhook,
+    wakeLockHeld,
+    wakeLockHint,
   };
 }
