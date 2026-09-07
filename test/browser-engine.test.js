@@ -63,6 +63,20 @@ async function waitForPosted(fw, n) {
   }
 }
 
+// Shared setup for tests that just need a model already loaded before
+// exercising scanBrowser()/abort/crash behavior — distinct from the "error"
+// reply case below, which tests the load path failing. Returns `getWorker`
+// too, since a test recovering from a crash needs it again to grab the next
+// fake worker the factory produces.
+async function loadedFakeWorker(device = "wasm") {
+  const getWorker = freshWorker();
+  const loadP = loadBrowserModel("smolvlm2-256m");
+  const fw = getWorker();
+  fw.reply({ id: fw.posted[0].id, type: "ready", device });
+  await loadP;
+  return { fw, getWorker };
+}
+
 test.beforeEach(() => {
   _resetBrowserEngine();
 });
@@ -95,13 +109,9 @@ test("loadBrowserModel de-dupes overlapping calls for the same model into one wo
 });
 
 test("scanBrowser correlates concurrent requests by id, not by reply order", async () => {
-  const getWorker = freshWorker();
   // Load once, up front, so the two scans below post exactly one 'scan'
   // message each (no interleaved 'load').
-  const loadP = loadBrowserModel("smolvlm2-256m");
-  const fw = getWorker();
-  fw.reply({ id: fw.posted[0].id, type: "ready", device: "webgpu" });
-  await loadP;
+  const { fw } = await loadedFakeWorker("webgpu");
 
   const scanA = scanBrowser({ mission: "a person at the door", image: "x".repeat(64) });
   const scanB = scanBrowser({ mission: "a package on the porch", image: "y".repeat(64) });
@@ -136,11 +146,7 @@ test("scanBrowser correlates concurrent requests by id, not by reply order", asy
 });
 
 test("aborting a scan rejects the in-flight promise and tells the worker to stop", async () => {
-  const getWorker = freshWorker();
-  const loadP = loadBrowserModel("smolvlm2-256m");
-  const fw = getWorker();
-  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
-  await loadP;
+  const { fw } = await loadedFakeWorker();
 
   const controller = new AbortController();
   const scanPromise = scanBrowser({
@@ -167,11 +173,7 @@ test("aborting a scan rejects the in-flight promise and tells the worker to stop
 });
 
 test("a worker crash rejects every in-flight promise with a useful message", async () => {
-  const getWorker = freshWorker();
-  const loadP = loadBrowserModel("smolvlm2-256m");
-  const fw = getWorker();
-  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
-  await loadP;
+  const { fw, getWorker } = await loadedFakeWorker();
 
   const scanA = scanBrowser({ mission: "a", image: "x".repeat(64) });
   const scanB = scanBrowser({ mission: "b", image: "y".repeat(64) });
