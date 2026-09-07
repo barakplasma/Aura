@@ -53,6 +53,18 @@ const IDLE_PROGRESS = {
 };
 const EMPTY_STATS = { p50: null, p90: null, timeoutMs: null, count: 0 };
 
+// Shared shape for an alert/missed-frame record: a numeric id (insertion
+// order), an ISO timestamp (sortable, used by alert-store), and a locale
+// time string (what the UI displays).
+function historyRecord(fields) {
+  return {
+    id: Date.now(),
+    at: new Date().toISOString(),
+    time: new Date().toLocaleTimeString(),
+    ...fields,
+  };
+}
+
 // Stop any live tracks and detach the preview. Shared by stop() and the
 // start() failure path so an acquired-but-unusable stream never stays live.
 function releaseStream(internalRef, videoRef) {
@@ -179,15 +191,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
 
   const logAlert = useCallback((message, confidence, image, reason) => {
     const conf = Number.isFinite(confidence) ? Math.round(confidence) : null;
-    const record = {
-      id: Date.now(),
-      at: new Date().toISOString(),
-      time: new Date().toLocaleTimeString(),
+    const record = historyRecord({
       conf,
       message,
       reason: reason || "",
       image: image || null,
-    };
+    });
     setAlerts((prev) => [record, ...prev].slice(0, 20));
     // Fire-and-forget: a failed write must never break the scan loop.
     alertStore
@@ -204,14 +213,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     if (now - internalRef.current.lastMissedAt < MISSED_SPACING_MS) return;
     internalRef.current.lastMissedAt = now;
     const conf = Number.isFinite(confidence) ? Math.round(confidence) : null;
-    const record = {
-      id: Date.now(),
-      at: new Date().toISOString(),
-      time: new Date().toLocaleTimeString(),
-      reason: reason || "",
-      conf,
-      image,
-    };
+    const record = historyRecord({ reason: reason || "", conf, image });
     setMissed((prev) => [record, ...prev].slice(0, MISSED_MAX));
     alertStore
       .addMissed(record)
