@@ -220,6 +220,13 @@ textarea {
   background: rgb(232 161 58 / 22%);
 }
 
+/* RESUME MONITORING shares the demo banner's visual weight (same amber
+   strip) but never overlaps it — demo mode and an offer to resume an armed
+   session are mutually exclusive states. */
+.resume-banner-actions {
+  margin-bottom: 0;
+}
+
 .telem-pair {
   display: flex;
   align-items: center;
@@ -678,6 +685,13 @@ textarea {
   min-width: 0;
 }
 
+/* Screen wake lock indicator — visible while the phone is held awake. */
+.wake-lock-indicator {
+  font-size: 12px;
+  color: var(--c-amber);
+  flex-shrink: 0;
+}
+
 .preview-toggle {
   background: none;
   border: 1px solid var(--c-bdr);
@@ -968,6 +982,14 @@ textarea {
 
 .history-subhead {
   margin-top: 22px;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
 }
 
 .empty-state {

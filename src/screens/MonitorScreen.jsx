@@ -40,6 +40,12 @@ export default function MonitorScreen({ running, telemetry, progress, stats, onT
           <span className="panel-k" title="Projected spend at the current cadence">EST $/HR</span>
           <span className="panel-v amber">${telemetry.costPerHr}</span>
         </div>
+        {telemetry.skipped > 0 && (
+          <div className="panel-row">
+            <span className="panel-k" title="Scans skipped because the camera track was muted (a paused/frozen frame isn't worth a token spend)">SKIPPED</span>
+            <span className="panel-v">{telemetry.skipped}</span>
+          </div>
+        )}
       </div>
 
       {showProgress && (

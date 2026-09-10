@@ -56,7 +56,7 @@ jobs:
         # v9, not v8: the LLM Advisor (megalinter/llm_advisor.py) doesn't
         # exist before v9.0.0 — v8's last release predates it entirely, which
         # is why it silently produced nothing even with LOG_LEVEL: DEBUG.
-        uses: oxsecurity/megalinter/flavors/javascript@ef3e84b8b836d76db562d0f3ed7da61e8fd538bc # v9
+        uses: oxsecurity/megalinter/flavors/javascript@15e5b45552097e318c93de385779ce3b1084052c # v10.0.0
         env:
           VALIDATE_ALL_CODEBASE: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
