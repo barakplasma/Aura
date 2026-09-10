@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
+import {
+  BROWSER_MODELS,
+  DEFAULT_BROWSER_MODEL,
+  loadBrowserModel,
+  clearBrowserModelCache,
+  isBrowserModelLoaded,
+  browserModelDevice,
+  scanBrowser,
+} from '../../lib/browser-engine.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
+import ProgressBar from '../components/ProgressBar.jsx';
 
 // One-click base URLs. The local ones need no API key, and cost nothing —
 // picking one zeroes the cost rate so the telemetry doesn't invent dollars.
@@ -24,9 +34,12 @@ const SCAN_EVERY_UNITS = [
 ];
 
 export default function SettingsScreen({
+  engine, setEngine,
+  browserModel, setBrowserModel,
   baseUrl, setBaseUrl,
   apiKey, setApiKey,
   model, setModel,
+  captureFrame,
   scanMode, setScanMode,
   scanEveryValue, setScanEveryValue,
   scanEveryUnit, setScanEveryUnit,
@@ -52,6 +65,73 @@ export default function SettingsScreen({
   const [webhookStatus, setWebhookStatus] = useState('');
   const [cameras, setCameras] = useState([]);
   const [cameraStatus, setCameraStatus] = useState('');
+
+  // BROWSER MODEL — one curated model in v1 (see BROWSER_MODELS), so there's
+  // no picker, just its load/test/clear lifecycle.
+  const browserModelKey =
+    browserModel && BROWSER_MODELS[browserModel] ? browserModel : DEFAULT_BROWSER_MODEL;
+  const browserModelCfg = BROWSER_MODELS[browserModelKey];
+  const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadPct, setDownloadPct] = useState(null);
+  const [browserModelStatus, setBrowserModelStatus] = useState('');
+  const [testingBrowser, setTestingBrowser] = useState(false);
+  const [browserTestResult, setBrowserTestResult] = useState(null);
+
+  async function handleLoadBrowserModel() {
+    setDownloading(true);
+    setDownloadPct(null);
+    setBrowserModelStatus('');
+    try {
+      const { device } = await loadBrowserModel(browserModelKey, {
+        onProgress: (msg) => { if (msg.pct != null) setDownloadPct(msg.pct); },
+      });
+      if (setBrowserModel) setBrowserModel(browserModelKey);
+      setBrowserModelStatus(
+        device === 'webgpu' ? 'Model ready (WebGPU).' : 'Model ready — running on WASM (no WebGPU, expect it to be slow).',
+      );
+    } catch (err) {
+      setBrowserModelStatus(`Load failed: ${err.message}`);
+    } finally {
+      setDownloading(false);
+      setDownloadPct(null);
+    }
+  }
+
+  async function handleTestBrowserModel() {
+    const frame = captureFrame?.();
+    if (!frame) {
+      setBrowserModelStatus('Start monitoring first — the camera stage must be live to capture a frame.');
+      return;
+    }
+    setTestingBrowser(true);
+    setBrowserTestResult(null);
+    try {
+      const result = await scanBrowser({
+        model: browserModelKey,
+        mission: 'anything unusual, unsafe, or noteworthy',
+        image: frame,
+        threshold: 0,
+        onProgress: (msg) => { if (msg.pct != null) setDownloadPct(msg.pct); },
+      });
+      setBrowserTestResult(result);
+    } catch (err) {
+      setBrowserModelStatus(`Test failed: ${err.message}`);
+    } finally {
+      setTestingBrowser(false);
+    }
+  }
+
+  async function handleClearBrowserCache() {
+    setBrowserModelStatus('Clearing…');
+    try {
+      await clearBrowserModelCache();
+      setBrowserTestResult(null);
+      setBrowserModelStatus(`Cache cleared — ${browserModelCfg.sizeLabel} freed.`);
+    } catch (err) {
+      setBrowserModelStatus(`Clear failed: ${err.message}`);
+    }
+  }
 
   // No API-key guard: a local server lists its models without one.
   async function handleFetchModels() {
@@ -139,59 +219,134 @@ export default function SettingsScreen({
       <div className="settings-section">
         <div className="section-label">PROVIDER</div>
         <div className="form-group">
-          <label className="field-label">PRESET</label>
-          <div className="mode-segments" role="group" aria-label="Provider preset">
-            {PROVIDER_PRESETS.map(p => (
-              <button
-                key={p.id}
-                className={`mode-segment ${baseUrl === p.url ? 'active' : ''}`}
-                onClick={() => selectPreset(p)}
-              >
-                {p.label}
-              </button>
-            ))}
+          <label className="field-label">ENGINE</label>
+          <div className="mode-segments" role="radiogroup" aria-label="Inference engine">
+            <button
+              className={`mode-segment ${engine !== 'browser' ? 'active' : ''}`}
+              role="radio" aria-checked={engine !== 'browser'}
+              onClick={() => setEngine('provider')}
+            >
+              PROVIDER
+            </button>
+            <button
+              className={`mode-segment ${engine === 'browser' ? 'active' : ''}`}
+              role="radio" aria-checked={engine === 'browser'}
+              onClick={() => setEngine('browser')}
+            >
+              BROWSER
+            </button>
+          </div>
+          <div className="field-hint">
+            {engine === 'browser'
+              ? 'Runs a small vision model on this device via WebGPU — no key, no server, and the frame never leaves the browser.'
+              : 'Calls an OpenAI-compatible vision model from a cloud provider or local server you configure below.'}
           </div>
         </div>
-        <div className="form-group">
-          <label className="field-label">BASE URL</label>
-          <input id="provider-baseurl" type="url" className="dc-input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.cerebras.ai/v1" />
-          {isLocal && (
-            <div className="field-hint">
-              Local server — allow this page's origin in its CORS config
-              (<code>OLLAMA_ORIGINS='*'</code> for Ollama, <code>--cors</code> for llama-server).
-              Prefer <code>localhost</code> or <code>127.0.0.1</code>: browsers block <code>0.0.0.0</code> as a request target.
-            </div>
-          )}
-        </div>
-        <div className="form-group">
-          <label className="field-label">API KEY</label>
-          <input id="provider-apikey" type="password" className="dc-input" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="blank for a local server" />
-          <div className="field-hint">Leave blank for a local server (Ollama, LM Studio, llama.cpp) that needs no key — no Authorization header is sent.</div>
-        </div>
-        <div className="form-group model-row">
-          <div style={{ flex: 1 }}>
-            <label className="field-label">MODEL</label>
-            <input
-              id="provider-model"
-              className="dc-input"
-              value={model}
-              onChange={e => { setModel(e.target.value); setShowDropdown(models.length > 0); }}
-              onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
-              placeholder="gemma-4-31b"
-            />
-            {showDropdown && filteredModels.length > 0 && (
-              <div id="model-dropdown" className="model-dropdown">
-                {filteredModels.map(m => (
-                  <div key={m} className="model-dropdown-item" role="option" onMouseDown={() => selectModel(m)}>{m}</div>
+
+        {engine !== 'browser' && (
+          <>
+            <div className="form-group">
+              <label className="field-label">PRESET</label>
+              <div className="mode-segments" role="group" aria-label="Provider preset">
+                {PROVIDER_PRESETS.map(p => (
+                  <button
+                    key={p.id}
+                    className={`mode-segment ${baseUrl === p.url ? 'active' : ''}`}
+                    onClick={() => selectPreset(p)}
+                  >
+                    {p.label}
+                  </button>
                 ))}
               </div>
+            </div>
+            <div className="form-group">
+              <label className="field-label">BASE URL</label>
+              <input id="provider-baseurl" type="url" className="dc-input" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.cerebras.ai/v1" />
+              {isLocal && (
+                <div className="field-hint">
+                  Local server — allow this page's origin in its CORS config
+                  (<code>OLLAMA_ORIGINS='*'</code> for Ollama, <code>--cors</code> for llama-server).
+                  Prefer <code>localhost</code> or <code>127.0.0.1</code>: browsers block <code>0.0.0.0</code> as a request target.
+                </div>
+              )}
+            </div>
+            <div className="form-group">
+              <label className="field-label">API KEY</label>
+              <input id="provider-apikey" type="password" className="dc-input" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="blank for a local server" />
+              <div className="field-hint">Leave blank for a local server (Ollama, LM Studio, llama.cpp) that needs no key — no Authorization header is sent.</div>
+            </div>
+            <div className="form-group model-row">
+              <div style={{ flex: 1 }}>
+                <label className="field-label">MODEL</label>
+                <input
+                  id="provider-model"
+                  className="dc-input"
+                  value={model}
+                  onChange={e => { setModel(e.target.value); setShowDropdown(models.length > 0); }}
+                  onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+                  placeholder="gemma-4-31b"
+                />
+                {showDropdown && filteredModels.length > 0 && (
+                  <div id="model-dropdown" className="model-dropdown">
+                    {filteredModels.map(m => (
+                      <div key={m} className="model-dropdown-item" role="option" onMouseDown={() => selectModel(m)}>{m}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button id="fetch-models-btn" className="dc-btn" disabled={fetchingModels} onClick={handleFetchModels}>
+                {fetchingModels ? 'FETCHING…' : 'FETCH MODELS'}
+              </button>
+            </div>
+            {statusMsg && <p id="provider-status" className="status-msg" role="status">{statusMsg}</p>}
+          </>
+        )}
+
+        {engine === 'browser' && (
+          <>
+            <div className="form-group">
+              <label className="field-label">BROWSER MODEL</label>
+              <div className="field-hint">{browserModelCfg.label} · {browserModelCfg.sizeLabel} download, cached after the first load.</div>
+            </div>
+            <div className="form-group">
+              <label className="field-label">STATUS</label>
+              <p className="status-msg">
+                {downloading
+                  ? `DOWNLOADING ${downloadPct != null ? `${downloadPct}%` : '…'}`
+                  : isBrowserModelLoaded(browserModelKey)
+                    ? `READY${browserModelDevice() === 'wasm' ? ' (WASM — no WebGPU, expect it to be slow)' : ' (WebGPU)'}`
+                    : 'NOT DOWNLOADED'}
+              </p>
+              {downloading && (
+                <ProgressBar phase="processing" pct={downloadPct} label={`LOADING ${browserModelCfg.label.toUpperCase()}`} />
+              )}
+              {!hasWebGpu && !downloading && (
+                <div className="field-hint">No WebGPU detected on this browser/device — falls back to WASM, which is much slower (roughly 10-30s per scan).</div>
+              )}
+            </div>
+            <div className="btn-row">
+              <button id="browser-load-btn" className="dc-btn" disabled={downloading} onClick={handleLoadBrowserModel}>
+                {downloading ? 'LOADING…' : 'DOWNLOAD / LOAD'}
+              </button>
+              <button
+                id="browser-test-btn"
+                className="dc-btn outline"
+                disabled={testingBrowser}
+                onClick={handleTestBrowserModel}
+                title={captureFrame ? '' : 'Start monitoring to capture from the camera'}
+              >
+                {testingBrowser ? 'TESTING…' : 'TEST ON CURRENT FRAME'}
+              </button>
+              <button id="browser-clear-btn" className="dc-btn outline" onClick={handleClearBrowserCache}>CLEAR MODEL CACHE</button>
+            </div>
+            {browserTestResult && (
+              <p className="status-msg">
+                {browserTestResult.triggered ? 'TRIGGERED' : 'clear'} {Math.round(browserTestResult.confidence)}% — "{browserTestResult.reason}" ({browserTestResult.latencyMs}ms)
+              </p>
             )}
-          </div>
-          <button id="fetch-models-btn" className="dc-btn" disabled={fetchingModels} onClick={handleFetchModels}>
-            {fetchingModels ? 'FETCHING…' : 'FETCH MODELS'}
-          </button>
-        </div>
-        {statusMsg && <p id="provider-status" className="status-msg" role="status">{statusMsg}</p>}
+            {browserModelStatus && <p id="browser-model-status" className="status-msg" role="status">{browserModelStatus}</p>}
+          </>
+        )}
       </div>
 
       <div className="settings-section">

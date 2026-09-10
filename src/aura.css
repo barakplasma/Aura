@@ -12,6 +12,7 @@
   --c-amber-bdr: rgb(232 161 58 / 35%);
   --c-green: #4ad58a;
   --c-red: #e8503a;
+  --c-blue: #4a9ed5;
   --c-bdr: rgb(255 255 255 / 10%);
   --nav-w: 148px;
   --topbar-h: 44px;
@@ -666,6 +667,11 @@ textarea {
 .status-dot.demo {
   background: var(--c-amber);
   animation: blink 2s ease-in-out infinite;
+}
+
+.status-dot.browser {
+  background: var(--c-blue);
+  animation: blink 1.4s ease-in-out infinite;
 }
 
 .status-dot.off {

@@ -10,7 +10,7 @@ function fmtMs(ms) {
 
 // Controls panel for the monitor tab. The camera preview itself lives in
 // MonitorStage (mounted at app level) so it survives tab switches.
-export default function MonitorScreen({ running, telemetry, progress, stats, onToggle, providerReady, demoMode, onStartDemo, onOpenSettings }) {
+export default function MonitorScreen({ running, telemetry, progress, stats, onToggle, providerReady, engine, demoMode, onStartDemo, onOpenSettings }) {
   const showProgress = running && progress && progress.phase !== 'idle';
   return (
     <div className="screen-monitor">
@@ -78,7 +78,11 @@ export default function MonitorScreen({ running, telemetry, progress, stats, onT
       {!providerReady && !demoMode && !running && (
         <div className="setup-callout">
           <div className="panel-label">PROVIDER NOT CONFIGURED</div>
-          <p className="setup-text">Set a base URL and model to start monitoring — a local server needs no API key. Or try a simulated demo.</p>
+          <p className="setup-text">
+            {engine === 'browser'
+              ? 'Download the BROWSER MODEL in Settings to start monitoring — no key, no server, nothing leaves this device.'
+              : 'Set a base URL and model to start monitoring — a local server needs no API key. Or try a simulated demo.'}
+          </p>
           <div className="btn-row">
             <button className="dc-btn" onClick={onOpenSettings}>OPEN SETTINGS</button>
             <button className="dc-btn outline" onClick={onStartDemo}>TRY DEMO</button>

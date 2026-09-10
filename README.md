@@ -115,6 +115,31 @@ replaces the cached shell on the next visit.
 
 One cosmetic caveat: the UI fonts come from Google Fonts, so offline they fall back to the system monospace and sans-serif. Everything remains legible and correctly laid out — only the typeface changes.
 
+## Run inference in the browser
+
+Even a local server (Ollama, LM Studio, llama.cpp) is one more thing to install and keep
+running — and a phone can't run one at all. The **BROWSER** engine skips that entirely: a
+small vision-language model (SmolVLM2, ~208MB) runs right inside the page via
+[Transformers.js](https://github.com/huggingface/transformers.js) and WebGPU. No key, no
+server, no CORS — the camera frame never leaves the device.
+
+In **Settings → Provider**, switch **ENGINE** to **BROWSER**, then **DOWNLOAD / LOAD** the
+model (progress is shown; the weights are cached by the browser afterward, so this only
+happens once — even offline). Set a mission and arm as usual. **TEST ON CURRENT FRAME** lets
+you try a single scan before arming, and **CLEAR MODEL CACHE** frees the downloaded weights.
+
+Trade-offs versus a cloud/local provider:
+
+- A 256M-parameter model is a coarse detector — good for "is anyone here at all," not
+  fine-grained scene understanding. Use the **Evaluate** screen to compare it against your
+  configured provider on your own sample frames before relying on it.
+- Without WebGPU (older browsers, some mobile GPUs) it falls back to WASM, which is much
+  slower — expect 10-30s per scan instead of a few seconds.
+- Cost is always $0 — there's no provider to bill.
+
+This is genuinely local compute: nothing about the scan (frame, prompt, or result) is sent
+anywhere. The only network traffic is the one-time model download from Hugging Face.
+
 ## Leaving it running
 
 Aura is meant to be propped on a shelf and left armed for hours, so it tries to survive the ordinary ways a phone session gets interrupted — but what it recovers from depends on the platform and what actually happened.
@@ -160,7 +185,12 @@ public/                   Static site (deploy this directory)
 lib/
   aura.js                 Browser engine: scanClient(), fetchModels()
   monitor.js              Pure functions used by aura.js (prompts, parsers) + tests
+  browser-engine.js       BROWSER engine facade: scanBrowser(), worker lifecycle
   training.js             ax/GEPA example management and optimization
+src/workers/
+  ml.worker.js            Runs SmolVLM2 via Transformers.js — the ONLY file that
+                          imports @huggingface/transformers (kept out of the main
+                          bundle, same pattern as ax/GEPA — see CLAUDE.md)
 scripts/
   build-aura.js           esbuild: lib/aura.js → public/aura.bundle.js
   build-material.js       esbuild: @material/web → public/material.bundle.js

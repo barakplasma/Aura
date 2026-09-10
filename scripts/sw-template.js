@@ -69,6 +69,24 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // ONNX Runtime's WASM binary for the BROWSER engine — ~20MB, only needed
+  // once someone actually turns that engine on, so it's cached on first use
+  // (put-on-fetch) rather than precached at install time on every visit.
+  // Same cache-first shape as the precached shell above, just deferred.
+  if (url.pathname.includes("/ort/")) {
+    event.respondWith(
+      caches.match(req).then(
+        (hit) =>
+          hit ||
+          fetch(req).then((resp) => {
+            if (resp.ok) caches.open(CACHE).then((cache) => cache.put(req, resp.clone()));
+            return resp;
+          }),
+      ),
+    );
+    return;
+  }
+
   // Everything else same-origin (e.g. sourcemaps): network, cache as fallback.
   event.respondWith(
     fetch(req).catch(async () => (await caches.match(req)) || Response.error()),
