@@ -26,6 +26,14 @@ self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)));
 });
 
+// Opt-in only: the page's "update available" prompt (see src/main.jsx) posts
+// this after the operator explicitly asks to reload now. A waiting worker
+// never skips on its own — only an explicit user action interrupts a
+// possibly-running monitor session.
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {

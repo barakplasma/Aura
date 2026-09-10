@@ -41,12 +41,14 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)        |
 | `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, `BROWSER_MODELS`, owns `src/workers/ml.worker.js`'s lifecycle                   |
 | `src/workers/ml.worker.js`        | Runs SmolVLM2 via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers`                       |
+| `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                   |
+| `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                |
 | `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                         |
 | `lib/eval.js`                     | Prompt-evaluation engine: expands the image × model × prompt matrix, runs detection-only scans, scores results          |
 | `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                       |
 | `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                 |
 | `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                          |
-| `test/`                           | Unit tests for monitor.js/browser-engine.js helpers, demo.js, and scanClient validation                                 |
+| `test/`                           | Unit tests for monitor.js/browser-engine.js/model-size.js/download-progress.js helpers, demo.js, and scanClient validation |
 
 Two dependencies are kept out of the main bundle by the same pattern — a
 module that's never statically reachable from `App.jsx`, only loaded lazily
