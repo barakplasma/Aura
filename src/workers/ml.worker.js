@@ -8,6 +8,11 @@
 // the main-thread facade that speaks it):
 //   -> { id, type: 'load',   task: 'vlm', model, dtype, device }
 //   <- { id, type: 'progress', file, loaded, total, pct }   (repeated)
+//        `file` is whichever file's own event triggered this message, but
+//        loaded/total/pct are the running total across every file seen so
+//        far against the model's overall expected download size (see
+//        lib/model-size.js + lib/download-progress.js) — not that one file's
+//        own numbers — so pct only goes up as the load progresses.
 //   <- { id, type: 'ready',  device: 'webgpu' | 'wasm' }
 //   -> { id, type: 'scan',   prompt, imageDataUrl, maxNewTokens }
 //   <- { id, type: 'result', text, usage, latencyMs }
@@ -26,6 +31,8 @@ import {
   StoppingCriteria,
   env,
 } from "@huggingface/transformers";
+import { fetchModelSizeEstimate } from "../../lib/model-size.js";
+import { createProgressState, recordProgress, aggregateProgress } from "../../lib/download-progress.js";
 
 // Point ONNX Runtime Web at same-origin WASM files instead of its default
 // CDN, so the browser engine works offline once cached (see
@@ -95,15 +102,26 @@ async function handleLoad(id, { task, model, dtype, device }) {
   const resolvedDevice =
     device || (typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm");
 
+  // transformers.js reports progress per file (config.json, tokenizer.json,
+  // each ONNX weight shard, ...), one at a time — forwarding each event's own
+  // loaded/total verbatim makes the bar snap back to ~0% every time a small
+  // finished file hands off to the next big one. Instead, track bytes loaded
+  // per file and report the running sum against a fixed expected grand total
+  // (fetched once, upfront, from the Hub's file listing) so the percentage
+  // only ever goes up. If that fetch fails (offline, blocked, unknown repo)
+  // we fall back to summing only the totals we've actually seen so far —
+  // still monotonic within a file, just not guaranteed monotonic across the
+  // file-to-file handoff.
+  let expectedTotal = null;
+  fetchModelSizeEstimate(model, dtype).then((bytes) => {
+    expectedTotal = bytes;
+  });
+  const progressState = createProgressState();
+
   const progress_callback = (info) => {
     if (!info || (info.status !== "progress" && info.status !== "download")) return;
-    const loaded = info.loaded ?? 0;
-    const total = info.total ?? 0;
-    const pct = Number.isFinite(info.progress)
-      ? Math.round(info.progress)
-      : total > 0
-        ? Math.round((loaded / total) * 100)
-        : null;
+    recordProgress(progressState, info);
+    const { loaded, total, pct } = aggregateProgress(progressState, expectedTotal);
     post({ id, type: "progress", file: info.file, loaded, total, pct });
   };
 

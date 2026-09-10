@@ -1,6 +1,7 @@
 import { useState, useRef, lazy, Suspense } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
+import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
 import { DEFAULT_BROWSER_MODEL } from '../lib/browser-engine.js';
 import { resumeWindowOpen } from '../lib/keepalive.js';
 import TopBar from './components/TopBar.jsx';
@@ -29,6 +30,10 @@ export default function App() {
   // nagging for the rest of this page load; aura.armed itself is cleared so a
   // later reload within the window doesn't bring it back.
   const [resumeDismissed, setResumeDismissed] = useState(false);
+  // Same idea for the update banner: dismissing just stops it nagging for
+  // this page load. The waiting worker itself isn't going anywhere, so the
+  // next reload (or the next visit) offers it again.
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useLocalStorage('aura.previewCollapsed', false);
   // Transient provider messages (model fetch results/failures) shown in Settings.
   const [statusMsg, setStatusMsg] = useState('');
@@ -90,6 +95,7 @@ export default function App() {
   const canvasRef = useRef(null);
 
   const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, clearHistory, captureFrame, start, stop, switchCamera, wakeLockHeld } = useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn });
+  const { updateAvailable, reloadToUpdate } = useServiceWorkerUpdate();
 
   // Wraps the hook's start()/stop() so an ordinary ARM/DISARM also persists
   // the armed flag a reload needs to offer RESUME. Demo mode bypasses this
@@ -123,6 +129,10 @@ export default function App() {
   function handleDismissResume() {
     setResumeDismissed(true);
     setArmed(false);
+  }
+
+  function handleDismissUpdate() {
+    setUpdateDismissed(true);
   }
 
   function handleStartDemo() {
@@ -175,6 +185,8 @@ export default function App() {
   const showResumeBanner = !running && !demoMode && !resumeDismissed
     && armed && resumeWindowOpen(armedAt, Date.now(), RESUME_WINDOW_MS);
 
+  const showUpdateBanner = updateAvailable && !updateDismissed;
+
   return (
     <div className="app">
       <TopBar dotClass={dotClass} telemetry={telemetry} model={model} />
@@ -190,6 +202,15 @@ export default function App() {
           <div className="btn-row resume-banner-actions">
             <button className="demo-exit-btn" onClick={handleResume}>RESUME</button>
             <button className="demo-exit-btn" onClick={handleDismissResume}>DISMISS</button>
+          </div>
+        </div>
+      )}
+      {showUpdateBanner && (
+        <div className="demo-banner update-banner" role="status">
+          <span>⬆ UPDATE AVAILABLE — a new version is ready to install</span>
+          <div className="btn-row resume-banner-actions">
+            <button className="demo-exit-btn" onClick={reloadToUpdate}>UPDATE NOW</button>
+            <button className="demo-exit-btn" onClick={handleDismissUpdate}>LATER</button>
           </div>
         </div>
       )}
