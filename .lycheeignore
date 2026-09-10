@@ -1,0 +1,8 @@
+# lychee (link checker, run via MegaLinter's SPELL_LYCHEE) reads this file
+# automatically. One pattern per line.
+
+# API base URL, not a browsable page — the bare /api/v1 root has no GET
+# handler and legitimately 404s even though the endpoint works fine for the
+# actual chat-completions calls MegaLinter's LLM Advisor makes against it
+# (see .github/workflows/mega-linter.yml / .mega-linter.yml).
+https://openrouter.ai/api/v1
