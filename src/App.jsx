@@ -1,6 +1,7 @@
 import { useState, useRef, lazy, Suspense } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
+import { resumeWindowOpen } from '../lib/keepalive.js';
 import TopBar from './components/TopBar.jsx';
 import NavRail from './components/NavRail.jsx';
 import MonitorStage from './components/MonitorStage.jsx';
@@ -14,10 +15,19 @@ import SettingsScreen from './screens/SettingsScreen.jsx';
 const OptimizeScreen = lazy(() => import('./screens/OptimizeScreen.jsx'));
 const EvalScreen = lazy(() => import('./screens/EvalScreen.jsx'));
 
+// A RESUME MONITORING offer stays valid for this long after arming — long
+// enough to cover an overnight run interrupted by a reload, short enough that
+// a session armed days ago doesn't nag forever.
+const RESUME_WINDOW_MS = 12 * 60 * 60 * 1000;
+
 export default function App() {
   const [screen, setScreen] = useState('monitor');
   // Session-only on purpose: a reload always exits demo mode.
   const [demoMode, setDemoMode] = useState(false);
+  // Dismissing the resume banner is session-only too — it only needs to stop
+  // nagging for the rest of this page load; aura.armed itself is cleared so a
+  // later reload within the window doesn't bring it back.
+  const [resumeDismissed, setResumeDismissed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useLocalStorage('aura.previewCollapsed', false);
   // Transient provider messages (model fetch results/failures) shown in Settings.
   const [statusMsg, setStatusMsg] = useState('');
@@ -44,6 +54,10 @@ export default function App() {
   const [webhookHeaders, setWebhookHeaders] = useLocalStorage('aura.webhookHeaders', '');
   const [webhookAction, setWebhookAction] = useLocalStorage('aura.webhookAction', '');
   const [webhookSchema, setWebhookSchema] = useLocalStorage('aura.webhookSchema', '');
+  const [keepScreenOn, setKeepScreenOn] = useLocalStorage('aura.keepScreenOn', true);
+  // Written by handleStart/handleStop, read once at boot to offer RESUME.
+  const [armed, setArmed] = useLocalStorage('aura.armed', false);
+  const [armedAt, setArmedAt] = useLocalStorage('aura.armedAt', 0);
 
   // SCAN EVERY is entered as a number + unit (1s .. 12h+) and converted to
   // seconds for the scheduler, which only deals in seconds.
@@ -63,11 +77,40 @@ export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
-  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, captureFrame, start, stop, switchCamera } = useMonitor({ settingsRef, videoRef, canvasRef });
+  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, clearHistory, captureFrame, start, stop, switchCamera, wakeLockHeld } = useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn });
+
+  // Wraps the hook's start()/stop() so an ordinary ARM/DISARM also persists
+  // the armed flag a reload needs to offer RESUME. Demo mode bypasses this
+  // (see handleStartDemo) — it isn't meant to survive a reload anyway. Only
+  // persists on an actual arm — a rejected/misconfigured start() (bad
+  // provider, no mission, camera denied) must not leave a phantom RESUME
+  // offer for a session that never ran.
+  async function handleStart() {
+    const armedOk = await start();
+    if (armedOk) {
+      setArmed(true);
+      setArmedAt(Date.now());
+    }
+  }
+
+  function handleStop() {
+    setArmed(false);
+    stop();
+  }
 
   function handleToggle() {
-    if (running) stop();
-    else start();
+    if (running) handleStop();
+    else handleStart();
+  }
+
+  function handleResume() {
+    setResumeDismissed(true);
+    handleStart();
+  }
+
+  function handleDismissResume() {
+    setResumeDismissed(true);
+    setArmed(false);
   }
 
   function handleStartDemo() {
@@ -114,6 +157,12 @@ export default function App() {
     ? (previewCollapsed ? 'stage-collapsed' : 'stage-full')
     : (running ? 'stage-pip' : 'stage-parked');
 
+  // A session armed before a reload (OS kill, redeploy, pull-to-refresh) gets
+  // a one-tap RESUME offer instead of silently staying disarmed — but only
+  // while the window is still open and only until the operator has answered.
+  const showResumeBanner = !running && !demoMode && !resumeDismissed
+    && armed && resumeWindowOpen(armedAt, Date.now(), RESUME_WINDOW_MS);
+
   return (
     <div className="app">
       <TopBar dotClass={dotClass} telemetry={telemetry} model={model} />
@@ -121,6 +170,15 @@ export default function App() {
         <div className="demo-banner" role="status">
           <span>▲ DEMO MODE — simulated alerts · no API calls · webhooks disabled</span>
           <button className="demo-exit-btn" onClick={handleExitDemo}>EXIT DEMO</button>
+        </div>
+      )}
+      {showResumeBanner && (
+        <div className="demo-banner resume-banner" role="status">
+          <span>⟳ RESUME MONITORING — an armed session was interrupted by a reload</span>
+          <div className="btn-row resume-banner-actions">
+            <button className="demo-exit-btn" onClick={handleResume}>RESUME</button>
+            <button className="demo-exit-btn" onClick={handleDismissResume}>DISMISS</button>
+          </div>
         </div>
       )}
       <div className="app-body">
@@ -136,6 +194,7 @@ export default function App() {
             videoSource={videoSource}
             running={running}
             onFlipCamera={handleFlipCamera}
+            wakeLockHeld={wakeLockHeld}
           />
           {screen === 'mission' && (
             <MissionScreen
@@ -161,7 +220,7 @@ export default function App() {
             />
           )}
           {screen === 'history' && (
-            <HistoryScreen alerts={alerts} missed={missed} markedIds={markedIds} onMarkExample={markExample} />
+            <HistoryScreen alerts={alerts} missed={missed} markedIds={markedIds} onMarkExample={markExample} onClearHistory={clearHistory} />
           )}
           {screen === 'optimize' && (
             <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
@@ -195,6 +254,7 @@ export default function App() {
               videoSource={videoSource} setVideoSource={setVideoSource}
               cameraFacing={cameraFacing} setCameraFacing={setCameraFacing}
               cameraDeviceId={cameraDeviceId} setCameraDeviceId={setCameraDeviceId}
+              keepScreenOn={keepScreenOn} setKeepScreenOn={setKeepScreenOn}
               webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
               webhookMethod={webhookMethod} setWebhookMethod={setWebhookMethod}
               webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}
