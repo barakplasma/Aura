@@ -49,7 +49,7 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                          |
 | `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                    |
 | `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                             |
-| `test/`                           | Unit tests for monitor.js/browser-engine.js/browser-models.js/model-size.js/download-progress.js helpers, demo.js, and scanClient validation |
+| `test/`                           | Unit tests for the lib/ pure helpers, demo.js, browser-engine protocol, and scanClient validation                          |
 
 Two dependencies are kept out of the main bundle by the same pattern — a
 module that's never statically reachable from `App.jsx`, only loaded lazily
