@@ -11,10 +11,16 @@ const SCREENS = [
 
 // Memoized — per-scan telemetry updates re-render App, but the rail only
 // cares about navigation state.
-function NavRail({ screen, setScreen }) {
+//
+// `hidden` is a list of screen ids to leave out. The numbers stay attached to
+// the screen rather than being recomputed from the visible subset, so
+// OPTIMIZE disappearing doesn't renumber EVAL and SETTINGS under the
+// operator's fingers.
+function NavRail({ screen, setScreen, hidden }) {
+  const visible = hidden?.length ? SCREENS.filter(s => !hidden.includes(s.id)) : SCREENS;
   return (
     <nav className="nav-rail">
-      {SCREENS.map(s => (
+      {visible.map(s => (
         <button
           key={s.id}
           className={`nav-item ${screen === s.id ? 'active' : ''}`}

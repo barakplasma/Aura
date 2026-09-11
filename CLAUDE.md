@@ -7,7 +7,7 @@ Guidance for working in this repo. Read this before changing code.
 An **automated visual monitoring PWA** that runs entirely in the browser. A phone/webcam streams frames; each scan cycle calls a vision model with a **detection** prompt and, if the alert fires, an **action** prompt that generates a spoken announcement. Two scan engines, chosen via `aura.engine`:
 
 - **PROVIDER** (default) — an OpenAI-compatible vision model (Cerebras, OpenAI, Groq, a local server, etc.), called with the user's own API key — no backend, no secrets.
-- **BROWSER** — a small vision-language model (SmolVLM2) run entirely client-side via Transformers.js/WebGPU. No key, no server, no CORS; the frame never leaves the device. See `lib/browser-engine.js` and `src/workers/ml.worker.js`.
+- **BROWSER** — a small vision-language model run entirely client-side via Transformers.js/WebGPU. No key, no server, no CORS; the frame never leaves the device. The model is picked from a table (`lib/browser-models.js`); the reference device is a Pixel 10 in Chrome. See `lib/browser-engine.js` and `src/workers/ml.worker.js`.
 
 Both return the exact same result shape from `scanClient()` / `scanBrowser()`, so `useMonitor`, telemetry, history, and the eval screen don't care which one is active.
 
@@ -39,8 +39,9 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `public/feedback.js`              | Web Speech + Web Vibration                                                                                                 |
 | `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models                       |
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)           |
-| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, `BROWSER_MODELS`, owns `src/workers/ml.worker.js`'s lifecycle                      |
-| `src/workers/ml.worker.js`        | Runs SmolVLM2 via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers`                          |
+| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, owns `src/workers/ml.worker.js`'s lifecycle; re-exports the model table            |
+| `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                |
+| `src/workers/ml.worker.js`        | Runs the selected VLM via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers`                  |
 | `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                      |
 | `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                    |
 | `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                            |
@@ -48,7 +49,7 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                          |
 | `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                    |
 | `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                             |
-| `test/`                           | Unit tests for monitor.js/browser-engine.js/model-size.js/download-progress.js helpers, demo.js, and scanClient validation |
+| `test/`                           | Unit tests for the lib/ pure helpers, demo.js, browser-engine protocol, and scanClient validation                          |
 
 Two dependencies are kept out of the main bundle by the same pattern — a
 module that's never statically reachable from `App.jsx`, only loaded lazily
@@ -97,6 +98,19 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Match the surrounding comment density and naming.
 - All AI logic must be browser-compatible (uses `fetch`, `AbortController`, no Node APIs).
 - After changing the engine, add/extend a test in `test/`.
+- A BROWSER model is a **row in `lib/browser-models.js`, not a branch**. transformers.js
+  is not consistent across VLM families — processor argument order, chat-template
+  shape, which options are per-call vs. read off the image processor's own config —
+  so those differences travel to the worker as a `recipe` on the `load` message.
+  Adding a model means adding a row; if it needs a `if (modelId.includes(...))` in
+  `ml.worker.js`, the descriptor is missing a field.
+- A row's `promptProfile` decides which prompts it gets: `json` models take the same
+  `buildDetectionPrompt()`/`buildActionPrompt()` as the PROVIDER engine; `compact`
+  models (SmolVLM2 256M) get the short positional prompts, because handed a JSON
+  schema they paraphrase it back rather than answering it.
+- A row is only `autoSelectable` if `pickBrowserModel()` may hand it to someone who
+  never opened Settings. Anything whose download needs a deliberate yes stays
+  `false` and is picked manually.
 - There is no silent mock: a misconfigured or unreachable provider throws. A blank
   API key is *not* misconfiguration — it's the normal local-server setup, and the
   request goes out for real. Demo mode is the only simulated path: explicit opt-in
@@ -130,5 +144,15 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Speech/vibration require a secure context (HTTPS or localhost).
 - Cost is estimated from token usage returned by the provider (always `0` for BROWSER).
 - BROWSER engine: needs WebGPU for a usable cadence (falls back to WASM, which is
-  10-30s/scan); a 256M-parameter model is a coarse detector, not a substitute for
-  a strong cloud model — the eval screen exists to measure that trade-off.
+  10-30s/scan). Even the best row in the table is not a substitute for a strong
+  cloud model — the eval screen exists to measure that trade-off.
+- ORT's default WebGPU device uses the spec *minimum* limits (128 MB
+  `maxStorageBufferBindingSize`), and transformers.js doesn't raise them.
+  `ml.worker.js`'s `useAdapterLimits()` requests a device with the adapter's own
+  limits before the first session, or a larger model silently drops to WASM and
+  looks like "no WebGPU here". It must stay ahead of the first `from_pretrained`,
+  and reading `env.backends.onnx.webgpu.device` is itself device-creating — don't.
+- Prompt optimization (OPTIMIZE screen) is PROVIDER-only. `@ax-llm/ax` drives HTTP
+  providers and cannot reach a model running inside the page, so `App.jsx` hides
+  the screen and `useMonitor` withholds the GEPA artifact when `aura.engine` is
+  `browser`. Few-shot examples still apply — `lib/training-store.js` imports no ax.

@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
 import {
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
+  browserModelKeys,
+  pickBrowserModel,
+  probeBrowserEnv,
   loadBrowserModel,
   clearBrowserModelCache,
   isBrowserModelLoaded,
@@ -66,12 +69,21 @@ export default function SettingsScreen({
   const [cameras, setCameras] = useState([]);
   const [cameraStatus, setCameraStatus] = useState('');
 
-  // BROWSER MODEL — one curated model in v1 (see BROWSER_MODELS), so there's
-  // no picker, just its load/test/clear lifecycle.
+  // BROWSER MODEL — see lib/browser-models.js for the table and the picker.
   const browserModelKey =
     browserModel && BROWSER_MODELS[browserModel] ? browserModel : DEFAULT_BROWSER_MODEL;
   const browserModelCfg = BROWSER_MODELS[browserModelKey];
   const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
+  // The adapter's buffer limits need an async requestAdapter(), so the probe
+  // result arrives after first paint. Null until then — the recommendation
+  // line simply isn't shown yet rather than flashing a wrong one.
+  const [gpuEnv, setGpuEnv] = useState(null);
+  useEffect(() => {
+    let live = true;
+    probeBrowserEnv().then((env) => { if (live) setGpuEnv(env); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const recommendedKey = gpuEnv ? pickBrowserModel(gpuEnv) : null;
   const [downloading, setDownloading] = useState(false);
   const [downloadPct, setDownloadPct] = useState(null);
   const [browserModelStatus, setBrowserModelStatus] = useState('');
@@ -305,8 +317,39 @@ export default function SettingsScreen({
         {engine === 'browser' && (
           <>
             <div className="form-group">
-              <label className="field-label">BROWSER MODEL</label>
-              <div className="field-hint">{browserModelCfg.label} · {browserModelCfg.sizeLabel} download, cached after the first load.</div>
+              <label className="field-label" htmlFor="browser-model-select">BROWSER MODEL</label>
+              <select
+                id="browser-model-select"
+                className="dc-input"
+                value={browserModelKey}
+                onChange={(e) => setBrowserModel?.(e.target.value)}
+              >
+                {browserModelKeys().map((key) => (
+                  <option key={key} value={key}>
+                    {BROWSER_MODELS[key].label} · {BROWSER_MODELS[key].sizeLabel}
+                    {BROWSER_MODELS[key].promptProfile === 'compact' ? ' · basic' : ''}
+                  </option>
+                ))}
+              </select>
+              <div className="field-hint">
+                {browserModelCfg.sizeLabel} download, cached after the first load.{' '}
+                {browserModelCfg.promptProfile === 'compact'
+                  ? 'Coarse yes/no detector — too small to follow a written instruction, so announcements fall back to what it saw.'
+                  : 'Follows the same detection and announcement prompts as the PROVIDER engine.'}
+              </div>
+              {recommendedKey && recommendedKey !== browserModelKey && (
+                <div className="field-hint">
+                  Best fit for this device: {BROWSER_MODELS[recommendedKey].label}.{' '}
+                  <button
+                    id="browser-model-autopick"
+                    type="button"
+                    className="dc-btn outline"
+                    onClick={() => setBrowserModel?.(recommendedKey)}
+                  >
+                    USE IT
+                  </button>
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label className="field-label">STATUS</label>

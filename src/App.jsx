@@ -75,6 +75,12 @@ export default function App() {
   // "Configured" means a model is selected for BROWSER, or a base URL + model
   // for PROVIDER — never gate on the API key (see CLAUDE.md's provider format).
   const providerReady = engine === 'browser' ? Boolean(browserModel) : Boolean(baseUrl && model);
+  // The optimizer is @ax-llm/ax end to end, and ax only talks to HTTP
+  // providers — it cannot drive a model running inside this page. So on the
+  // BROWSER engine the screen is not just useless, it would quietly optimize
+  // prompts against a provider the operator isn't using. Hide it, and don't
+  // apply an artifact trained elsewhere to local scans (see useMonitor).
+  const axAvailable = engine !== 'browser';
   // The BROWSER engine never spends a cent — force the telemetry rate to 0
   // rather than have it silently invent cost from a stale cloud rate (same
   // effect as picking a local preset in SettingsScreen).
@@ -215,7 +221,7 @@ export default function App() {
         </div>
       )}
       <div className="app-body">
-        <NavRail screen={screen} setScreen={setScreen} />
+        <NavRail screen={screen} setScreen={setScreen} hidden={axAvailable ? undefined : ['optimize']} />
         <main className={`main-content ${screen === 'monitor' ? 'monitor-layout' : ''}`}>
           <MonitorStage
             videoRef={videoRef} canvasRef={canvasRef}
@@ -257,9 +263,19 @@ export default function App() {
             <HistoryScreen alerts={alerts} missed={missed} markedIds={markedIds} onMarkExample={markExample} onClearHistory={clearHistory} />
           )}
           {screen === 'optimize' && (
-            <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
-              <OptimizeScreen />
-            </Suspense>
+            axAvailable ? (
+              <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
+                <OptimizeScreen />
+              </Suspense>
+            ) : (
+              <div className="screen">
+                <p className="status-msg">
+                  Prompt optimization needs the PROVIDER engine. It runs GEPA against an
+                  OpenAI-compatible endpoint, which the in-browser model isn't one of.
+                  Switch engines in SETTINGS to use it.
+                </p>
+              </div>
+            )
           )}
           {screen === 'eval' && (
             <Suspense fallback={<div className="screen"><p className="status-msg">Loading evaluation…</p></div>}>

@@ -1,12 +1,18 @@
 // Aura ML worker — the ONLY file in this repo that imports
 // @huggingface/transformers (see CLAUDE.md's bundle rule: the same one that
 // keeps @ax-llm/ax out of the main bundle via a separate dynamic import).
-// Runs a small vision-language model (SmolVLM) entirely in this worker so
-// the BROWSER engine never touches src/App.jsx's static import graph.
+// Runs a small vision-language model (see lib/browser-models.js for the
+// table) entirely in this worker so the BROWSER engine never touches
+// src/App.jsx's static import graph.
 //
 // Message protocol (see docs/PRD-browser-engine.md and lib/browser-engine.js,
 // the main-thread facade that speaks it):
-//   -> { id, type: 'load',   task: 'vlm', model, dtype, device }
+//   -> { id, type: 'load',   task: 'vlm', model, dtype, device, recipe }
+//        `recipe` is the per-model calling convention taken straight off
+//        lib/browser-models.js's descriptor — processorArgs, chatStyle,
+//        processorOptions, imageProcessorConfig. transformers.js is not
+//        consistent across VLM families, so these differences are data the
+//        main thread hands over rather than branches on modelId in here.
 //   <- { id, type: 'progress', file, loaded, total, pct }   (repeated)
 //        `file` is whichever file's own event triggered this message, but
 //        loaded/total/pct are the running total across every file seen so
@@ -26,7 +32,7 @@
 
 import {
   AutoProcessor,
-  AutoModelForVision2Seq,
+  AutoModelForImageTextToText,
   RawImage,
   StoppingCriteria,
   env,
@@ -65,9 +71,52 @@ class InterruptableStoppingCriteria extends StoppingCriteria {
 
 const DEFAULT_MAX_NEW_TOKENS = 48;
 
+// --- WebGPU device limits -------------------------------------------------
+
+// ORT creates its WebGPU device with the spec's *minimum* limits — notably a
+// 128 MB maxStorageBufferBindingSize — regardless of what the GPU can
+// actually do, and transformers.js doesn't intervene: it calls
+// requestAdapter() only to probe fp16 support (its src/utils/dtypes.js), and
+// otherwise sets nothing but powerPreference. A model with a buffer over that
+// limit fails session creation and drops to WASM, which at 10-30s/scan reads
+// as "WebGPU isn't supported here" rather than as a ceiling that could have
+// been raised. Android adapters report smaller limits than desktop ones, so
+// this bites hardest on exactly the hardware the BROWSER engine targets.
+//
+// media-clusterer hit this first, against a 228 MB model — see its
+// src/sapiens2.ts, which this is a port of. The fix is to request a device
+// with the adapter's own limits and hand it to ORT before the first session.
+//
+// Entirely best-effort, and run at most once: every failure path leaves ORT
+// to create its own device exactly as it does today, so the worst case is
+// current behaviour. Note that *reading* env.backends.onnx.webgpu.device
+// before the first session is itself a device-creating side effect, so the
+// "already done" check is a local flag rather than a read of that property.
+let adapterLimitsApplied = false;
+
+async function useAdapterLimits() {
+  if (adapterLimitsApplied || typeof navigator === "undefined" || !navigator.gpu) return;
+  adapterLimitsApplied = true;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter?.limits) return;
+    // A storage binding is capped by both of these, so raising one alone
+    // still leaves the other at the spec minimum.
+    const { maxStorageBufferBindingSize, maxBufferSize } = adapter.limits;
+    const requiredLimits = {};
+    if (maxStorageBufferBindingSize) requiredLimits.maxStorageBufferBindingSize = maxStorageBufferBindingSize;
+    if (maxBufferSize) requiredLimits.maxBufferSize = maxBufferSize;
+    const device = await adapter.requestDevice({ requiredLimits });
+    if (device) env.backends.onnx.webgpu.device = device;
+  } catch {
+    // No adapter, limits refused, or ORT already holds a device — in every
+    // case ORT's own default device is still perfectly usable.
+  }
+}
+
 // One model loaded at a time — the app only ever runs one BROWSER-engine
 // model concurrently, and holding two in VRAM/RAM would be wasteful.
-let current = null; // { task, modelId, device, model, processor, stopping }
+let current = null; // { task, modelId, device, model, processor, recipe, stopping }
 
 self.addEventListener("message", async (event) => {
   const data = event.data || {};
@@ -87,7 +136,7 @@ function post(msg) {
   self.postMessage(msg);
 }
 
-async function handleLoad(id, { task, model, dtype, device }) {
+async function handleLoad(id, { task, model, dtype, device, recipe }) {
   if (task !== "vlm") throw new Error(`Unsupported task: ${task}`);
 
   // Already loaded with the same model + device — nothing to do.
@@ -125,8 +174,21 @@ async function handleLoad(id, { task, model, dtype, device }) {
     post({ id, type: "progress", file: info.file, loaded, total, pct });
   };
 
+  // Must happen before the first WebGPU session is created, which the model
+  // load below is.
+  if (resolvedDevice === "webgpu") await useAdapterLimits();
+
   const processor = await AutoProcessor.from_pretrained(model, { progress_callback });
-  const vlm = await AutoModelForVision2Seq.from_pretrained(model, {
+
+  // Some image processors read their options off their own config rather than
+  // from per-call kwargs — LFM2-VL's `_call` accepts only return_row_col_info,
+  // so do_image_splitting can only be turned off by setting the property. The
+  // recipe says which properties, so this stays one loop for every family.
+  if (recipe?.imageProcessorConfig && processor.image_processor) {
+    Object.assign(processor.image_processor, recipe.imageProcessorConfig);
+  }
+
+  const vlm = await AutoModelForImageTextToText.from_pretrained(model, {
     dtype,
     device: resolvedDevice,
     progress_callback,
@@ -138,6 +200,7 @@ async function handleLoad(id, { task, model, dtype, device }) {
     device: resolvedDevice,
     model: vlm,
     processor,
+    recipe: recipe || {},
     stopping: new InterruptableStoppingCriteria(),
   };
   post({ id, type: "ready", device: resolvedDevice });
@@ -145,24 +208,37 @@ async function handleLoad(id, { task, model, dtype, device }) {
 
 async function handleScan(id, { prompt, imageDataUrl, maxNewTokens }) {
   if (!current) throw new Error("No model loaded — send a 'load' message first.");
-  const { model, processor, stopping } = current;
+  const { model, processor, recipe, stopping } = current;
   stopping.reset();
   const start = performance.now();
 
   const image = await RawImage.fromURL(imageDataUrl);
-  const messages = [
-    { role: "user", content: [{ type: "image" }, { type: "text", text: prompt }] },
-  ];
+  // Two chat-template conventions in the wild: structured content parts
+  // (SmolVLM, LFM2-VL) and an inline "<image>" marker in a plain string
+  // (FastVLM — see onnx-community/FastVLM-0.5B-ONNX's own README).
+  const messages =
+    recipe.chatStyle === "inline-image"
+      ? [{ role: "user", content: `<image>${prompt}` }]
+      : [{ role: "user", content: [{ type: "image" }, { type: "text", text: prompt }] }];
   const text = processor.apply_chat_template(messages, { add_generation_prompt: true });
-  // do_image_splitting: false — SmolVLM's default splits the frame into up
-  // to a dozen crops, multiplying vision-encoder work for no benefit at
-  // 640x480. This single flag is the difference between ~2s and ~15s/scan.
-  const inputs = await processor(text, [image], { do_image_splitting: false });
+  // Argument order differs by family and getting it wrong surfaces as a shape
+  // error inside the tokenizer rather than here, so it's carried as data.
+  // processorOptions is likewise per-model: `do_image_splitting: false` is the
+  // difference between ~2s and ~15s/scan on SmolVLM, and FastVLM needs
+  // `add_special_tokens: false` because its template already emits them.
+  const opts = recipe.processorOptions || {};
+  const inputs =
+    recipe.processorArgs === "images-first"
+      ? await processor(image, text, opts)
+      : await processor(text, [image], opts);
 
   const promptLength = inputs.input_ids.dims.at(-1);
   const outputIds = await model.generate({
     ...inputs,
     max_new_tokens: maxNewTokens ?? DEFAULT_MAX_NEW_TOKENS,
+    // Greedy. A monitor that returns a different verdict for the same frame
+    // is unusable, and it makes the eval screen's numbers mean something.
+    do_sample: false,
     stopping_criteria: stopping,
   });
 
