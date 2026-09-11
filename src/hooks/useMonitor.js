@@ -403,8 +403,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         const optimizedInstruction =
           getOptimizedArtifact()?.program?.instruction;
         // Model-download progress (first arm, or a model switch) is surfaced
-        // as the monitor status so the operator sees "Loading SmolVLM2 256M —
-        // 61%" instead of a blank screen while the weights fetch.
+        // as the monitor status so the operator sees "Loading LFM2.5-VL 450M
+        // — 61%" instead of a blank screen while the weights fetch.
         const onProgress = isBrowserEngine
           ? (msg) => {
               if (!internalRef.current.running || msg.pct == null) return;
@@ -428,6 +428,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
                 threshold: s.threshold ?? 0,
                 webhookAction: s.webhookAction || undefined,
                 webhookSchema: parseWebhookSchema() || undefined,
+                // Few-shot examples are plain stored data (training-store.js
+                // imports no ax) and the json-profile models have the context
+                // budget for them. `optimizedInstruction` is deliberately not
+                // passed: it is a GEPA artifact tuned against a provider
+                // model, and the optimizer screen is hidden on this engine
+                // precisely because ax can't drive an in-page model.
+                examples,
                 signal: abort.signal,
                 onProgress,
               })

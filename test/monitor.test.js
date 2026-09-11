@@ -5,6 +5,8 @@ import {
   buildActionPrompt,
   buildWebhookActionPrompt,
   buildCompactDetectionPrompt,
+  buildCompactActionPrompt,
+  parseCompactAction,
   parseDetection,
   parseLooseDetection,
   normalizeDetection,
@@ -572,4 +574,40 @@ test("scanClient sends OpenRouter attribution headers only for an OpenRouter bas
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("buildCompactActionPrompt is short, schema-free and carries the instruction", () => {
+  const p = buildCompactActionPrompt("Tell them to move back", "a person at the door");
+  assert.match(p, /Tell them to move back/);
+  assert.match(p, /a person at the door/);
+  assert.doesNotMatch(p, /Schema:|minified JSON/i);
+  assert.ok(p.split("\n").length <= 6);
+});
+
+test("parseCompactAction drops a prompt echo and falls back to the reason", () => {
+  const echo =
+    "The alert condition was just met. The operator instruction for the response was \"What they look like\".";
+  const r = parseCompactAction(echo, "a bearded man is close to the camera");
+  assert.equal(r.message, "a bearded man is close to the camera");
+});
+
+test("parseCompactAction keeps a real answer, unwrapping labels and quotes", () => {
+  assert.equal(
+    parseCompactAction('Message: "Please step back from the door."', "x").message,
+    "Please step back from the door.",
+  );
+  assert.equal(
+    parseCompactAction("Please step back.\nYou can see: a person", "x").message,
+    "Please step back.",
+  );
+});
+
+test("parseCompactAction uses the generic fallback when echo and reason are both empty", () => {
+  assert.equal(parseCompactAction("Schema: {\"message\": string}", "").message, "Attention please.");
+  assert.equal(parseCompactAction("", null).message, "Attention please.");
+});
+
+test("parseAction's prose fallback no longer speaks a prompt echo", () => {
+  const echo = "You are the announcement generator for an automated monitor.";
+  assert.equal(parseAction(echo).message, "Attention please.");
 });

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   expectedOnnxPaths,
   estimateModelBytes,
+  externalDataParent,
   fetchModelSizeEstimate,
 } from "../lib/model-size.js";
 
@@ -85,4 +86,44 @@ test("fetchModelSizeEstimate resolves to null on a network error or malformed bo
 
   const malformedFetch = async () => ({ ok: true, json: async () => ({ not: "an array" }) });
   assert.equal(await fetchModelSizeEstimate("Some/Model", { a: "q4" }, malformedFetch), null);
+});
+
+test("externalDataParent maps .onnx_data chunks back to their .onnx", () => {
+  assert.equal(
+    externalDataParent("onnx/decoder_model_merged_q4.onnx_data"),
+    "onnx/decoder_model_merged_q4.onnx",
+  );
+  assert.equal(
+    externalDataParent("onnx/vision_encoder_fp16.onnx_data_3"),
+    "onnx/vision_encoder_fp16.onnx",
+  );
+  assert.equal(externalDataParent("onnx/model_q4.onnx"), null);
+  assert.equal(externalDataParent("tokenizer.json"), null);
+});
+
+test("estimateModelBytes counts external .onnx_data weights, not just the graph stub", () => {
+  // LFM2.5-VL's real shape: a ~170 KB .onnx next to a ~481 MB .onnx_data.
+  // Counting only the .onnx would size the download at a thousandth of itself.
+  const entries = [
+    { path: "config.json", size: 2_540 },
+    { path: "tokenizer.json", size: 4_733_040 },
+    { path: "onnx/decoder_model_merged_q4.onnx", size: 171_898 },
+    { path: "onnx/decoder_model_merged_q4.onnx_data", size: 481_030_144 },
+    { path: "onnx/vision_encoder_fp16.onnx", size: 123_551 },
+    { path: "onnx/vision_encoder_fp16.onnx_data", size: 188_469_760 },
+    { path: "onnx/embed_tokens_fp16.onnx", size: 573 },
+    { path: "onnx/embed_tokens_fp16.onnx_data", size: 134_217_728 },
+    // A different dtype's files must not be counted.
+    { path: "onnx/decoder_model_merged_q8.onnx_data", size: 633_663_488 },
+  ];
+  const bytes = estimateModelBytes(entries, {
+    embed_tokens: "fp16",
+    vision_encoder: "fp16",
+    decoder_model_merged: "q4",
+  });
+  assert.equal(
+    bytes,
+    2_540 + 4_733_040 + 171_898 + 481_030_144 + 123_551 + 188_469_760 + 573 + 134_217_728,
+  );
+  assert.ok(bytes > 800e6 && bytes < 820e6, "roughly the 810 MB the table advertises");
 });

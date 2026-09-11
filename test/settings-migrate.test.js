@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   migrateLegacySettings,
   migrateScanEveryKey,
+  migrateBrowserModelKey,
 } from "../lib/settings-migrate.js";
 
 // Minimal Storage-like stub over a plain object.
@@ -20,6 +21,9 @@ function makeStorage(initial = {}) {
     },
     setItem(k, v) {
       map.set(k, String(v));
+    },
+    removeItem(k) {
+      map.delete(k);
     },
     _dump() {
       return Object.fromEntries(map);
@@ -113,4 +117,38 @@ test("migrateScanEveryKey handles a raw (unwrapped) legacy value and missing/inv
     false,
   ); // unparseable
   assert.equal(migrateScanEveryKey(null), false);
+});
+
+test("clears a browserModel that only ever recorded the old sole default", () => {
+  const st = makeStorage({ "aura.browserModel": JSON.stringify("smolvlm2-256m") });
+  assert.equal(migrateBrowserModelKey(st), true);
+  assert.equal(st.getItem("aura.browserModel"), null);
+  assert.equal(st.getItem("aura.browserModelMigrated"), "true");
+});
+
+test("leaves a deliberately chosen browserModel alone", () => {
+  const st = makeStorage({ "aura.browserModel": JSON.stringify("fastvlm-0.5b") });
+  assert.equal(migrateBrowserModelKey(st), false);
+  assert.equal(st.getItem("aura.browserModel"), JSON.stringify("fastvlm-0.5b"));
+});
+
+test("the browserModel migration runs at most once, so a re-pick sticks", () => {
+  const st = makeStorage({ "aura.browserModel": JSON.stringify("smolvlm2-256m") });
+  assert.equal(migrateBrowserModelKey(st), true);
+  // The operator deliberately picks the small model again.
+  st.setItem("aura.browserModel", JSON.stringify("smolvlm2-256m"));
+  assert.equal(migrateBrowserModelKey(st), false);
+  assert.equal(st.getItem("aura.browserModel"), JSON.stringify("smolvlm2-256m"));
+});
+
+test("the browserModel migration copes with a raw (pre-JSON) stored value", () => {
+  const st = makeStorage({ "aura.browserModel": "smolvlm2-256m" });
+  assert.equal(migrateBrowserModelKey(st), true);
+  assert.equal(st.getItem("aura.browserModel"), null);
+});
+
+test("the browserModel migration is a no-op when nothing is stored", () => {
+  const st = makeStorage({});
+  assert.equal(migrateBrowserModelKey(st), false);
+  assert.equal(migrateBrowserModelKey(st), false);
 });

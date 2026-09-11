@@ -6,6 +6,7 @@ import {
   isBrowserModelLoaded,
   browserModelDevice,
   BROWSER_MODELS,
+  DEFAULT_BROWSER_MODEL,
   _setWorkerFactory,
   _resetBrowserEngine,
 } from "../lib/browser-engine.js";
@@ -68,9 +69,12 @@ async function waitForPosted(fw, n) {
 // reply case below, which tests the load path failing. Returns `getWorker`
 // too, since a test recovering from a crash needs it again to grab the next
 // fake worker the factory produces.
+// Loads DEFAULT_BROWSER_MODEL, because that is what a scanBrowser() call with
+// no explicit `model` asks for — loading anything else here would make every
+// scan below post its own 'load' first and throw the message counts off.
 async function loadedFakeWorker(device = "wasm") {
   const getWorker = freshWorker();
-  const loadP = loadBrowserModel("smolvlm2-256m");
+  const loadP = loadBrowserModel(DEFAULT_BROWSER_MODEL);
   const fw = getWorker();
   fw.reply({ id: fw.posted[0].id, type: "ready", device });
   await loadP;
