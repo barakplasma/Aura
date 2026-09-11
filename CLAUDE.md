@@ -146,6 +146,12 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - BROWSER engine: needs WebGPU for a usable cadence (falls back to WASM, which is
   10-30s/scan). Even the best row in the table is not a substitute for a strong
   cloud model — the eval screen exists to measure that trade-off.
+- ORT's default WebGPU device uses the spec *minimum* limits (128 MB
+  `maxStorageBufferBindingSize`), and transformers.js doesn't raise them.
+  `ml.worker.js`'s `useAdapterLimits()` requests a device with the adapter's own
+  limits before the first session, or a larger model silently drops to WASM and
+  looks like "no WebGPU here". It must stay ahead of the first `from_pretrained`,
+  and reading `env.backends.onnx.webgpu.device` is itself device-creating — don't.
 - Prompt optimization (OPTIMIZE screen) is PROVIDER-only. `@ax-llm/ax` drives HTTP
   providers and cannot reach a model running inside the page, so `App.jsx` hides
   the screen and `useMonitor` withholds the GEPA artifact when `aura.engine` is

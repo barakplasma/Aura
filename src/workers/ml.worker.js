@@ -71,6 +71,49 @@ class InterruptableStoppingCriteria extends StoppingCriteria {
 
 const DEFAULT_MAX_NEW_TOKENS = 48;
 
+// --- WebGPU device limits -------------------------------------------------
+
+// ORT creates its WebGPU device with the spec's *minimum* limits — notably a
+// 128 MB maxStorageBufferBindingSize — regardless of what the GPU can
+// actually do, and transformers.js doesn't intervene: it calls
+// requestAdapter() only to probe fp16 support (its src/utils/dtypes.js), and
+// otherwise sets nothing but powerPreference. A model with a buffer over that
+// limit fails session creation and drops to WASM, which at 10-30s/scan reads
+// as "WebGPU isn't supported here" rather than as a ceiling that could have
+// been raised. Android adapters report smaller limits than desktop ones, so
+// this bites hardest on exactly the hardware the BROWSER engine targets.
+//
+// media-clusterer hit this first, against a 228 MB model — see its
+// src/sapiens2.ts, which this is a port of. The fix is to request a device
+// with the adapter's own limits and hand it to ORT before the first session.
+//
+// Entirely best-effort, and run at most once: every failure path leaves ORT
+// to create its own device exactly as it does today, so the worst case is
+// current behaviour. Note that *reading* env.backends.onnx.webgpu.device
+// before the first session is itself a device-creating side effect, so the
+// "already done" check is a local flag rather than a read of that property.
+let adapterLimitsApplied = false;
+
+async function useAdapterLimits() {
+  if (adapterLimitsApplied || typeof navigator === "undefined" || !navigator.gpu) return;
+  adapterLimitsApplied = true;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter?.limits) return;
+    // A storage binding is capped by both of these, so raising one alone
+    // still leaves the other at the spec minimum.
+    const { maxStorageBufferBindingSize, maxBufferSize } = adapter.limits;
+    const requiredLimits = {};
+    if (maxStorageBufferBindingSize) requiredLimits.maxStorageBufferBindingSize = maxStorageBufferBindingSize;
+    if (maxBufferSize) requiredLimits.maxBufferSize = maxBufferSize;
+    const device = await adapter.requestDevice({ requiredLimits });
+    if (device) env.backends.onnx.webgpu.device = device;
+  } catch {
+    // No adapter, limits refused, or ORT already holds a device — in every
+    // case ORT's own default device is still perfectly usable.
+  }
+}
+
 // One model loaded at a time — the app only ever runs one BROWSER-engine
 // model concurrently, and holding two in VRAM/RAM would be wasteful.
 let current = null; // { task, modelId, device, model, processor, recipe, stopping }
@@ -130,6 +173,10 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     const { loaded, total, pct } = aggregateProgress(progressState, expectedTotal);
     post({ id, type: "progress", file: info.file, loaded, total, pct });
   };
+
+  // Must happen before the first WebGPU session is created, which the model
+  // load below is.
+  if (resolvedDevice === "webgpu") await useAdapterLimits();
 
   const processor = await AutoProcessor.from_pretrained(model, { progress_callback });
 
