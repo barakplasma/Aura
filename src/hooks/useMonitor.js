@@ -14,6 +14,7 @@ import { createAlertStore } from "../../lib/alert-store.js";
 import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
 import { useWakeLock } from "./useWakeLock.js";
 import { normalizeCaptureSize } from "../../lib/frame.js";
+import { processingProgress } from "../../lib/progress.js";
 
 // One store per page load — its IndexedDB adapter is lazy (never touches the
 // indexedDB global until an operation runs), so creating it here is safe even
@@ -89,6 +90,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     confidence: "—",
     mode: "—",
     tokens: "0",
+    frameTokens: "—",
+    frameDetails: "—",
     cost: "0.0000",
     scansPerHr: "—",
     costPerHr: "0.0000",
@@ -115,6 +118,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     // latency samples + current scan-cycle phase, read by the progress ticker.
     samples: [],
     phase: "idle",
+    stage: "",
     phaseStart: 0,
     phaseEstimate: 0,
     progressTimer: null,
@@ -195,7 +199,15 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       // Camera path keeps the existing fill-the-canvas stretch draw.
       ctx.drawImage(video, 0, 0, width, height);
     }
-    return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+    const image = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+    internalRef.current.frameDetails = {
+      width,
+      height,
+      sourceWidth: video.videoWidth || width,
+      sourceHeight: video.videoHeight || height,
+      bytes: Math.round((image.length - image.indexOf(",") - 1) * 0.75),
+    };
+    return image;
   }, [canvasRef, videoRef, settingsRef]);
 
   const logAlert = useCallback((message, confidence, image, reason) => {
@@ -334,24 +346,26 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     setProgress((prev) => {
       let next;
       if (st.phase === "processing") {
-        const pct =
-          est > 0 ? Math.min(95, Math.round((elapsed / est) * 100)) : null;
-        const etaMs =
-          est > 0 ? Math.max(0, Math.round((est - elapsed) / 100) * 100) : null;
-        next = { phase: "processing", pct, etaMs, estimateMs: est || null };
+        next = {
+          phase: "processing",
+          stage: st.stage,
+          ...processingProgress(elapsed, est),
+        };
       } else if (st.phase === "waiting") {
         const pct =
           est > 0 ? Math.min(100, Math.round((elapsed / est) * 100)) : 100;
         const etaMs = Math.max(0, Math.round((est - elapsed) / 100) * 100);
-        next = { phase: "waiting", pct, etaMs, estimateMs: est || null };
+        next = { phase: "waiting", stage: "waiting", pct, etaMs, estimateMs: est || null, elapsedMs: elapsed, overrun: false };
       } else {
         next = IDLE_PROGRESS;
       }
       // Skip the re-render when nothing the UI shows has changed.
       if (
         prev.phase === next.phase &&
+        prev.stage === next.stage &&
         prev.pct === next.pct &&
-        prev.etaMs === next.etaMs
+        prev.etaMs === next.etaMs &&
+        prev.overrun === next.overrun
       )
         return prev;
       return next;
@@ -376,6 +390,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       // Enter the processing phase — the bar fills toward the median estimate.
       const st = internalRef.current;
       st.phase = "processing";
+      st.stage = "detecting";
       st.phaseStart = started;
       st.phaseEstimate = percentile(st.samples, 50) || 0;
       // One controller per scan so Stop can cancel the request in flight.
@@ -417,6 +432,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               setStatus(`Loading ${label} — ${msg.pct}%`);
             }
           : undefined;
+        const onStage = (stage) => {
+          if (internalRef.current.running) internalRef.current.stage = stage;
+        };
         const result = s.demo
           ? demoScan({
               mission: s.mission,
@@ -441,6 +459,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
                 examples,
                 signal: abort.signal,
                 onProgress,
+                onStage,
               })
             : await scanClient({
                 baseUrl: s.baseUrl || undefined,
@@ -456,6 +475,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
                 optimizedInstruction: optimizedInstruction || undefined,
                 requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
                 signal: abort.signal,
+                onStage,
               });
         if (!internalRef.current.running) return;
         const rtt = Math.round(performance.now() - started);
@@ -478,7 +498,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         // request payload size (base64 JPEG is ~¾ its char length, + prompt
         // overhead), and scan duration. Tokens stay null with no usage data.
         const usageTokens =
-          result.usage && Number.isFinite(result.usage.total_tokens)
+          result.usage?.reported && Number.isFinite(result.usage.total_tokens)
             ? result.usage.total_tokens
             : null;
         if (usageTokens != null)
@@ -501,7 +521,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         });
         setTelemetry((prev) => {
           const t =
-            result.usage && Number.isFinite(result.usage.total_tokens)
+            result.usage?.reported && Number.isFinite(result.usage.total_tokens)
               ? result.usage.total_tokens
               : 0;
           const totalTokens = internalRef.current.totalTokens + t;
@@ -515,6 +535,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               : "—",
             mode: result.mode || "—",
             tokens: totalTokens.toLocaleString(),
+            frameTokens: !result.usage?.reported
+              ? "—"
+              : `${result.usage.partial ? "≥" : ""}${t.toLocaleString()}`,
+            frameDetails: st.frameDetails
+              ? `${st.frameDetails.sourceWidth}×${st.frameDetails.sourceHeight} → ${st.frameDetails.width}×${st.frameDetails.height} · ${Math.round(st.frameDetails.bytes / 1024)} KB`
+              : "—",
             cost,
           };
         });
@@ -597,6 +623,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       });
       // Enter the waiting phase — the bar counts down to the next capture.
       st.phase = "waiting";
+      st.stage = "waiting";
       st.phaseStart = performance.now();
       st.phaseEstimate = gapMs;
       internalRef.current.loopTimer = setTimeout(tick, gapMs);
@@ -651,7 +678,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
   // Build capture constraints from current settings and acquire a MediaStream.
   // Screen source uses getDisplayMedia (desktop, one gesture per share — its
   // track.onended stops monitoring cleanly); camera source prefers an explicit
-  // deviceId when one is chosen, else the facingMode, at the 640×480 ideal.
+  // deviceId when one is chosen, else the facingMode, at the chosen capture size.
   const acquireStream = useCallback(async () => {
     const s = settingsRef.current;
     if (s.videoSource === "screen") {
@@ -662,7 +689,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       if (track) track.onended = () => stop();
       return stream;
     }
-    const video = { width: { ideal: CAPTURE_W }, height: { ideal: CAPTURE_H } };
+    const { width, height } = normalizeCaptureSize(s.captureSize);
+    const video = { width: { ideal: width }, height: { ideal: height } };
     if (s.cameraDeviceId) video.deviceId = { exact: s.cameraDeviceId };
     else video.facingMode = { ideal: s.cameraFacing || "environment" };
     const stream = await navigator.mediaDevices.getUserMedia({

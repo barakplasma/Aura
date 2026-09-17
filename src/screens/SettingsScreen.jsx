@@ -51,6 +51,8 @@ export default function SettingsScreen({
   rate, setRate,
   videoSource, setVideoSource,
   captureSize, setCaptureSize,
+  customCaptureWidth, setCustomCaptureWidth,
+  customCaptureHeight, setCustomCaptureHeight,
   cameraFacing, setCameraFacing,
   cameraDeviceId, setCameraDeviceId,
   keepScreenOn, setKeepScreenOn,
@@ -491,9 +493,23 @@ export default function SettingsScreen({
             <option value="640x480">640 × 480 (DEFAULT)</option>
             <option value="512x384">512 × 384</option>
             <option value="320x240">320 × 240</option>
+            <option value="1280x720">1280 × 720 (HD)</option>
+            <option value="1920x1080">1920 × 1080 (FULL HD)</option>
+            <option value="custom">CUSTOM</option>
           </select>
           <div className="field-hint">Smaller images use less upload data and may reduce model tokens. Small details may be harder to detect.</div>
         </div>
+        {captureSize === 'custom' && (
+          <div className="form-group">
+            <label className="field-label">CUSTOM SIZE</label>
+            <div className="inline-row">
+              <input id="custom-capture-width" type="number" className="dc-input narrow" min="64" max="4096" value={customCaptureWidth} onChange={e => setCustomCaptureWidth(e.target.value)} />
+              <span>×</span>
+              <input id="custom-capture-height" type="number" className="dc-input narrow" min="64" max="4096" value={customCaptureHeight} onChange={e => setCustomCaptureHeight(e.target.value)} />
+            </div>
+            <div className="field-hint">64–4096 pixels per side, 8 MP maximum. New camera capture requests apply when you next arm; encoding changes on the next scan.</div>
+          </div>
+        )}
         {videoSource !== 'screen' && (
           <>
             <div className="form-group">

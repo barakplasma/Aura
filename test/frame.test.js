@@ -20,3 +20,22 @@ test("normalizeCaptureSize returns each supported live capture preset", () => {
     height: 240,
   });
 });
+
+test("normalizeCaptureSize accepts higher and bounded custom dimensions", () => {
+  assert.deepEqual(normalizeCaptureSize("1920x1080"), {
+    width: 1920,
+    height: 1080,
+  });
+  assert.deepEqual(normalizeCaptureSize("1024x640"), {
+    width: 1024,
+    height: 640,
+  });
+  assert.deepEqual(normalizeCaptureSize("4097x480"), {
+    width: 640,
+    height: 480,
+  });
+  assert.deepEqual(normalizeCaptureSize("3841x2160"), {
+    width: 640,
+    height: 480,
+  });
+});

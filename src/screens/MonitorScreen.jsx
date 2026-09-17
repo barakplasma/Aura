@@ -29,8 +29,16 @@ export default function MonitorScreen({ running, telemetry, progress, stats, onT
           <span className="panel-v">{telemetry.mode}</span>
         </div>
         <div className="panel-row">
-          <span className="panel-k">TOKENS</span>
+          <span className="panel-k" title="Input and output tokens used across this frame's provider requests">LAST FRAME TOKENS</span>
+          <span className="panel-v">{telemetry.frameTokens}</span>
+        </div>
+        <div className="panel-row">
+          <span className="panel-k">SESSION TOKENS</span>
           <span className="panel-v">{telemetry.tokens}</span>
+        </div>
+        <div className="panel-row">
+          <span className="panel-k">FRAME</span>
+          <span className="panel-v">{telemetry.frameDetails}</span>
         </div>
         <div className="panel-row">
           <span className="panel-k" title="Effective throughput from the cycle-period EMA">SCANS/HR</span>

@@ -180,8 +180,24 @@ test("normalizeUsage derives total tokens", () => {
       prompt_tokens: 560,
       completion_tokens: 40,
       total_tokens: 600,
+      reported: true,
     },
   );
+});
+
+test("normalizeUsage distinguishes omitted provider usage from a reported zero", () => {
+  assert.deepEqual(normalizeUsage(), {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    reported: false,
+  });
+  assert.deepEqual(normalizeUsage({ total_tokens: 0 }), {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    reported: true,
+  });
 });
 
 test("scanClient still refuses to run without a provider (no silent mock)", async () => {

@@ -27,7 +27,18 @@ export function progressLabel(progress) {
   if (!progress || progress.phase === 'idle') return '';
   const secs = Number.isFinite(progress.etaMs) ? (progress.etaMs / 1000).toFixed(1) : null;
   if (progress.phase === 'processing') {
-    return secs != null ? `PROCESSING — ~${secs}s LEFT` : 'PROCESSING…';
+    const labels = {
+      loading: 'LOADING MODEL',
+      detecting: 'DETECTING',
+      announcing: 'GENERATING ANNOUNCEMENT',
+      webhook: 'GENERATING WEBHOOK',
+    };
+    const label = labels[progress.stage] || 'PROCESSING';
+    if (progress.overrun) {
+      const elapsed = (progress.elapsedMs / 1000).toFixed(1);
+      return `${label} — TAKING LONGER THAN USUAL · ${elapsed}s ELAPSED`;
+    }
+    return secs != null ? `${label} — ~${secs}s LEFT` : `${label}…`;
   }
   return secs != null ? `NEXT FRAME IN ${secs}s` : 'NEXT FRAME…';
 }

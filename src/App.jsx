@@ -56,6 +56,8 @@ export default function App() {
   const [cameraDeviceId, setCameraDeviceId] = useLocalStorage('aura.cameraDeviceId', '');
   const [videoSource, setVideoSource] = useLocalStorage('aura.videoSource', 'camera');
   const [captureSize, setCaptureSize] = useLocalStorage('aura.captureSize', '640x480');
+  const [customCaptureWidth, setCustomCaptureWidth] = useLocalStorage('aura.customCaptureWidth', '640');
+  const [customCaptureHeight, setCustomCaptureHeight] = useLocalStorage('aura.customCaptureHeight', '480');
   const [speech, setSpeech] = useLocalStorage('aura.speech', true);
   const [haptics, setHaptics] = useLocalStorage('aura.haptics', true);
   const [webhookUrl, setWebhookUrl] = useLocalStorage('aura.webhookUrl', '');
@@ -93,7 +95,8 @@ export default function App() {
     baseUrl, apiKey, model, mission, action,
     engine, browserModel,
     threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate: effectiveRate,
-    cameraFacing, cameraDeviceId, videoSource, captureSize,
+    cameraFacing, cameraDeviceId, videoSource,
+    captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
     speech, haptics, demo: demoMode,
     webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
   };
@@ -306,6 +309,8 @@ export default function App() {
               rate={rate} setRate={setRate}
               videoSource={videoSource} setVideoSource={setVideoSource}
               captureSize={captureSize} setCaptureSize={setCaptureSize}
+              customCaptureWidth={customCaptureWidth} setCustomCaptureWidth={setCustomCaptureWidth}
+              customCaptureHeight={customCaptureHeight} setCustomCaptureHeight={setCustomCaptureHeight}
               cameraFacing={cameraFacing} setCameraFacing={setCameraFacing}
               cameraDeviceId={cameraDeviceId} setCameraDeviceId={setCameraDeviceId}
               keepScreenOn={keepScreenOn} setKeepScreenOn={setKeepScreenOn}
