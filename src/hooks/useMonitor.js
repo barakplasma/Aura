@@ -13,14 +13,13 @@ import { shouldCatchUp, nextReconnectDelayMs } from "../../lib/keepalive.js";
 import { createAlertStore } from "../../lib/alert-store.js";
 import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
 import { useWakeLock } from "./useWakeLock.js";
+import { normalizeCaptureSize } from "../../lib/frame.js";
 
 // One store per page load — its IndexedDB adapter is lazy (never touches the
 // indexedDB global until an operation runs), so creating it here is safe even
 // before a monitoring session ever starts.
 const alertStore = createAlertStore();
 
-const CAPTURE_W = 640;
-const CAPTURE_H = 480;
 const JPEG_QUALITY = 0.4;
 
 // Self-tuning timeout never dips below this, so ordinary latency variance
@@ -170,6 +169,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
   const captureFrame = useCallback(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
+    const { width, height } = normalizeCaptureSize(
+      settingsRef.current.captureSize,
+    );
+    canvas.width = width;
+    canvas.height = height;
     // Cache the 2D context; no willReadFrequently — we only draw and encode,
     // never read pixels back, so the GPU-backed canvas is the fast path.
     if (!ctxRef.current || ctxRef.current.canvas !== canvas) {
@@ -179,17 +183,17 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     if (settingsRef.current.videoSource === "screen") {
       // Screen shares are arbitrary aspect ratios — letterbox (aspect-fit) so
       // the model sees an undistorted frame rather than a stretched desktop.
-      const vw = video.videoWidth || CAPTURE_W;
-      const vh = video.videoHeight || CAPTURE_H;
-      const scale = Math.min(CAPTURE_W / vw, CAPTURE_H / vh);
+      const vw = video.videoWidth || width;
+      const vh = video.videoHeight || height;
+      const scale = Math.min(width / vw, height / vh);
       const dw = vw * scale,
         dh = vh * scale;
       ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, CAPTURE_W, CAPTURE_H);
-      ctx.drawImage(video, (CAPTURE_W - dw) / 2, (CAPTURE_H - dh) / 2, dw, dh);
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(video, (width - dw) / 2, (height - dh) / 2, dw, dh);
     } else {
       // Camera path keeps the existing fill-the-canvas stretch draw.
-      ctx.drawImage(video, 0, 0, CAPTURE_W, CAPTURE_H);
+      ctx.drawImage(video, 0, 0, width, height);
     }
     return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
   }, [canvasRef, videoRef, settingsRef]);

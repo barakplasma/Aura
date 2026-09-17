@@ -55,6 +55,7 @@ export default function App() {
   const [cameraFacing, setCameraFacing] = useLocalStorage('aura.cameraFacing', 'environment');
   const [cameraDeviceId, setCameraDeviceId] = useLocalStorage('aura.cameraDeviceId', '');
   const [videoSource, setVideoSource] = useLocalStorage('aura.videoSource', 'camera');
+  const [captureSize, setCaptureSize] = useLocalStorage('aura.captureSize', '640x480');
   const [speech, setSpeech] = useLocalStorage('aura.speech', true);
   const [haptics, setHaptics] = useLocalStorage('aura.haptics', true);
   const [webhookUrl, setWebhookUrl] = useLocalStorage('aura.webhookUrl', '');
@@ -92,7 +93,7 @@ export default function App() {
     baseUrl, apiKey, model, mission, action,
     engine, browserModel,
     threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate: effectiveRate,
-    cameraFacing, cameraDeviceId, videoSource,
+    cameraFacing, cameraDeviceId, videoSource, captureSize,
     speech, haptics, demo: demoMode,
     webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
   };
@@ -304,6 +305,7 @@ export default function App() {
               networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
               rate={rate} setRate={setRate}
               videoSource={videoSource} setVideoSource={setVideoSource}
+              captureSize={captureSize} setCaptureSize={setCaptureSize}
               cameraFacing={cameraFacing} setCameraFacing={setCameraFacing}
               cameraDeviceId={cameraDeviceId} setCameraDeviceId={setCameraDeviceId}
               keepScreenOn={keepScreenOn} setKeepScreenOn={setKeepScreenOn}

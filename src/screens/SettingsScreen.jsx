@@ -50,6 +50,7 @@ export default function SettingsScreen({
   networkMbPerHour, setNetworkMbPerHour,
   rate, setRate,
   videoSource, setVideoSource,
+  captureSize, setCaptureSize,
   cameraFacing, setCameraFacing,
   cameraDeviceId, setCameraDeviceId,
   keepScreenOn, setKeepScreenOn,
@@ -483,6 +484,15 @@ export default function SettingsScreen({
           {videoSource === 'screen' && (
             <div className="field-hint">Screen share needs a fresh browser prompt each time you arm, and is effectively desktop-only. Monitoring stops when you stop sharing.</div>
           )}
+        </div>
+        <div className="form-group">
+          <label className="field-label" htmlFor="capture-size">SCAN IMAGE SIZE</label>
+          <select id="capture-size" className="dc-select" value={captureSize} onChange={e => setCaptureSize(e.target.value)}>
+            <option value="640x480">640 × 480 (DEFAULT)</option>
+            <option value="512x384">512 × 384</option>
+            <option value="320x240">320 × 240</option>
+          </select>
+          <div className="field-hint">Smaller images use less upload data and may reduce model tokens. Small details may be harder to detect.</div>
         </div>
         {videoSource !== 'screen' && (
           <>
