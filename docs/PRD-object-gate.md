@@ -55,6 +55,8 @@ question:
 
 ```mermaid
 flowchart TD
+    A["ARM · camera, mission or<br/>watch-class change"] --> B["baseline VLM scan<br/>seed inventory at 'present'"]
+    B --> T
     T["tick every objectGateEveryS (default 2 s)"] --> M["stage 0 · pixel diff<br/>64x48 grayscale, ~0.2 ms CPU"]
     M -- "no motion" --> HB{"heartbeat due?"}
     M -- "pixels moved" --> Y["stage 1 · YOLO26n<br/>640x640, ~20-40 ms WebGPU"]
@@ -76,6 +78,35 @@ Stage 1 is also what makes stage 0 *safe to run aggressively*: today, turning
 the motion gate's sensitivity up means more wasted VLM scans. With YOLO26
 behind it, a stage-0 false positive costs 30 ms instead of 3 s, so stage 0 can
 be tuned for recall and stage 1 does the discriminating.
+
+#### Cold start: the first frame always goes to the big model
+
+The cascade above describes the steady state. The **first** frame of a session
+never enters it: arming runs a full VLM scan unconditionally, and the gate's
+reference inventory is seeded from a YOLO pass on that same frame.
+
+Three reasons, in order of importance:
+
+1. **A gate with no reference has nothing to diff against.** At arm time every
+   object in view is technically "new". Without a baseline the first tick
+   either wakes the VLM anyway (with an arbitrary subset of the scene, two
+   ticks late) or suppresses it (and misses the thing the operator armed the
+   monitor for, which may already be in frame).
+2. **It is what pressing ARM means.** The operator wants a verdict on what the
+   camera is looking at *now*, not on the next thing to change.
+3. **Pre-existing furniture must not fire `added`.** Tracks seeded from the
+   baseline frame enter directly at `present`, skipping `candidate`, so the
+   couch that was there when you armed never emits an event.
+
+The same baseline rerun applies to every event that invalidates the reference:
+camera flip, source or device switch, mission or watch-class change, engine
+change, and a resumed session whose last scan is older than `heartbeatMin`.
+`useMonitor` already rebases the motion gate's reference frame on exactly
+these, so this is one shared `rebaseBaseline()` path, not a second list of
+triggers to keep in sync.
+
+Cost: one VLM scan per arm, which is also the cheapest possible way to give
+the operator immediate feedback that the monitor is working.
 
 ### Why a detector rather than CLIP
 
@@ -200,6 +231,32 @@ Defaults: `enterScore 0.35`, `exitScore 0.25`, `enterFrames 2`, `exitFrames 3`,
 "object enters frame" to "VLM wakes" — acceptable for a doorway monitor, and
 `enterFrames: 1` is available for operators who want the fastest trigger and
 will tolerate the extra wakes.
+
+#### Movement is a trigger, and it is configurable
+
+`moved` is the third event kind and gets its own checkbox in `WAKE ON`
+(`aura.objectWakeOn`), off by default. Off, the gate is an *inventory* diff:
+a person pacing the hallway wakes the VLM once, on arrival. On, it is an
+inventory-and-position diff: the same person wakes it again each time they
+cross `moveFrac` of the frame.
+
+Two details decide whether this is useful or maddening:
+
+- **Displacement is measured against the position at the last VLM scan, not
+  the last gate tick.** Per-tick deltas would mean a slow walker never trips
+  the threshold no matter how far they travel, while a jittery box on a
+  stationary object trips it constantly. Cumulative-since-last-scan is the
+  only version that fires once per real traversal, and it rebases for free on
+  the scan that the event triggers.
+- **`moveFrac` is its own setting** (`aura.objectMoveFrac`, default `0.15` of
+  the frame diagonal), not a SENSITIVITY-preset side effect: an operator who
+  turns MOVED on is by definition tuning it, and burying the knob inside a
+  three-way preset would make it untunable.
+
+Turning MOVED on is the right default for "watch the driveway" (a car that
+arrives *and* one that repositions both matter) and wrong for "tell me when
+someone comes to the door" (the courier standing still is one event, not
+eight). Hence a checkbox rather than a chosen default.
 
 Matching is greedy by IoU within a class. With ≤ 300 candidates and typically
 < 10 tracks, Hungarian assignment buys nothing measurable.
@@ -337,7 +394,8 @@ and the detector is local either way):
 | DETECTOR              | `aura.objectModel`         | `'yolo26n-int8'`  | select from the row table, with size + license link |
 | CHECK EVERY           | `aura.objectGateEveryS`    | `2`               | number (seconds)                                    |
 | WATCH CLASSES         | `aura.objectClasses`       | `''` (all)        | tag input, pre-filled from the mission              |
-| WAKE ON               | `aura.objectWakeOn`        | `'added,removed'` | checkboxes: ADDED / REMOVED / MOVED                 |
+| WAKE ON               | `aura.objectWakeOn`        | `'added,removed'` | checkboxes: ADDED / REMOVED / MOVED (MOVED off)     |
+| MOVEMENT THRESHOLD    | `aura.objectMoveFrac`      | `0.15`            | slider 0.02–0.5, shown only when MOVED is checked   |
 | SENSITIVITY           | `aura.objectSens`          | `'medium'`        | LOW/MED/HIGH → (enter, exit, frames) triples        |
 | HEARTBEAT EVERY       | `aura.heartbeatMin`        | `5`               | minutes — shared with `PRD-local-prefilters.md`     |
 | ADD OBJECTS TO PROMPT | `aura.objectPromptContext` | `false`           | checkbox                                            |
@@ -369,8 +427,13 @@ and the detector is local either way):
 - A genuinely new object emits exactly one `added` after `enterFrames`.
 - An object leaving emits exactly one `removed` after `exitFrames`, not before.
 - Same object moving across the frame emits `moved`, never `added`+`removed`.
-- `gateDecision()`: `wakeOn` filtering, heartbeat overrides everything,
-  empty events → no wake.
+- `moved` measures displacement since the **last scan**: a track drifting
+  `moveFrac/4` per tick emits `moved` on the fourth tick, and a track
+  oscillating within `moveFrac` never emits it.
+- Baseline seeding puts tracks straight into `present`: the first tick after
+  `rebaseBaseline()` emits no `added` for anything already in the frame.
+- `gateDecision()`: `wakeOn` filtering (MOVED off ⇒ `moved` events never
+  wake), heartbeat overrides everything, empty events → no wake.
 - Gate disabled → every tick passes (today's behaviour, by construction).
 
 ## Acceptance
@@ -379,6 +442,12 @@ and the detector is local either way):
   static scene, BROWSER engine, gate on) shows ≤ 15 VLM scans, DETECT latency
   stable to within 20 % from minute 5 to minute 60 (no thermal creep), and no
   screen artifacts. The same run with the gate off is the control.
+- **Cold start**: arming with a person already in frame produces a VLM verdict
+  on that person within one scan, and no `added` event on the ticks that
+  follow.
+- **Movement**: with MOVED on, a person crossing the frame wakes the VLM again
+  after `moveFrac` of travel; with MOVED off, the same crossing produces
+  exactly one wake (the arrival).
 - **Recall**: a person entering the frame wakes the VLM within 5 s
   (`enterFrames × objectGateEveryS` + one VLM scan), in 10/10 trials.
 - **Precision**: toggling the room light, a shadow crossing, and a curtain
