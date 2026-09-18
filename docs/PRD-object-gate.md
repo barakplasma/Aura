@@ -79,14 +79,14 @@ be tuned for recall and stage 1 does the discriminating.
 
 ### Why a detector rather than CLIP
 
-| | CLIP gate (stage B, `PRD-local-prefilters.md`) | YOLO26 object gate |
-|---|---|---|
-| Answer | one scalar: "how mission-like is this frame" | itemized list: `person×1, backpack×1` |
-| "New object appeared" | inferred from a similarity drop | **directly observed** |
-| Download | ~30–60 MB (MobileCLIP-S0) | **2.9 MB** (yolo26n int8) |
-| Thresholds | θ, ρ — opaque, need calibration to trust | per-class score, in the units operators think in |
-| Reusable output | an embedding nothing else consumes | an object list the VLM prompt can use |
-| Blind spot | fine-grained state ("stove on") | non-COCO things ("stove on") |
+|                       | CLIP gate (stage B, `PRD-local-prefilters.md`) | YOLO26 object gate                               |
+|-----------------------|------------------------------------------------|--------------------------------------------------|
+| Answer                | one scalar: "how mission-like is this frame"   | itemized list: `person×1, backpack×1`            |
+| "New object appeared" | inferred from a similarity drop                | **directly observed**                            |
+| Download              | ~30–60 MB (MobileCLIP-S0)                      | **2.9 MB** (yolo26n int8)                        |
+| Thresholds            | θ, ρ — opaque, need calibration to trust       | per-class score, in the units operators think in |
+| Reusable output       | an embedding nothing else consumes             | an object list the VLM prompt can use            |
+| Blind spot            | fine-grained state ("stove on")                | non-COCO things ("stove on")                     |
 
 The blind spot is identical, so the cheaper, more legible, more reusable gate
 wins. CLIP stays in `PRD-local-prefilters.md` as the documented escalation for
@@ -98,12 +98,12 @@ missions with no COCO noun in them.
 `onnx-community/yolo26n-ONNX` is the pre-exported, pre-quantized mirror
 (verified against the real artifacts, see the I/O contract below).
 
-| Row key | Repo · file | Bytes | Notes |
-|---|---|---|---|
+| Row key        | Repo · file                                       | Bytes  | Notes                                                                     |
+|----------------|---------------------------------------------------|--------|---------------------------------------------------------------------------|
 | `yolo26n-int8` | `onnx-community/yolo26n-ONNX` · `model_int8.onnx` | 2.9 MB | **default**; the only row that is cheap enough to run on the WASM backend |
-| `yolo26n-fp16` | same · `model_fp16.onnx` | 5.0 MB | WebGPU-preferred; fp16 is native there |
-| `yolo26n-fp32` | same · `model.onnx` | 9.9 MB | reference / debugging |
-| `yolo26s-fp16` | `onnx-community/yolo26s-ONNX` | ~20 MB | opt-in, `autoSelectable: false` — better on small/distant objects |
+| `yolo26n-fp16` | same · `model_fp16.onnx`                          | 5.0 MB | WebGPU-preferred; fp16 is native there                                    |
+| `yolo26n-fp32` | same · `model.onnx`                               | 9.9 MB | reference / debugging                                                     |
+| `yolo26s-fp16` | `onnx-community/yolo26s-ONNX`                     | ~20 MB | opt-in, `autoSelectable: false` — better on small/distant objects         |
 
 YOLO26n: 2.4 M params, 5.5 GFLOPs at 640², 40.9 mAP (40.1 end-to-end) on COCO.
 For scale, that is **0.5 %** of the 450M VLM's parameter count, and the model
@@ -270,12 +270,12 @@ genuinely needs a data URL) is untouched.
 Rough arithmetic for the reference device, to be replaced with measurements
 (see Acceptance):
 
-| | today | with the gate |
-|---|---|---|
-| VLM scans/hour (static scene) | ~720 (5 s interval) | ~12 (heartbeat only) |
-| VLM GPU-seconds/hour | ~2160 s (≈ 60 % duty) | ~36 s (≈ 1 %) |
-| Gate GPU-seconds/hour | — | ~10–60 s (≈ 0.3–1.7 %, motion-dependent) |
-| **Sustained GPU duty** | **~60 %** | **< 3 %** |
+|                               | today                 | with the gate                            |
+|-------------------------------|-----------------------|------------------------------------------|
+| VLM scans/hour (static scene) | ~720 (5 s interval)   | ~12 (heartbeat only)                     |
+| VLM GPU-seconds/hour          | ~2160 s (≈ 60 % duty) | ~36 s (≈ 1 %)                            |
+| Gate GPU-seconds/hour         | —                     | ~10–60 s (≈ 0.3–1.7 %, motion-dependent) |
+| **Sustained GPU duty**        | **~60 %**             | **< 3 %**                                |
 
 Two further levers this PRD specifies because they follow directly from the
 gate existing:
@@ -315,12 +315,12 @@ the numbers stop meaning anything.
 
 ## Telemetry
 
-| Row | Meaning |
-|---|---|
-| OBJECTS | current inventory: `person x1 · chair x2` (blank when the gate is off) |
-| GATE | last decision: `still` / `motion, no object change` / `added person` / `removed backpack` / `heartbeat` |
-| SKIPPED | gate ticks that did not reach the VLM, and % of ticks |
-| DETECT | gate latency EMA + backend (`31 ms · webgpu`) — the number that says whether the gate itself became the problem |
+| Row     | Meaning                                                                                                         |
+|---------|-----------------------------------------------------------------------------------------------------------------|
+| OBJECTS | current inventory: `person x1 · chair x2` (blank when the gate is off)                                          |
+| GATE    | last decision: `still` / `motion, no object change` / `added person` / `removed backpack` / `heartbeat`         |
+| SKIPPED | gate ticks that did not reach the VLM, and % of ticks                                                           |
+| DETECT  | gate latency EMA + backend (`31 ms · webgpu`) — the number that says whether the gate itself became the problem |
 
 History rows carry the inventory at scan time, so a false negative can be
 traced to "the gate never woke it" versus "the VLM saw it and said no".
@@ -331,34 +331,34 @@ Settings → SCAN TIMING gains an OBJECT GATE group (BROWSER and PROVIDER
 engines both — a PROVIDER user saves tokens and money by the same mechanism,
 and the detector is local either way):
 
-| Control | Key | Default | UI |
-|---|---|---|---|
-| OBJECT GATE | `aura.objectGate` | `false` | checkbox |
-| DETECTOR | `aura.objectModel` | `'yolo26n-int8'` | select from the row table, with size + license link |
-| CHECK EVERY | `aura.objectGateEveryS` | `2` | number (seconds) |
-| WATCH CLASSES | `aura.objectClasses` | `''` (all) | tag input, pre-filled from the mission |
-| WAKE ON | `aura.objectWakeOn` | `'added,removed'` | checkboxes: ADDED / REMOVED / MOVED |
-| SENSITIVITY | `aura.objectSens` | `'medium'` | LOW/MED/HIGH → (enter, exit, frames) triples |
-| HEARTBEAT EVERY | `aura.heartbeatMin` | `5` | minutes — shared with `PRD-local-prefilters.md` |
-| ADD OBJECTS TO PROMPT | `aura.objectPromptContext` | `false` | checkbox |
-| UNLOAD VLM WHEN IDLE | `aura.vlmIdleEvictMin` | `10` | minutes, `0` = never |
+| Control               | Key                        | Default           | UI                                                  |
+|-----------------------|----------------------------|-------------------|-----------------------------------------------------|
+| OBJECT GATE           | `aura.objectGate`          | `false`           | checkbox                                            |
+| DETECTOR              | `aura.objectModel`         | `'yolo26n-int8'`  | select from the row table, with size + license link |
+| CHECK EVERY           | `aura.objectGateEveryS`    | `2`               | number (seconds)                                    |
+| WATCH CLASSES         | `aura.objectClasses`       | `''` (all)        | tag input, pre-filled from the mission              |
+| WAKE ON               | `aura.objectWakeOn`        | `'added,removed'` | checkboxes: ADDED / REMOVED / MOVED                 |
+| SENSITIVITY           | `aura.objectSens`          | `'medium'`        | LOW/MED/HIGH → (enter, exit, frames) triples        |
+| HEARTBEAT EVERY       | `aura.heartbeatMin`        | `5`               | minutes — shared with `PRD-local-prefilters.md`     |
+| ADD OBJECTS TO PROMPT | `aura.objectPromptContext` | `false`           | checkbox                                            |
+| UNLOAD VLM WHEN IDLE  | `aura.vlmIdleEvictMin`     | `10`              | minutes, `0` = never                                |
 
 ## Files
 
-| Path | Change |
-|---|---|
-| `lib/detector-models.js` | new — the YOLO26 row table + `pickDetectorModel()`, mirroring `browser-models.js` |
-| `lib/object-gate.js` | new, pure — decode, match, track state machine, `summarize()`, `gateDecision()` |
-| `lib/browser-engine.js` | `loadDetector()` / `detectObjects()` on the same worker facade |
-| `src/workers/ml.worker.js` | per-task model slots; `detect` load + run handler |
-| `src/hooks/useMonitor.js` | gate tick, track state, inventory rebase on each VLM scan, idle eviction, skip telemetry |
-| `src/screens/SettingsScreen.jsx` | OBJECT GATE group |
-| `src/screens/MonitorScreen.jsx` | OBJECTS / GATE / SKIPPED / DETECT rows |
-| `src/screens/EvalScreen.jsx` | per-sample object list + false-skip check against a chosen reference sample |
-| `lib/monitor.js` | optional object-context line in `buildDetectionPrompt()` |
-| `test/object-gate.test.js` | new |
-| `test/detector-models.test.js` | new |
-| `CLAUDE.md` | file table + a note that `detect` is now a live task in the worker protocol |
+| Path                             | Change                                                                                   |
+|----------------------------------|------------------------------------------------------------------------------------------|
+| `lib/detector-models.js`         | new — the YOLO26 row table + `pickDetectorModel()`, mirroring `browser-models.js`        |
+| `lib/object-gate.js`             | new, pure — decode, match, track state machine, `summarize()`, `gateDecision()`          |
+| `lib/browser-engine.js`          | `loadDetector()` / `detectObjects()` on the same worker facade                           |
+| `src/workers/ml.worker.js`       | per-task model slots; `detect` load + run handler                                        |
+| `src/hooks/useMonitor.js`        | gate tick, track state, inventory rebase on each VLM scan, idle eviction, skip telemetry |
+| `src/screens/SettingsScreen.jsx` | OBJECT GATE group                                                                        |
+| `src/screens/MonitorScreen.jsx`  | OBJECTS / GATE / SKIPPED / DETECT rows                                                   |
+| `src/screens/EvalScreen.jsx`     | per-sample object list + false-skip check against a chosen reference sample              |
+| `lib/monitor.js`                 | optional object-context line in `buildDetectionPrompt()`                                 |
+| `test/object-gate.test.js`       | new                                                                                      |
+| `test/detector-models.test.js`   | new                                                                                      |
+| `CLAUDE.md`                      | file table + a note that `detect` is now a live task in the worker protocol              |
 
 ### Tests (`node --test`, no DOM, no network)
 
