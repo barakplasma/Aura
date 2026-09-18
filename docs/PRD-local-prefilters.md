@@ -3,6 +3,8 @@
 Status: draft · Owner: barakplasma · Scope: `lib/` + `src/` + `test/`
 Category: **in-browser inference**
 Depends on: worker + offline plumbing from `PRD-browser-engine.md` (stage B only)
+See also: `PRD-object-gate.md`, which keeps stage A as its stage 0 and
+replaces stage B's CLIP gate with a YOLO26 object-inventory diff
 
 ## Problem
 
