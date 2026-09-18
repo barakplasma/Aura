@@ -1,227 +1,115 @@
 # Aura
 
-**Team Members:** @barakplasma
+**A visual monitor you write in English.**
+Point a camera at something, say what to watch for, say what should happen when it
+happens. Aura does the rest, in a browser tab, with whatever AI you want behind it.
 
+**[Try it →](https://barakplasma.github.io/Aura/)** · no install, no account, no backend.
 
-**GitHub Repository:** [github.com/barakplasma/Aura](https://github.com/barakplasma/Aura)
+## What it is
 
-Aura turns any phone or laptop with a webcam into an automated visual monitor. You provide your own API key and model from any OpenAI-compatible provider (Cerebras, OpenAI, Groq, Together, etc.). Set a mission prompt (what to watch for) and an action prompt (what to say via text-to-speech or send via webhook), and Aura runs a two-stage detect→act loop in your browser.
+Aura is a webcam monitor whose rules are prompts instead of code. You give it two
+sentences:
 
-**No backend required.** This is a pure static PWA — your API key is stored in your browser's localStorage and sent directly to the provider. Nothing is proxied through a server.
+- a **mission** — what it should be looking for ("a person at the front door",
+  "the dog on the sofa", "the 3D print has come loose from the bed");
+- an **action** — what it should say or send when that happens ("announce that
+  someone is at the door", "roast whoever just walked past, briefly").
 
-```text
-[ camera frame ] → 640x480 JPEG → detection call (your provider + model)
-                                       |
-                          triggered AND confidence ≥ threshold ?
-                           no |                       | yes
-                              ▼                       ▼
-                        "Watching…"              action call (your provider)
-                                                 → speak + vibrate + flash + webhook
+Then it watches. Every scan cycle it sends one camera frame to a vision model with
+the mission prompt. If the model says the thing is happening — and is confident
+enough — Aura runs the action prompt and delivers the result: spoken aloud, a
+buzz, a screen flash, a line in the log, an HTTP call to anything you like.
+
+That's the whole idea. Everything else is a knob on top of it.
+
+```mermaid
+flowchart LR
+    C["camera frame"] --> D["detection call<br/>your mission prompt"]
+    D --> Q{"happening?<br/>and confident enough?"}
+    Q -- "no" --> W["keep watching"]
+    W --> C
+    Q -- "yes" --> A["action call<br/>your action prompt"]
+    A --> O["speak · vibrate · flash<br/>log · webhook"]
+    O --> C
 ```
 
-Most cycles are detection-only; the second call happens only on a real alert.
+Most cycles stop at "keep watching" — the second call only happens on a real alert.
 
-## Quick start
+## What people point it at
 
-### 1. Host the app
+The same loop, different sentences. A few that work today:
 
-Serve the `public/` directory with any static server:
+| You want                               | Mission prompt                                                              | Action prompt                                                 |
+|----------------------------------------|-----------------------------------------------------------------------------|---------------------------------------------------------------|
+| **A security camera that understands** | "a person approaching the front door who is not carrying a delivery parcel" | "say who is at the door and what they appear to be doing"     |
+| **Off-grid intrusion detection**       | "any person or vehicle in this field"                                       | "state what entered the frame and from which direction"       |
+| **A delivery watcher**                 | "a parcel left on the doorstep"                                             | "announce that a package arrived"                             |
+| **A process monitor**                  | "the pot is boiling over / the print has detached / the plant is wilting"   | "warn me about what went wrong"                               |
+| **A pet or baby monitor**              | "the cat is on the kitchen counter"                                         | "tell the cat off, by name"                                   |
+| **A toy that heckles**                 | "a person is standing in front of the camera"                               | "make one short affectionate joke about what they're wearing" |
+| **An attendance chime**                | "someone new has entered the room"                                          | "greet them in a different way each time"                     |
 
-```bash
-npm install
-npm run build
-npx serve public
-# → http://localhost:3000
-```
+Nothing in the app is specialised for any of these. A "security system" and a
+robot that insults your hoodie are the *same program* with different prompts —
+which is the point, and the reason the mission box is a free-text field and not a
+dropdown of object classes.
 
-### 2. Configure a provider
+The webhook is where it stops being a toy: any alert can `POST` a JSON body you
+define to any URL, so Aura becomes a sensor for whatever you already run —
+Home Assistant, n8n, ntfy, a Kubernetes job, your own API.
 
-Open the app, then:
+## Bring your own intelligence
 
-1. **Base URL** — the OpenAI-compatible API endpoint, e.g. `https://api.cerebras.ai/v1`
-2. **API Key** — your provider key (stored in localStorage, never sent anywhere else)
-3. **Model** — click **Fetch Models** to list available models, or type one manually
+Aura has no model of its own and no opinion about whose you use. Three sources,
+switchable in Settings, all feeding the exact same loop:
 
-Supported providers include Cerebras, OpenAI, Groq, Together, Fireworks, and any API that implements the OpenAI `/v1/chat/completions` format with vision support.
+| Source                             | What it is                                                                                                                               | Good for                                                                 |
+|------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| **Any OpenAI-compatible provider** | Cerebras, OpenAI, Groq, Together, Fireworks, OpenRouter, your own gateway — anything that speaks `POST /v1/chat/completions` with vision | the strongest models, at a per-scan cost you can cap                     |
+| **A local server**                 | Ollama, llama.cpp, LM Studio, vLLM on your own machine or homelab — same API, no key needed                                              | free, private, works on your LAN                                         |
+| **In-browser**                     | a small vision-language model running inside the page itself on WebGPU                                                                   | no key, no server, no network at all — the frame never leaves the device |
 
-### 3. Start monitoring
+The provider is three fields: base URL, model, and an API key that is allowed to be
+blank. Your key lives in your browser's `localStorage` and goes straight to the
+provider you named; there is no Aura server in the middle, because there is no Aura
+server at all. It's a static page.
 
-Enter a **Mission** (what to watch for) and **Action** (what to announce on alert), adjust sensitivity, and press **Start**. The first scan fires on the next tick.
+Because all three sources return the same shape, you can compare them: the
+**Evaluate** screen runs your own labelled frames through several models and prompts
+and scores them, so "is the tiny local model good enough for this camera?" is a
+measurement rather than a guess. The **Optimize** screen goes further and rewrites
+your prompt against your own examples.
 
-### Features
+## Being honest about it
 
-| Feature               | How                                                             |
-|-----------------------|-----------------------------------------------------------------|
-| **Provider config**   | Base URL, API key, model — any OpenAI-compatible vision model   |
-| **Model discovery**   | Fetches available models from `GET /v1/models`                  |
-| **Alert sensitivity** | Slider (10–95% confidence threshold)                            |
-| **Scan interval**     | 2–30 seconds                                                    |
-| **Text-to-speech**    | Built-in Web Speech API                                         |
-| **Vibration**         | Web Vibration API (not available on iOS Safari)                 |
-| **Webhook**           | POST/GET/PUT/PATCH to any URL with custom headers and JSON body |
-| **Training**          | Add detection/action examples, optimize with ax/GEPA            |
-| **Cost tracking**     | Cumulative token count and estimated cost                       |
-| **PWA**               | Installable on mobile home screen                               |
+- It's an LLM looking at **one frame at a time**. It is excellent at "is there a
+  person", good at "is that person carrying something", and unreliable at anything
+  requiring memory of what happened ten seconds ago. Don't wire it to anything
+  safety-critical.
+- Cost and battery scale with how often it looks. Aura offers scan modes, budget
+  caps, and (see [`docs/`](./docs)) gating work that only wakes the big model when
+  the scene actually changes.
+- **iOS Safari cannot background-monitor.** Safari suspends camera access for
+  hidden pages, and no workaround exists. An Android phone or a plugged-in laptop
+  with the tab in front works fine, and survives backgrounding, lock screens and
+  reloads.
+- Small in-browser models are coarse detectors, not scene analysts. That's what the
+  Evaluate screen is for.
 
-### No API key? No problem
+## Using it responsibly
 
-Two options, depending on what you want:
+Aura points a camera at people and reacts automatically. Use it only where you're
+allowed to record, tell people they're being watched, and remember that a
+best-effort judgement from a single frame is not evidence of anything.
 
-- **Demo mode** — press **TRY DEMO** on the Monitor screen for deterministic simulated scans, so you can test the camera, speech, vibration, and alert log with no provider at all. It never fires webhooks and is bannered while active.
-- **A local model** — point Aura at an inference server on your own machine and leave the API key blank. See below.
+## More
 
-## Run fully offline
-
-Aura can run with no internet at all: the app shell is cached by a service worker, and inference happens on a model running locally. Nothing leaves your machine.
-
-### 1. Start a local OpenAI-compatible server
-
-Any server with vision support works. It must allow cross-origin requests from wherever the app is served:
-
-```bash
-# Ollama
-ollama pull qwen2.5vl
-OLLAMA_ORIGINS='*' ollama serve            # → http://localhost:11434/v1
-
-# llama.cpp
-llama-server -m your-vision-model.gguf --cors   # → http://localhost:8080/v1
-
-# LM Studio — load a vision model, start the local server,
-# and enable CORS in the server settings.  → http://localhost:1234/v1
-```
-
-### 2. Serve the app locally
-
-```bash
-npm install && npm run build
-npx serve public          # → http://localhost:3000
-```
-
-Serving the app locally isn't optional for real offline use. The HTTPS GitHub Pages deployment can't reliably reach `http://localhost` — Chrome gates requests from a public HTTPS page to a local server behind a Private Network Access preflight that these servers don't answer. Run both on the same machine and that whole problem disappears.
-
-### 3. Configure and arm
-
-In **Settings → Provider**, click the **OLLAMA** / **LM STUDIO** / **LLAMA.CPP** preset (this also zeroes the cost rate), **leave API KEY blank**, and press **FETCH MODELS**. No `Authorization` header is sent when the key is empty. Set a mission, pick scan mode **MAX**, and arm.
-
-Prefer `localhost` or `127.0.0.1` over `0.0.0.0` in the base URL — browsers block `0.0.0.0` as a request target.
-
-### Offline app shell
-
-`npm run build` generates `public/sw.js` (a build artifact, not checked in), a service worker that precaches the app shell
-(HTML, CSS, icons, and every JS chunk) so the installed PWA boots with the network fully off.
-It only ever intercepts same-origin `GET` requests — provider calls and webhooks always go
-straight to the network, and are never cached. Each build stamps a new version, so a redeploy
-replaces the cached shell on the next visit.
-
-One cosmetic caveat: the UI fonts come from Google Fonts, so offline they fall back to the system monospace and sans-serif. Everything remains legible and correctly laid out — only the typeface changes.
-
-## Run inference in the browser
-
-Even a local server (Ollama, LM Studio, llama.cpp) is one more thing to install and keep
-running — and a phone can't run one at all. The **BROWSER** engine skips that entirely: a
-small vision-language model (SmolVLM2, ~208MB) runs right inside the page via
-[Transformers.js](https://github.com/huggingface/transformers.js) and WebGPU. No key, no
-server, no CORS — the camera frame never leaves the device.
-
-In **Settings → Provider**, switch **ENGINE** to **BROWSER**, then **DOWNLOAD / LOAD** the
-model (progress is shown; the weights are cached by the browser afterward, so this only
-happens once — even offline). Set a mission and arm as usual. **TEST ON CURRENT FRAME** lets
-you try a single scan before arming, and **CLEAR MODEL CACHE** frees the downloaded weights.
-
-Trade-offs versus a cloud/local provider:
-
-- A 256M-parameter model is a coarse detector — good for "is anyone here at all," not
-  fine-grained scene understanding. Use the **Evaluate** screen to compare it against your
-  configured provider on your own sample frames before relying on it.
-- Without WebGPU (older browsers, some mobile GPUs) it falls back to WASM, which is much
-  slower — expect 10-30s per scan instead of a few seconds.
-- Cost is always $0 — there's no provider to bill.
-
-This is genuinely local compute: nothing about the scan (frame, prompt, or result) is sent
-anywhere. The only network traffic is the one-time model download from Hugging Face.
-
-## Leaving it running
-
-Aura is meant to be propped on a shelf and left armed for hours, so it tries to survive the ordinary ways a phone session gets interrupted — but what it recovers from depends on the platform and what actually happened.
-
-**Backgrounding the tab (switch apps, lock screen, phone call).** With **KEEP SCREEN ON** enabled
-(Settings → Camera, on by default) Aura holds a screen wake lock while armed, so an Android phone's
-screen won't dim and lock in the first place. If it's hidden anyway — another app took focus, or the
-lock screen still engaged — the browser throttles the scan loop but doesn't stop it, and the status
-line says so ("Background — scans throttled by the browser"). Coming back to the tab fires an
-immediate scan if the gap blew past what was scheduled, instead of waiting out a throttled interval.
-If the OS reclaims the camera outright (another app opens it, or the browser drops the track under
-memory pressure), Aura detects the lost/muted track and reconnects automatically, retrying up to
-three times before giving up with a "Camera lost — tap ARM to retry" status.
-
-**A reload** (OS killing a backgrounded PWA, an accidental pull-to-refresh, a redeploy) loses the
-live camera stream and scan loop — nothing can carry a `MediaStream` across a page load. What
-survives is the *decision to be armed*: on boot, if the app was armed within the last 12 hours, a
-**RESUME MONITORING** banner offers one tap to re-arm. It's one tap and not automatic because both
-`getUserMedia` and speech synthesis need a real user gesture on Safari (and on Chrome without a
-previously granted permission). Alert history, missed frames, and FALSE POSITIVE/NEGATIVE marks are
-persisted to IndexedDB as they happen, so they're intact whether you resume or not — capped at 200
-alerts and 4 recent frames so storage never grows unbounded.
-
-**iOS Safari cannot be made to background-monitor.** Safari suspends camera access for hidden pages,
-and there is no Wake Lock or other workaround for that — a locked or backgrounded iPhone stops
-scanning immediately, full stop. Speech is also blocked on a re-arm until the very next tap
-(vibration is unavailable on iOS Safari regardless — see Features above). This is a platform
-restriction Aura documents rather than fights: for real background monitoring, use an Android device
-or a plugged-in machine with the tab kept in the foreground.
-
-## Project layout
-
-```text
-public/                   Static site (deploy this directory)
-  index.html              MD3 UI with material web components
-  app.js                  Camera capture + scan loop + alert delivery
-  aura.bundle.js          Bundled engine (scanClient, training)
-  material.bundle.js      Bundled @material/web components
-  material-theme.css      MD3 dark theme + custom styles
-  feedback.js             Speech + vibration feedback
-  manifest.webmanifest    PWA manifest
-  icons/                  Generated PWA icons
-lib/
-  aura.js                 Browser engine: scanClient(), fetchModels()
-  monitor.js              Pure functions used by aura.js (prompts, parsers) + tests
-  browser-engine.js       BROWSER engine facade: scanBrowser(), worker lifecycle
-  training.js             ax/GEPA example management and optimization
-src/workers/
-  ml.worker.js            Runs SmolVLM2 via Transformers.js — the ONLY file that
-                          imports @huggingface/transformers (kept out of the main
-                          bundle, same pattern as ax/GEPA — see CLAUDE.md)
-scripts/
-  build-aura.js           esbuild: lib/aura.js → public/aura.bundle.js
-  build-material.js       esbuild: @material/web → public/material.bundle.js
-  gen-icons.js            Generate PWA icons (run manually if needed)
-test/
-  monitor.test.js         Unit tests (node --test)
-```
-
-## Scripts
-
-```bash
-npm run build             # Build material bundle + aura bundle
-npm run dev               # Serve public/ locally
-npm test                  # Unit tests
-npm run deploy            # Build + push to gh-pages branch
-```
-
-## Deploy to GitHub Pages
-
-Push to `main` → the included GitHub Actions workflow builds and deploys `public/` to GitHub Pages automatically.
-
-Or deploy manually:
-```bash
-npm run deploy
-```
-
-Then enable **GitHub Pages → Source: gh-pages branch** in your repo settings.
-
-## A note on responsible use
-
-Aura points a camera at people and reacts automatically. Use it only where you're allowed to record, tell people they're being monitored, and don't rely on it for safety-critical enforcement — it's an LLM making best-effort judgements from a single frame.
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — running it yourself, pointing it at a
+  local model, hacking on it, deploying it.
+- **[docs/](./docs)** — design documents for the bigger pieces (in-browser engine,
+  local pre-filters, alert hygiene, scan modes).
+- **[CLAUDE.md](./CLAUDE.md)** — architecture and conventions.
 
 ## License
 
