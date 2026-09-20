@@ -267,3 +267,31 @@ test("eval modules import in Node without an indexedDB global (lazy adapter)", (
   const store = createEvalStore();
   assert.equal(typeof store.listImages, "function");
 });
+
+test("runEvalMatrix preserves browser-engine provenance fields when present", async () => {
+  const cells = expandMatrix({
+    imageIds: ["img_1"],
+    models: ["browser:qwen3.5-0.8b"],
+    variants: VARIANTS.slice(0, 1),
+  });
+  const results = await runEvalMatrix({
+    cells,
+    imagesById: IMAGES,
+    variantsById: VARIANTS_BY_ID,
+    scanFn: async () => ({ ...okScan(), runtime: "chrome-ai", device: null, modelLoadMs: 4321 }),
+  });
+  assert.equal(results[0].runtime, "chrome-ai");
+  assert.equal(results[0].device, null);
+  assert.equal(results[0].modelLoadMs, 4321);
+
+  // Provider cells without the fields stay absent, not coerced.
+  const provider = await runEvalMatrix({
+    cells,
+    imagesById: IMAGES,
+    variantsById: VARIANTS_BY_ID,
+    scanFn: async () => okScan(),
+  });
+  assert.equal(provider[0].runtime, undefined);
+  assert.equal(provider[0].device, undefined);
+  assert.equal(provider[0].modelLoadMs, undefined);
+});

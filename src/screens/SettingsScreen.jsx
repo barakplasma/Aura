@@ -7,6 +7,8 @@ import {
   browserModelKeys,
   pickBrowserModel,
   probeBrowserEnv,
+  probeChromeAI,
+  resolveBrowserRuntime,
   loadBrowserModel,
   clearBrowserModelCache,
   isBrowserModelLoaded,
@@ -31,6 +33,7 @@ const SCAN_EVERY_UNITS = [
 export default function SettingsScreen({
   engine, setEngine,
   browserModel, setBrowserModel,
+  browserRuntime, setBrowserRuntime,
   baseUrl, setBaseUrl,
   apiKey, setApiKey,
   model, setModel,
@@ -90,6 +93,20 @@ export default function SettingsScreen({
   const [testingBrowser, setTestingBrowser] = useState(false);
   const [browserTestResult, setBrowserTestResult] = useState(null);
 
+  // Chrome built-in AI (Gemini Nano) — what can this browser do right now,
+  // and which runtime does the current selection resolve to? Same async-probe
+  // pattern as gpuEnv above: null until resolved, nothing flashed early.
+  const [chromeEnv, setChromeEnv] = useState(null);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const probe = await probeChromeAI();
+      const resolved = await resolveBrowserRuntime(browserRuntime || 'auto');
+      if (live) setChromeEnv({ ...probe, resolved });
+    })().catch(() => {});
+    return () => { live = false; };
+  }, [browserRuntime]);
+
   async function handleLoadBrowserModel() {
     setDownloading(true);
     setDownloadPct(null);
@@ -121,6 +138,7 @@ export default function SettingsScreen({
     try {
       const result = await scanBrowser({
         model: browserModelKey,
+        runtime: browserRuntime || 'auto',
         mission: 'anything unusual, unsafe, or noteworthy',
         image: frame,
         threshold: 0,
@@ -351,6 +369,37 @@ export default function SettingsScreen({
 
         {engine === 'browser' && (
           <>
+            <div className="form-group">
+              <label className="field-label" htmlFor="browser-runtime-select">RUNTIME</label>
+              <select
+                id="browser-runtime-select"
+                className="dc-input"
+                value={browserRuntime || 'auto'}
+                onChange={(e) => setBrowserRuntime?.(e.target.value)}
+              >
+                <option value="auto">AUTO — best available</option>
+                <option value="transformers">TRANSFORMERS.JS — WebGPU model</option>
+                <option value="chrome-ai">CHROME BUILT-IN AI — Gemini Nano</option>
+              </select>
+              <div className="field-hint">
+                {!chromeEnv
+                  ? 'Probing this browser…'
+                  : (browserRuntime || 'auto') === 'chrome-ai'
+                    ? (chromeEnv.imageCapable && chromeEnv.availability === 'available'
+                        ? 'CHROME BUILT-IN AI selected. Gemini Nano runs every scan on-device with JSON-constrained output.'
+                        : `CHROME BUILT-IN AI selected, but this browser reports "${chromeEnv.availability}"${chromeEnv.imageCapable ? '' : ' without image input'} — scans will fail until Gemini Nano is downloaded and multimodal here. Transformers.js stays available above.`)
+                    : (browserRuntime || 'auto') === 'transformers'
+                      ? 'TRANSFORMERS.JS selected — the model below answers every scan.'
+                      : chromeEnv.resolved === 'chrome-ai'
+                        ? 'AUTO → CHROME BUILT-IN AI. Gemini Nano runs every scan on-device with JSON-constrained output — no model download here.'
+                        : chromeEnv.availability === 'downloadable' || chromeEnv.availability === 'downloading'
+                          ? `AUTO → TRANSFORMERS.JS. Chrome built-in AI exists here but its model is ${chromeEnv.availability} — selecting it above triggers the ~2 GB Gemini Nano download. Not available on Chrome for Android.`
+                          : 'AUTO → TRANSFORMERS.JS. No usable Chrome built-in AI on this browser (absent, not yet downloaded, or text-only).'}
+              </div>
+              {chromeEnv?.resolved === 'chrome-ai' && (
+                <div className="field-hint">The TRANSFORMERS.JS model below stays downloaded but idle while Chrome built-in AI is active.</div>
+              )}
+            </div>
             <div className="form-group">
               <label className="field-label" htmlFor="browser-model-select">BROWSER MODEL</label>
               <select
