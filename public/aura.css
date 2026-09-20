@@ -1075,6 +1075,50 @@ textarea {
   gap: 10px;
 }
 
+.provider-picker {
+  position: relative;
+}
+
+.provider-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--c-bg-1);
+  border: 1px solid var(--c-amber-bdr);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  z-index: 100;
+}
+
+.provider-dropdown-group + .provider-dropdown-group {
+  border-top: 1px solid var(--c-bdr);
+}
+
+.provider-dropdown-label {
+  padding: 7px 10px 3px;
+  color: var(--c-dim);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.provider-dropdown-item {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--c-text);
+  font-size: 12px;
+}
+
+.provider-dropdown-item:hover,
+.provider-dropdown-item[aria-selected='true'] {
+  background: var(--c-amber-dim);
+  color: var(--c-amber);
+}
+
 .model-dropdown {
   position: absolute;
   top: 100%;
