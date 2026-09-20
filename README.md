@@ -68,7 +68,7 @@ switchable in Settings, all feeding the exact same loop:
 |------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
 | **Any OpenAI-compatible provider** | Cerebras, OpenAI, Groq, Together, Fireworks, OpenRouter, your own gateway — anything that speaks `POST /v1/chat/completions` with vision | the strongest models, at a per-scan cost you can cap                     |
 | **A local server**                 | Ollama, llama.cpp, LM Studio, vLLM on your own machine or homelab — same API, no key needed                                              | free, private, works on your LAN                                         |
-| **In-browser**                     | a small vision-language model running inside the page itself on WebGPU                                                                   | no key, no server, no network at all — the frame never leaves the device |
+| **In-browser**                     | a small vision-language model running inside the page itself on WebGPU (Transformers.js) — or, where the browser offers it, Chrome's built-in Gemini Nano | no key, no server, no network at all — the frame never leaves the device |
 
 The provider is three fields: base URL, model, and an API key that is allowed to be
 blank. Your key lives in your browser's `localStorage` and goes straight to the

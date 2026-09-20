@@ -1362,6 +1362,14 @@ textarea {
   letter-spacing: 0.06em;
 }
 
+.eval-model-sub {
+  display: block;
+  color: var(--c-dim);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
 .eval-table .eval-variant-head {
   color: var(--c-dim);
   font-weight: 400;

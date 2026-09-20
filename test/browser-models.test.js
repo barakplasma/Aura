@@ -121,3 +121,48 @@ test("probeBrowserEnv reads the adapter's storage-buffer limit", async () => {
   });
   assert.deepEqual(env, { hasWebGpu: true, deviceMemoryGB: 8, maxBufferBytes: 1024 });
 });
+
+// --- Qwen3.5 0.8B + SmolVLM2 500M rows ------------------------------------
+
+test("Qwen3.5 0.8B is the new default: official ONNX conversion, auto-selected", () => {
+  const cfg = getBrowserModel("qwen3.5-0.8b");
+  assert.ok(cfg, "row exists");
+  assert.equal(cfg.modelId, "onnx-community/Qwen3.5-0.8B-ONNX");
+  assert.equal(cfg.externalData, true, "weights ship as sibling .onnx_data chunks");
+  assert.equal(cfg.promptProfile, "json");
+  assert.equal(cfg.autoSelectable, true);
+  assert.equal(cfg.requiresWebGpu, true);
+  // The conversion README's own validated WebGPU recipe (fp16 vision encoder
+  // because FastViT-style convs quantize poorly, q4 for the big decoder).
+  assert.deepEqual(cfg.dtype, {
+    embed_tokens: "q4",
+    vision_encoder: "fp16",
+    decoder_model_merged: "q4",
+  });
+});
+
+test("the Qwen3.5 row bounds vision-token compute without distorting the frame", () => {
+  // Qwen2VL-style smart resize reads min/max pixels off the image-processor
+  // instance at call time, so the recipe caps compute at the capture size
+  // (640x480) and never upscales smaller frames — data, not a worker branch.
+  const cfg = getBrowserModel("qwen3.5-0.8b");
+  assert.deepEqual(cfg.imageProcessorConfig, { min_pixels: 65536, max_pixels: 307200 });
+});
+
+test("SmolVLM2 500M is an opt-in row sharing the 256M's calling convention", () => {
+  const cfg = getBrowserModel("smolvlm2-500m");
+  assert.ok(cfg, "row exists");
+  assert.equal(cfg.modelId, "HuggingFaceTB/SmolVLM2-500M-Video-Instruct");
+  assert.equal(cfg.processorArgs, "text-first");
+  assert.equal(cfg.chatStyle, "content-parts");
+  assert.deepEqual(cfg.processorOptions, { do_image_splitting: false });
+  assert.equal(cfg.promptProfile, "json", "500M is expected to follow the real schema");
+  assert.equal(cfg.autoSelectable, false, "a deliberate download, like FastVLM");
+  assert.equal(cfg.requiresWebGpu, true);
+});
+
+test("the auto-pick on a Pixel 10-class device is the Qwen3.5 row", () => {
+  const pixel10 = { hasWebGpu: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
+  assert.equal(pickBrowserModel(pixel10), "qwen3.5-0.8b");
+  assert.equal(DEFAULT_BROWSER_MODEL, "qwen3.5-0.8b");
+});

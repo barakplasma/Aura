@@ -103,10 +103,10 @@ One module worker owns Transformers.js for the whole app. It is shared with
 `PRD-local-prefilters.md` (CLIP gate), so the message protocol is generic:
 
 ```text
-→ { id, type: 'load',   task: 'vlm' | 'clip', model, dtype, device }
+→ { id, type: 'load',   task: 'vlm' | 'clip', model, dtype, device, recipe }
 ← { id, type: 'progress', file, loaded, total, pct }        (repeated)
 ← { id, type: 'ready',  device: 'webgpu' | 'wasm' }
-→ { id, type: 'scan',   prompt, imageDataUrl, maxNewTokens }
+→ { id, type: 'scan',   prompt, imageDataUrls, maxNewTokens }   (list; normally 1 frame — a temporal model gets a short sequence; the older single `imageDataUrl` is still accepted)
 ← { id, type: 'result', text, usage: { prompt_tokens, completion_tokens, total_tokens }, latencyMs }
 → { id, type: 'abort' }                                      (cancel a running generate)
 → { id, type: 'unload', task }
