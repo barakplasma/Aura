@@ -84,7 +84,24 @@ npm run build             # esbuild: minify + code-split src/ → public/assets/
 npm run dev               # npx serve public → http://localhost:3000
 npm test                  # node --test
 npm run deploy            # Build + gh-pages -d public
+npm run e2e               # live e2e harness (network + models + keys; NOT part of npm test)
 ```
+
+## E2E harness (`e2e/`)
+
+`npm run e2e` runs the real app code against real models — no mocks. The
+**provider leg** drives the real `scanClient()` against any OpenAI-compatible
+endpoint: set `E2E_BASE_URL` + `E2E_MODEL` for a local llama-server/Ollama, or
+let it pick a paid API from the ambient env (OpenRouter → OpenAI → Gemini).
+The **browser leg** drives the real `scanBrowser()` → `src/workers/ml.worker.js`
+→ actual transformers.js inference, executed in-process under Node by the
+worker shim (`e2e/node-worker.mjs`, which rewrites the load message's device
+`wasm` → `cpu` — the one Node adaptation; `onnxruntime-node` is the EP). Both
+legs walk the full pipeline on the `e2e/fixtures.mjs` scenes (person-at-door
+must trigger, empty-hallway must not) and judge detection, the alert/action
+call, shape, and usage. Judgment lives in `e2e/policy.mjs` and is unit-tested;
+the runner is orchestration. Use `--only browser --browser-model <key>` to
+scope a run (first run downloads the model, cached afterwards).
 
 ## Provider format
 
