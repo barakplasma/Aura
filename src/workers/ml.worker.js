@@ -20,7 +20,10 @@
 //        lib/model-size.js + lib/download-progress.js) — not that one file's
 //        own numbers — so pct only goes up as the load progresses.
 //   <- { id, type: 'ready',  device: 'webgpu' | 'wasm' }
-//   -> { id, type: 'scan',   prompt, imageDataUrl, maxNewTokens }
+//   -> { id, type: 'scan',   prompt, imageDataUrls, maxNewTokens }
+//        `imageDataUrls` is a frame list — normally exactly one entry; a
+//        temporal model receives a short sequence. (The older single
+//        `imageDataUrl` field is still accepted.)
 //   <- { id, type: 'result', text, usage, latencyMs }
 //   -> { id, type: 'abort' }                                 (stop mid-generate)
 //   -> { id, type: 'unload', task }
@@ -206,20 +209,35 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
   post({ id, type: "ready", device: resolvedDevice });
 }
 
-async function handleScan(id, { prompt, imageDataUrl, maxNewTokens }) {
+async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens }) {
   if (!current) throw new Error("No model loaded — send a 'load' message first.");
   const { model, processor, recipe, stopping } = current;
   stopping.reset();
   const start = performance.now();
 
-  const image = await RawImage.fromURL(imageDataUrl);
+  // A scan carries a frame list (normally exactly one; a temporal model gets
+  // a short sequence). imageDataUrl is still accepted so an older facade
+  // bundle keeps working across a service-worker update overlap.
+  const urls = imageDataUrls?.length ? imageDataUrls : [imageDataUrl];
+  const images = await Promise.all(
+    urls.filter(Boolean).map((url) => RawImage.fromURL(url)),
+  );
   // Two chat-template conventions in the wild: structured content parts
-  // (SmolVLM, LFM2-VL) and an inline "<image>" marker in a plain string
-  // (FastVLM — see onnx-community/FastVLM-0.5B-ONNX's own README).
+  // (SmolVLM, LFM2-VL, Qwen) and an inline "<image>" marker in a plain string
+  // (FastVLM — see onnx-community/FastVLM-0.5B-ONNX's own README). N frames
+  // means N markers / N image parts, in front of the text either way.
   const messages =
     recipe.chatStyle === "inline-image"
-      ? [{ role: "user", content: `<image>${prompt}` }]
-      : [{ role: "user", content: [{ type: "image" }, { type: "text", text: prompt }] }];
+      ? [{ role: "user", content: `<image>`.repeat(images.length) + prompt }]
+      : [
+          {
+            role: "user",
+            content: [
+              ...images.map(() => ({ type: "image" })),
+              { type: "text", text: prompt },
+            ],
+          },
+        ];
   const text = processor.apply_chat_template(messages, { add_generation_prompt: true });
   // Argument order differs by family and getting it wrong surfaces as a shape
   // error inside the tokenizer rather than here, so it's carried as data.
@@ -229,8 +247,8 @@ async function handleScan(id, { prompt, imageDataUrl, maxNewTokens }) {
   const opts = recipe.processorOptions || {};
   const inputs =
     recipe.processorArgs === "images-first"
-      ? await processor(image, text, opts)
-      : await processor(text, [image], opts);
+      ? await processor(images, text, opts)
+      : await processor(text, images, opts);
 
   const promptLength = inputs.input_ids.dims.at(-1);
   const outputIds = await model.generate({

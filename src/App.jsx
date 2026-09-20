@@ -45,6 +45,9 @@ export default function App() {
   const [model, setModel] = useLocalStorage('aura.model', '');
   const [engine, setEngine] = useLocalStorage('aura.engine', 'provider');
   const [browserModel, setBrowserModel] = useLocalStorage('aura.browserModel', DEFAULT_BROWSER_MODEL);
+  // Which in-browser runtime answers BROWSER-engine scans: 'auto' |
+  // 'transformers' | 'chrome-ai' (resolved in lib/browser-engine.js).
+  const [browserRuntime, setBrowserRuntime] = useLocalStorage('aura.browserRuntime', 'auto');
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
@@ -95,7 +98,7 @@ export default function App() {
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
-    engine, browserModel,
+    engine, browserModel, browserRuntime,
     threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate: effectiveRate,
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
@@ -278,6 +281,7 @@ export default function App() {
             <SettingsScreen
               engine={engine} setEngine={setEngine}
               browserModel={browserModel} setBrowserModel={setBrowserModel}
+              browserRuntime={browserRuntime} setBrowserRuntime={setBrowserRuntime}
               baseUrl={baseUrl} setBaseUrl={setBaseUrl}
               apiKey={apiKey} setApiKey={setApiKey}
               model={model} setModel={setModel}

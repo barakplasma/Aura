@@ -513,6 +513,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           : isBrowserEngine
             ? await scanBrowser({
                 model: s.browserModel || undefined,
+                runtime: s.browserRuntime || undefined,
                 mission: s.mission,
                 action: s.action,
                 image: frame,

@@ -180,6 +180,73 @@ test("parseLooseDetection degrades to sensible defaults on garbage input, never 
   }
 });
 
+// --- Small-model failure modes (BROWSER engine: Qwen3.5, SmolVLM2) --------
+
+test("normalizeDetection reads string booleans instead of coercing them to true", () => {
+  // Boolean("false") is true — a small model answering {"triggered":"false"}
+  // must not fire the alert.
+  assert.equal(normalizeDetection({ triggered: "false", confidence: 80 }).triggered, false);
+  assert.equal(normalizeDetection({ triggered: "no", confidence: 80 }).triggered, false);
+  assert.equal(normalizeDetection({ triggered: "true", confidence: 80 }).triggered, true);
+  assert.equal(normalizeDetection({ triggered: "yes", confidence: 80 }).triggered, true);
+});
+
+test("normalizeDetection scales a strictly-fractional 0-1 confidence up to percent", () => {
+  // The schema asks for 0-100, but small models sometimes answer on a 0-1
+  // scale. Strictly between 0 and 1 can only be a fraction; exactly 0 or 1
+  // keeps its percent meaning.
+  assert.equal(normalizeDetection({ triggered: true, confidence: 0.91 }).confidence, 91);
+  assert.equal(normalizeDetection({ triggered: true, confidence: "0.4" }).confidence, 40);
+  assert.equal(normalizeDetection({ triggered: true, confidence: 1 }).confidence, 1);
+  assert.equal(normalizeDetection({ triggered: true, confidence: 100 }).confidence, 100);
+  assert.equal(normalizeDetection({ triggered: true }).confidence, 100); // missing → default
+});
+
+test("normalizeDetection clamps out-of-range confidence", () => {
+  assert.equal(normalizeDetection({ triggered: true, confidence: 130 }).confidence, 100);
+  assert.equal(normalizeDetection({ triggered: true, confidence: -5 }).confidence, 0);
+});
+
+test("parseLooseDetection ignores a <think> block before the answer", () => {
+  // The block's own braces must not feed the JSON slice.
+  const r = parseLooseDetection(
+    '<think>\nLet me check: {"score": 3, "why": "door"}\n</think>\n{"triggered":true,"confidence":85,"reason":"a person at the door"}',
+  );
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 85);
+  assert.equal(r.reason, "a person at the door");
+
+  // Braces-free thinking is already sliceable, but strip it all the same.
+  const r2 = parseLooseDetection(
+    '<think>Reasoning about the scene.</think>\n{"triggered":false,"confidence":5,"reason":"empty room"}',
+  );
+  assert.equal(r2.triggered, false);
+  assert.equal(r2.confidence, 5);
+});
+
+test("parseLooseDetection treats an unterminated <think> as no answer", () => {
+  // Generation truncated mid-think: nothing after it is an answer.
+  const r = parseLooseDetection('<think>The scene shows');
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 0);
+});
+
+test("parseLooseDetection parses fenced JSON wrapped in prose (regression)", () => {
+  const r = parseLooseDetection(
+    'Sure! Here is the result:\n```json\n{"triggered":false,"confidence":10,"reason":"empty room"}\n```\nHope that helps.',
+  );
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "empty room");
+});
+
+test("parseLooseDetection reads a YES line buried under thinking output (regression)", () => {
+  const r = parseLooseDetection("<think>hmm {oops</think>\n\nYES 70 package on the doorstep");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 70);
+  assert.equal(r.reason, "package on the doorstep");
+});
+
 test("buildWebhookActionPrompt embeds action, reason, and optional schema", () => {
   const p = buildWebhookActionPrompt("send details", "intruder detected");
   assert.match(p, /send details/);
