@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
+import { PROVIDER_PRESETS, providerForUrl } from '../../lib/providers.js';
 import {
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
@@ -14,15 +15,6 @@ import {
 } from '../../lib/browser-engine.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 import ProgressBar from '../components/ProgressBar.jsx';
-
-// One-click base URLs. The local ones need no API key, and cost nothing —
-// picking one zeroes the cost rate so the telemetry doesn't invent dollars.
-const PROVIDER_PRESETS = [
-  { id: 'ollama', label: 'OLLAMA', url: 'http://localhost:11434/v1', local: true },
-  { id: 'lmstudio', label: 'LM STUDIO', url: 'http://localhost:1234/v1', local: true },
-  { id: 'llamacpp', label: 'LLAMA.CPP', url: 'http://localhost:8080/v1', local: true },
-  { id: 'cerebras', label: 'CEREBRAS', url: 'https://api.cerebras.ai/v1', local: false },
-];
 
 const SCAN_MODES = [
   { id: 'interval', label: 'INTERVAL' },
@@ -67,6 +59,8 @@ export default function SettingsScreen({
   const [models, setModels] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [providerQuery, setProviderQuery] = useState(() => providerForUrl(baseUrl)?.label || '');
+  const [showProviderDropdown, setShowProviderDropdown] = useState(false);
   const [vibeStatus, setVibeStatus] = useState('');
   const [webhookStatus, setWebhookStatus] = useState('');
   const [cameras, setCameras] = useState([]);
@@ -86,6 +80,9 @@ export default function SettingsScreen({
     probeBrowserEnv().then((env) => { if (live) setGpuEnv(env); }).catch(() => {});
     return () => { live = false; };
   }, []);
+  useEffect(() => {
+    setProviderQuery(providerForUrl(baseUrl)?.label || '');
+  }, [baseUrl]);
   const recommendedKey = gpuEnv ? pickBrowserModel(gpuEnv) : null;
   const [downloading, setDownloading] = useState(false);
   const [downloadPct, setDownloadPct] = useState(null);
@@ -153,11 +150,11 @@ export default function SettingsScreen({
     if (!baseUrl) { onStatusMsg('Enter a Base URL first.'); return; }
     setFetchingModels(true);
     try {
-      const list = await fetchModels(baseUrl, apiKey);
+      const list = await fetchModels(baseUrl, apiKey, { visionOnly: true });
       setModels(list);
       setShowDropdown(list.length > 0);
       if (list.length > 0 && !model) setModel(list[0]);
-      onStatusMsg(`Found ${list.length} models.`);
+      onStatusMsg(`Found ${list.length} image-capable models.`);
     } catch (err) {
       onStatusMsg(`Fetch failed: ${err.message}. You can type a model name manually.`);
     } finally {
@@ -180,7 +177,10 @@ export default function SettingsScreen({
       onStatusMsg(`Switched provider — API key cleared. Enter ${preset.label}'s key if it needs one.`);
     }
     setBaseUrl(preset.url);
-    setModels([]);
+    setProviderQuery(preset.label);
+    setShowProviderDropdown(false);
+    setModels(preset.models || []);
+    if (!model && preset.models?.[0]) setModel(preset.models[0]);
     if (preset.local) setRate('0');
   }
 
@@ -188,6 +188,9 @@ export default function SettingsScreen({
   const wakeLockSupported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 
   const filteredModels = models.filter(m => m.toLowerCase().includes((model || '').toLowerCase()));
+  const filteredProviders = PROVIDER_PRESETS.filter((provider) =>
+    provider.label.toLowerCase().includes(providerQuery.toLowerCase()),
+  );
 
   function handleVibeTest() {
     testVibration();
@@ -261,18 +264,47 @@ export default function SettingsScreen({
         {engine !== 'browser' && (
           <>
             <div className="form-group">
-              <label className="field-label">PRESET</label>
-              <div className="mode-segments" role="group" aria-label="Provider preset">
-                {PROVIDER_PRESETS.map(p => (
-                  <button
-                    key={p.id}
-                    className={`mode-segment ${baseUrl === p.url ? 'active' : ''}`}
-                    onClick={() => selectPreset(p)}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+              <label className="field-label" htmlFor="provider-preset">PROVIDER PRESET</label>
+              <div className="provider-picker">
+                <input
+                  id="provider-preset"
+                  className="dc-input"
+                  value={providerQuery}
+                  onFocus={() => setShowProviderDropdown(true)}
+                  onChange={(e) => { setProviderQuery(e.target.value); setShowProviderDropdown(true); }}
+                  onBlur={() => setTimeout(() => setShowProviderDropdown(false), 150)}
+                  placeholder="Search local and remote providers"
+                  role="combobox"
+                  aria-expanded={showProviderDropdown}
+                  aria-controls="provider-dropdown"
+                  aria-autocomplete="list"
+                />
+                {showProviderDropdown && filteredProviders.length > 0 && (
+                  <div id="provider-dropdown" className="provider-dropdown" role="listbox">
+                    {['Local', 'Remote'].map((group) => {
+                      const choices = filteredProviders.filter((provider) => provider.group === group);
+                      if (!choices.length) return null;
+                      return (
+                        <div key={group} className="provider-dropdown-group">
+                          <div className="provider-dropdown-label">{group}</div>
+                          {choices.map((provider) => (
+                            <div
+                              key={provider.id}
+                              className="provider-dropdown-item"
+                              role="option"
+                              aria-selected={baseUrl === provider.url}
+                              onMouseDown={() => selectPreset(provider)}
+                            >
+                              {provider.label}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+              <div className="field-hint">10 local and 10 remote OpenAI-compatible providers. Presets include only vision-ready model suggestions where known.</div>
             </div>
             <div className="form-group">
               <label className="field-label">BASE URL</label>
@@ -299,7 +331,7 @@ export default function SettingsScreen({
                   value={model}
                   onChange={e => { setModel(e.target.value); setShowDropdown(models.length > 0); }}
                   onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
-                  placeholder="gemma-4-31b"
+                  placeholder="Search or enter a vision model"
                 />
                 {showDropdown && filteredModels.length > 0 && (
                   <div id="model-dropdown" className="model-dropdown">
@@ -310,7 +342,7 @@ export default function SettingsScreen({
                 )}
               </div>
               <button id="fetch-models-btn" className="dc-btn" disabled={fetchingModels} onClick={handleFetchModels}>
-                {fetchingModels ? 'FETCHING…' : 'FETCH MODELS'}
+                {fetchingModels ? 'FETCHING…' : 'FETCH VISION MODELS'}
               </button>
             </div>
             {statusMsg && <p id="provider-status" className="status-msg" role="status">{statusMsg}</p>}

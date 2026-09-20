@@ -266,6 +266,28 @@ test("fetchModels omits Authorization when no key is configured", async () => {
   }
 });
 
+test("fetchModels asks OpenRouter for image-input models and keeps only declared VLMs", async () => {
+  const realFetch = globalThis.fetch;
+  let requestedUrl;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return {
+      ok: true,
+      json: async () => ({ data: [
+        { id: "vision", architecture: { input_modalities: ["text", "image"] } },
+        { id: "text-only", architecture: { input_modalities: ["text"] } },
+      ] }),
+    };
+  };
+  try {
+    const list = await fetchModels("https://openrouter.ai/api/v1", "key", { visionOnly: true });
+    assert.equal(requestedUrl, "https://openrouter.ai/api/v1/models?input_modalities=image");
+    assert.deepEqual(list, ["vision"]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("a 401 with no key configured explains that the provider needs one", async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
