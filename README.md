@@ -112,6 +112,28 @@ best-effort judgement from a single frame is not evidence of anything.
 
 ## More
 
+## Preview URLs
+
+Aura can be previewed without changing the GitHub Pages deployment.
+
+- **On the development machine:** run `npm run preview:local`, then open
+  `http://localhost:8787`. For a phone on the same Wi-Fi network, run
+  `npm run dev -- --listen tcp://0.0.0.0:3000` and open
+  `http://<development-machine-lan-ip>:3000`.
+- **Shareable Cloudflare preview:** first run `npx wrangler login`, optionally
+  change the globally-unique `name` in `wrangler.jsonc`, then run
+  `npm run preview:deploy`. Wrangler prints the resulting
+  `https://<worker-name>.<account-subdomain>.workers.dev` URL. This deploys only
+  the static `public/` folder; Aura still sends API keys and camera frames only
+  from the browser directly to the provider configured by the operator.
+
+Wrangler runs Aura's build automatically before both preview commands, so it
+never uploads a stale `public/` directory. The `workers.dev` worker is deliberately an opt-in preview target. It adds no
+backend, stores no monitoring data, and does not proxy provider or webhook calls.
+After a preview deploy, close any existing Aura tabs before reopening the URL so
+the new service worker can activate; the app will otherwise deliberately keep a
+running monitor on its already-cached version.
+
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** — running it yourself, pointing it at a
   local model, hacking on it, deploying it.
 - **[docs/](./docs)** — design documents for the bigger pieces (in-browser engine,

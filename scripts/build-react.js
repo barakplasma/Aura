@@ -79,7 +79,7 @@ async function copyOnnxRuntimeFiles() {
 async function buildServiceWorker() {
   const publicDir = path.join(root, "public");
   const bundles = (await readdir(outdir))
-    .filter((f) => f.endsWith(".js")) // skip .map — big, and only devtools wants them
+    .filter((f) => f.endsWith(".js") || f.endsWith(".css")) // skip .map — big, and only devtools wants them
     .sort()
     .map((f) => `assets/${f}`);
   const icons = (await readdir(path.join(publicDir, "icons")))

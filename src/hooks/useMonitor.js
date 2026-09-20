@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { scanClient } from "../../lib/aura.js";
+import { scanClient, isLocalBaseUrl } from "../../lib/aura.js";
 import { demoScan } from "../../lib/demo.js";
 import { scanBrowser, BROWSER_MODELS } from "../../lib/browser-engine.js";
 import {
@@ -15,6 +15,9 @@ import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
 import { useWakeLock } from "./useWakeLock.js";
 import { normalizeCaptureSize } from "../../lib/frame.js";
 import { processingProgress } from "../../lib/progress.js";
+import { reportUnexpectedError } from "../../lib/handled-errors.js";
+import { encodeNtfyHeader, isHostedNtfyTopicUrl } from "../../lib/ntfy.js";
+import { reportHandledError } from "../monitoring.js";
 
 // One store per page load — its IndexedDB adapter is lazy (never touches the
 // indexedDB global until an operation runs), so creating it here is safe even
@@ -57,6 +60,65 @@ const IDLE_PROGRESS = {
   estimateMs: null,
 };
 const EMPTY_STATS = { p50: null, p90: null, timeoutMs: null, count: 0 };
+
+function sendJsonWebhook(url, method, headers, body) {
+  fetch(url, {
+    method,
+    headers,
+    body: method === "GET" || method === "HEAD" ? undefined : body,
+    signal: AbortSignal.timeout(5000),
+    mode: "no-cors",
+  }).catch(() => {});
+}
+
+function notificationText(body) {
+  if (typeof body !== "string") return "Aura alert";
+  try {
+    const parsed = JSON.parse(body);
+    return typeof parsed?.message === "string" ? parsed.message : body;
+  } catch {
+    return body;
+  }
+}
+
+async function sendNtfyImage(url, body, headers, frame) {
+  const image = await fetch(frame).then((response) => response.blob());
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      ...headers,
+      "Content-Type": image.type || "image/jpeg",
+      "X-Filename": `aura-alert-${stamp}.jpg`,
+      "X-Message": encodeNtfyHeader(notificationText(body)),
+      "X-Title": "Aura alert",
+      "X-Priority": "4",
+      "X-Tags": "warning,camera",
+    },
+    body: image,
+    signal: AbortSignal.timeout(15000),
+    mode: "cors",
+  });
+  if (!response.ok) throw new Error(`ntfy upload failed: HTTP ${response.status}`);
+}
+
+async function sendNtfyText(url, body, headers) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "Content-Type": "text/plain",
+      "X-Message": encodeNtfyHeader(notificationText(body)),
+      "X-Title": "Aura alert",
+      "X-Priority": "4",
+      "X-Tags": "warning,camera",
+    },
+    body: "",
+    signal: AbortSignal.timeout(10000),
+    mode: "cors",
+  });
+  if (!response.ok) throw new Error(`ntfy publish failed: HTTP ${response.status}`);
+}
 
 // Shared shape for an alert/missed-frame record: a numeric id (insertion
 // order), an ISO timestamp (sortable, used by alert-store), and a locale
@@ -288,7 +350,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
   }, [settingsRef]);
 
   const sendWebhook = useCallback(
-    (body) => {
+    (body, frame) => {
       const url = (settingsRef.current.webhookUrl || "").trim();
       if (!url) return;
       let headers = { "Content-Type": "application/json" };
@@ -312,13 +374,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       } else if (body && typeof body === "object") {
         formattedBody = JSON.stringify(body);
       }
-      fetch(url, {
-        method,
-        headers,
-        body: method === "GET" || method === "HEAD" ? undefined : formattedBody,
-        signal: AbortSignal.timeout(5000),
-        mode: "no-cors",
-      }).catch(() => {});
+      if (
+        settingsRef.current.webhookIncludeImage &&
+        frame &&
+        isHostedNtfyTopicUrl(url)
+      ) {
+        void sendNtfyImage(url, formattedBody, headers, frame).catch((error) => {
+          reportHandledError(error, { area: "ntfy-upload" });
+          void sendNtfyText(url, formattedBody, headers).catch((fallbackError) => {
+            reportHandledError(fallbackError, { area: "ntfy-fallback" });
+          });
+        });
+        return;
+      }
+      sendJsonWebhook(url, method, headers, formattedBody);
     },
     [settingsRef],
   );
@@ -560,8 +629,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           });
           // Demo results never carry a webhookMessage, but guard anyway —
           // simulated alerts must never reach a real webhook.
-          if (!s.demo && result.webhookMessage)
-            sendWebhook(result.webhookMessage);
+          const ntfyImageAlert =
+            s.webhookIncludeImage && isHostedNtfyTopicUrl(s.webhookUrl || "");
+          const webhookBody = result.webhookMessage || (
+            ntfyImageAlert ? result.message || result.reason : ""
+          );
+          if (!s.demo && webhookBody) sendWebhook(webhookBody, frame);
         } else {
           setStatus(`Watching — ${result.reason}`);
           recordMissed(frame, result.reason, result.confidence);
@@ -580,8 +653,19 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         }
       } catch (err) {
         // A Stop mid-scan aborts the request; that's expected, not an error.
-        if (internalRef.current.running && err.name !== "AbortError")
+        if (internalRef.current.running && reportUnexpectedError(
+          err,
+          reportHandledError,
+          {
+            area: "live-monitor",
+            engine: isBrowserEngine ? "browser" : "provider",
+            inference: isBrowserEngine
+              ? "in-browser"
+              : isLocalBaseUrl(s.baseUrl) ? "local-provider" : "cloud-provider",
+          },
+        )) {
           setStatus(`Error: ${err.message}`);
+        }
       } finally {
         internalRef.current.inFlight = false;
         internalRef.current.abort = null;

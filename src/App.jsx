@@ -1,4 +1,5 @@
 import { useState, useRef, lazy, Suspense } from 'react';
+import { IonApp, IonToast } from '@ionic/react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
@@ -68,6 +69,7 @@ export default function App() {
   const [webhookHeaders, setWebhookHeaders] = useLocalStorage('aura.webhookHeaders', '');
   const [webhookAction, setWebhookAction] = useLocalStorage('aura.webhookAction', '');
   const [webhookSchema, setWebhookSchema] = useLocalStorage('aura.webhookSchema', '');
+  const [webhookIncludeImage, setWebhookIncludeImage] = useLocalStorage('aura.webhookIncludeImage', false);
   const [keepScreenOn, setKeepScreenOn] = useLocalStorage('aura.keepScreenOn', true);
   // Written by handleStart/handleStop, read once at boot to offer RESUME.
   const [armed, setArmed] = useLocalStorage('aura.armed', false);
@@ -101,7 +103,7 @@ export default function App() {
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
     speech, haptics, demo: demoMode,
-    webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
+    webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema, webhookIncludeImage,
   };
 
   const videoRef = useRef(null);
@@ -201,34 +203,12 @@ export default function App() {
   const showUpdateBanner = updateAvailable && !updateDismissed;
 
   return (
-    <div className="app">
+    <IonApp>
       <TopBar dotClass={dotClass} telemetry={telemetry} model={model} />
-      {demoMode && (
-        <div className="demo-banner" role="status">
-          <span>▲ DEMO MODE — simulated alerts · no API calls · webhooks disabled</span>
-          <button className="demo-exit-btn" onClick={handleExitDemo}>EXIT DEMO</button>
-        </div>
-      )}
-      {showResumeBanner && (
-        <div className="demo-banner resume-banner" role="status">
-          <span>⟳ RESUME MONITORING — an armed session was interrupted by a reload</span>
-          <div className="btn-row resume-banner-actions">
-            <button className="demo-exit-btn" onClick={handleResume}>RESUME</button>
-            <button className="demo-exit-btn" onClick={handleDismissResume}>DISMISS</button>
-          </div>
-        </div>
-      )}
-      {showUpdateBanner && (
-        <div className="demo-banner update-banner" role="status">
-          <span>⬆ UPDATE AVAILABLE — a new version is ready to install</span>
-          <div className="btn-row resume-banner-actions">
-            <button className="demo-exit-btn" onClick={reloadToUpdate}>UPDATE NOW</button>
-            <button className="demo-exit-btn" onClick={handleDismissUpdate}>LATER</button>
-          </div>
-        </div>
-      )}
+      <IonToast isOpen={demoMode} message="Demo mode — simulated alerts, no API calls." color="warning" buttons={[{ text: 'Exit', handler: handleExitDemo }]} />
+      <IonToast isOpen={showResumeBanner} message="Monitoring was interrupted by a reload." buttons={[{ text: 'Resume', handler: handleResume }, { text: 'Dismiss', role: 'cancel', handler: handleDismissResume }]} />
+      <IonToast isOpen={showUpdateBanner} message="A new version is ready." buttons={[{ text: 'Update', handler: reloadToUpdate }, { text: 'Later', role: 'cancel', handler: handleDismissUpdate }]} />
       <div className="app-body">
-        <NavRail screen={screen} setScreen={setScreen} hidden={axAvailable ? undefined : ['optimize']} />
         <main className={`main-content ${screen === 'monitor' ? 'monitor-layout' : ''}`}>
           <MonitorStage
             videoRef={videoRef} canvasRef={canvasRef}
@@ -323,13 +303,15 @@ export default function App() {
               webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}
               webhookAction={webhookAction} setWebhookAction={setWebhookAction}
               webhookSchema={webhookSchema} setWebhookSchema={setWebhookSchema}
+              webhookIncludeImage={webhookIncludeImage} setWebhookIncludeImage={setWebhookIncludeImage}
               statusMsg={statusMsg}
               onStatusMsg={handleStatusMsg}
               captureFrame={handleCaptureEvalFrame}
             />
           )}
         </main>
+        <NavRail screen={screen} setScreen={setScreen} hidden={axAvailable ? undefined : ['optimize']} />
       </div>
-    </div>
+    </IonApp>
   );
 }
