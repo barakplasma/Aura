@@ -40,6 +40,10 @@ async function scanForEval(params) {
   if (params.model.startsWith(BROWSER_MODEL_PREFIX)) {
     return scanBrowser({
       ...params,
+      // Pinned: a `browser:<key>` row must run ITS model through
+      // Transformers.js. Left to auto-resolve, a Chrome-AI-capable browser
+      // would run every row on Gemini Nano and corrupt the whole matrix.
+      runtime: 'transformers',
       model: params.model.slice(BROWSER_MODEL_PREFIX.length),
     });
   }

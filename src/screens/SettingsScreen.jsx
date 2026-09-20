@@ -384,11 +384,17 @@ export default function SettingsScreen({
               <div className="field-hint">
                 {!chromeEnv
                   ? 'Probing this browser…'
-                  : chromeEnv.resolved === 'chrome-ai'
-                    ? 'AUTO → CHROME BUILT-IN AI. Gemini Nano runs every scan on-device with JSON-constrained output — no model download here.'
-                    : chromeEnv.availability === 'downloadable' || chromeEnv.availability === 'downloading'
-                      ? `AUTO → TRANSFORMERS.JS. Chrome built-in AI exists here but its model is ${chromeEnv.availability} — selecting it above triggers the ~2 GB Gemini Nano download. Not available on Chrome for Android.`
-                      : 'AUTO → TRANSFORMERS.JS. No usable Chrome built-in AI on this browser (absent, not yet downloaded, or text-only).'}
+                  : (browserRuntime || 'auto') === 'chrome-ai'
+                    ? (chromeEnv.imageCapable && chromeEnv.availability === 'available'
+                        ? 'CHROME BUILT-IN AI selected. Gemini Nano runs every scan on-device with JSON-constrained output.'
+                        : `CHROME BUILT-IN AI selected, but this browser reports "${chromeEnv.availability}"${chromeEnv.imageCapable ? '' : ' without image input'} — scans will fail until Gemini Nano is downloaded and multimodal here. Transformers.js stays available above.`)
+                    : (browserRuntime || 'auto') === 'transformers'
+                      ? 'TRANSFORMERS.JS selected — the model below answers every scan.'
+                      : chromeEnv.resolved === 'chrome-ai'
+                        ? 'AUTO → CHROME BUILT-IN AI. Gemini Nano runs every scan on-device with JSON-constrained output — no model download here.'
+                        : chromeEnv.availability === 'downloadable' || chromeEnv.availability === 'downloading'
+                          ? `AUTO → TRANSFORMERS.JS. Chrome built-in AI exists here but its model is ${chromeEnv.availability} — selecting it above triggers the ~2 GB Gemini Nano download. Not available on Chrome for Android.`
+                          : 'AUTO → TRANSFORMERS.JS. No usable Chrome built-in AI on this browser (absent, not yet downloaded, or text-only).'}
               </div>
               {chromeEnv?.resolved === 'chrome-ai' && (
                 <div className="field-hint">The TRANSFORMERS.JS model below stays downloaded but idle while Chrome built-in AI is active.</div>

@@ -337,3 +337,27 @@ test("scanBrowser reports the fresh model load time on the first scan only", asy
   const r2 = await second;
   assert.equal(r2.modelLoadMs, null, "warm model — no load time reported");
 });
+
+test("a stored runtime of 'auto' resolves before transport selection", async () => {
+  // useMonitor passes the persisted aura.browserRuntime straight through, and
+  // its default is the literal string "auto" — which is truthy, so it must be
+  // RESOLVED, not treated as an explicit transport choice. (Pre-fix, the scan
+  // misroutes into the worker path and never settles, hence the race.)
+  // NOTE: freshWorker() resets the runtime seams — set them after it.
+  const getWorker = freshWorker();
+  _setChromeAIProbe(async () => ({ present: true, availability: "available", imageCapable: true }));
+  let chromeCalls = 0;
+  _setChromeAICall(async () => {
+    chromeCalls += 1;
+    return { text: "NO 0 nothing", usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, reported: false } };
+  });
+
+  const result = await Promise.race([
+    scanBrowser({ mission: "m", image: "x".repeat(64), runtime: "auto" }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error("scan never settled — misrouted")), 500)),
+  ]);
+
+  assert.equal(result.runtime, "chrome-ai", "'auto' must resolve, not pass through");
+  assert.equal(chromeCalls, 1);
+  assert.equal(getWorker(), undefined, "no worker spawned on the auto-resolved chrome path");
+});
