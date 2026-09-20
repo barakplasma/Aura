@@ -67,6 +67,16 @@ async function waitForPosted(fw, n) {
   }
 }
 
+// Start one scan against an already-loaded fake worker and wait for its
+// 'scan' message to land. Returns the scan promise and that message, so the
+// single-frame tests below can assert on and reply to it without repeating
+// the same start-and-wait dance.
+async function startedScan(fw, params) {
+  const p = scanBrowser(params);
+  await waitForPosted(fw, 2); // setup load + this scan
+  return { p, req: fw.posted.at(-1) };
+}
+
 // Shared setup for tests that just need a model already loaded before
 // exercising scanBrowser()/abort/crash behavior — distinct from the "error"
 // reply case below, which tests the load path failing. Returns `getWorker`
@@ -154,9 +164,7 @@ test("scanBrowser correlates concurrent requests by id, not by reply order", asy
 
 test("scanBrowser forwards the single frame as a one-element image list", async () => {
   const { fw } = await loadedFakeWorker("webgpu");
-  const p = scanBrowser({ mission: "a person at the door", image: "x".repeat(64) });
-  await waitForPosted(fw, 2); // 1 load + 1 scan
-  const req = fw.posted.at(-1);
+  const { p, req } = await startedScan(fw, { mission: "a person at the door", image: "x".repeat(64) });
   assert.equal(req.type, "scan");
   assert.deepEqual(req.imageDataUrls, [`data:image/jpeg;base64,${"x".repeat(64)}`]);
   fw.reply({ id: req.id, type: "result", text: "NO 0 nothing", usage: {} });
@@ -167,13 +175,11 @@ test("scanBrowser forwards every frame when temporal analysis passes a sequence"
   // The SmolVLM2-Video follow-up: the pipeline must not assume one frame
   // forever. `images` (a short frame sequence) supersedes `image`.
   const { fw } = await loadedFakeWorker("webgpu");
-  const p = scanBrowser({
+  const { p, req } = await startedScan(fw, {
     mission: "did someone approach and then leave",
     image: "a".repeat(64),
     images: ["b".repeat(64), "c".repeat(64)],
   });
-  await waitForPosted(fw, 2);
-  const req = fw.posted.at(-1);
   assert.deepEqual(req.imageDataUrls, [
     `data:image/jpeg;base64,${"b".repeat(64)}`,
     `data:image/jpeg;base64,${"c".repeat(64)}`,
@@ -296,9 +302,7 @@ test("scanBrowser routes to the Chrome built-in AI transport without touching th
 
 test("scanBrowser on the Transformers runtime still answers through the worker and reports the runtime", async () => {
   const { fw } = await loadedFakeWorker("webgpu");
-  const p = scanBrowser({ mission: "a person at the door", image: "x".repeat(64) });
-  await waitForPosted(fw, 2);
-  const req = fw.posted.at(-1);
+  const { p, req } = await startedScan(fw, { mission: "a person at the door", image: "x".repeat(64) });
   fw.reply({ id: req.id, type: "result", text: "NO 5 nothing", usage: {} });
   const result = await p;
   assert.equal(result.runtime, "transformers");

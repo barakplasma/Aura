@@ -1079,18 +1079,24 @@ textarea {
   position: relative;
 }
 
-.provider-dropdown {
+/* Shared floating-panel shape for both dropdowns (jscpd: one rule, not two
+   copies); only the scroll ceiling differs per dropdown. */
+.provider-dropdown,
+.model-dropdown {
   position: absolute;
   top: 100%;
   left: 0;
   right: 0;
-  max-height: 260px;
-  overflow-y: auto;
   background: var(--c-bg-1);
   border: 1px solid var(--c-amber-bdr);
   border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
+  overflow-y: auto;
   z-index: 100;
+}
+
+.provider-dropdown {
+  max-height: 260px;
 }
 
 .provider-dropdown-group + .provider-dropdown-group {
@@ -1120,17 +1126,7 @@ textarea {
 }
 
 .model-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  background: var(--c-bg-1);
-  border: 1px solid var(--c-amber-bdr);
-  border-top: none;
-  border-radius: 0 0 var(--radius) var(--radius);
   max-height: 200px;
-  overflow-y: auto;
-  z-index: 100;
 }
 
 .model-dropdown-item {

@@ -39,9 +39,9 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `public/feedback.js`              | Web Speech + Web Vibration                                                                                                 |
 | `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models                       |
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)           |
-| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, owns `src/workers/ml.worker.js`'s lifecycle and the runtime choice (`resolveBrowserRuntime()`); re-exports the model table |
+| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                      |
 | `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                |
-| `lib/chrome-ai.js`                | Chrome built-in AI (Gemini Nano) transport: `probeChromeAI()` / `scanChromeAICall()` — a `{prompt, frames} → {text, usage}` call parallel to the worker's, main thread only, fully feature-detected. Chosen via `aura.browserRuntime`: 'auto' (Chrome AI only if already 'available' AND image-capable) \| 'transformers' \| 'chrome-ai' |
+| `lib/chrome-ai.js`                | Chrome built-in AI (Gemini Nano) transport parallel to the worker's — see below                                            |
 | `src/workers/ml.worker.js`        | Runs the selected VLM via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers`                  |
 | `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                      |
 | `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                    |
@@ -51,6 +51,12 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                    |
 | `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                             |
 | `test/`                           | Unit tests for the lib/ pure helpers, demo.js, browser-engine protocol, and scanClient validation                          |
+
+The BROWSER engine's runtime choice — `aura.browserRuntime`: 'auto' | 'transformers' | 'chrome-ai' —
+is resolved by `resolveBrowserRuntime()` in lib/browser-engine.js. Auto picks Chrome built-in AI only when
+`LanguageModel` is already 'available' AND image-capable: it never triggers Gemini Nano's ~2 GB download and
+never routes vision through a text-only build. lib/chrome-ai.js is main-thread-only (the Prompt API has no
+worker surface) and fully feature-detected — Chrome 148+ on web, absent on Chrome for Android.
 
 Two dependencies are kept out of the main bundle by the same pattern — a
 module that's never statically reachable from `App.jsx`, only loaded lazily
