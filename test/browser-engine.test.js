@@ -8,6 +8,7 @@ import {
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
   resolveBrowserRuntime,
+  selectBrowserDevice,
   _setWorkerFactory,
   _setChromeAICall,
   _setChromeAIProbe,
@@ -111,6 +112,20 @@ test("loadBrowserModel resolves on the worker's 'ready' reply, matched by id", a
   assert.equal(result.device, "webgpu");
   assert.equal(isBrowserModelLoaded("smolvlm2-256m"), true);
   assert.equal(browserModelDevice(), "webgpu");
+});
+
+test("selectBrowserDevice uses WASM when WebGPU lacks shader-f16", async () => {
+  const noFp16 = {
+    gpu: { requestAdapter: async () => ({ features: new Set() }) },
+  };
+  assert.equal(
+    await selectBrowserDevice(BROWSER_MODELS["smolvlm2-256m"], noFp16),
+    "wasm",
+  );
+  await assert.rejects(
+    selectBrowserDevice(BROWSER_MODELS["smolvlm2-500m"], noFp16),
+    /requires WebGPU with fp16 support/,
+  );
 });
 
 test("loadBrowserModel de-dupes overlapping calls for the same model into one worker request", async () => {
