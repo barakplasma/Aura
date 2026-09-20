@@ -11,15 +11,28 @@
 // omitting them keeps the main bundle small.
 import * as Sentry from "@sentry/browser";
 
-// Skip local development so dev-time errors don't pollute the Bugsink project.
-const host = typeof location !== "undefined" ? location.hostname : "";
-const isLocalDev = host === "localhost" || host === "127.0.0.1" || host === "";
-
 Sentry.init({
   dsn: "https://1b4075f67e00411896ae35506159ebe2@barakplasma.bugsink.com/4",
-  enabled: !isLocalDev,
+  release: "aura@2.0.0",
+  // Local model users often run Aura itself on localhost, so do not suppress
+  // those failures merely because the UI is locally hosted.
+  enabled: typeof window !== "undefined",
   // Don't attach PII (IP address, cookies, request bodies) to events.
   sendDefaultPii: false,
 });
+
+// Scan failures are deliberately handled by the UI so Aura can show an
+// actionable message and continue monitoring. Handled exceptions are not
+// reported automatically, so send them explicitly without app state (which
+// can contain API keys, frames, and mission text).
+export function reportHandledError(error, tags = {}) {
+  Sentry.withScope((scope) => {
+    scope.setTag("handled", "true");
+    for (const [key, value] of Object.entries(tags)) {
+      if (value != null) scope.setTag(key, String(value));
+    }
+    Sentry.captureException(error);
+  });
+}
 
 export { Sentry };

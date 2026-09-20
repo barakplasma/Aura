@@ -17,6 +17,8 @@ import {
   sameOrigin,
 } from "../lib/monitor.js";
 import { scanClient, fetchModels, _resetJsonModeCache } from "../lib/aura.js";
+import { reportUnexpectedError } from "../lib/handled-errors.js";
+import { encodeNtfyHeader, isHostedNtfyTopicUrl } from "../lib/ntfy.js";
 
 // A minimal successful detection response, as the provider would return it.
 function okCompletion() {
@@ -45,6 +47,32 @@ function stubFetchCapturingHeaders(seenHeaders, reply = okCompletion) {
   };
   return realFetch;
 }
+
+test("handled provider failures are reported, while Stop aborts stay quiet", () => {
+  const calls = [];
+  const providerError = new Error("Provider API 400: unsupported temperature");
+  assert.equal(
+    reportUnexpectedError(providerError, (...args) => calls.push(args), { area: "live-monitor" }),
+    true,
+  );
+  assert.deepEqual(calls, [[providerError, { area: "live-monitor" }]]);
+
+  const abort = new DOMException("Stopped", "AbortError");
+  assert.equal(reportUnexpectedError(abort, (...args) => calls.push(args)), false);
+  assert.equal(calls.length, 1);
+});
+
+test("ntfy image attachments are restricted to hosted ntfy topic URLs", () => {
+  assert.equal(isHostedNtfyTopicUrl("https://ntfy.sh/aura-alerts"), true);
+  assert.equal(isHostedNtfyTopicUrl("https://ntfy.sh"), false);
+  assert.equal(isHostedNtfyTopicUrl("https://example.com/hooks/ntfy"), false);
+});
+
+test("ntfy header encoding supports Unicode alerts without raw newlines", () => {
+  const encoded = encodeNtfyHeader("\u05d0\u05d6\u05e2\u05e7\u05d4 \ud83d\udea8\ncheck camera");
+  assert.match(encoded, /^=\?UTF-8\?B\?.+\?=$/);
+  assert.equal(encoded.includes("\n"), false);
+});
 
 test("buildDetectionPrompt embeds the mission and schema", () => {
   const p = buildDetectionPrompt("alert if a person is near the pool");
@@ -240,6 +268,27 @@ test("scanClient runs keyless against a local server and sends no Authorization"
       requestTimeout: 30,
     });
     assert.equal(seenHeaders[1].Authorization, "Bearer csk-secret");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("scanClient leaves temperature to the provider default", async () => {
+  const realFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    return okCompletion();
+  };
+  try {
+    await scanClient({
+      baseUrl: "https://api.openai.com/v1",
+      model: "luna",
+      mission: "watch the door",
+      image: "x".repeat(64),
+      requestTimeout: 30,
+    });
+    assert.equal(Object.hasOwn(bodies[0], "temperature"), false);
   } finally {
     globalThis.fetch = realFetch;
   }

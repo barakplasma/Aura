@@ -3,6 +3,7 @@ node_modules/
 .env
 .env.local
 .dev.vars
+.wrangler/
 dist/
 public/aura.bundle.js
 public/aura.bundle.js.map

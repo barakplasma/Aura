@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
-import { fetchModels, scanClient } from '../../lib/aura.js';
+import { fetchModels, scanClient, isLocalBaseUrl } from '../../lib/aura.js';
 import { expandMatrix, comboKey, runEvalMatrix, summarizeResults } from '../../lib/eval.js';
 import { createEvalStore, makeId } from '../../lib/eval-store.js';
 import { scanBrowser, BROWSER_MODELS } from '../../lib/browser-engine.js';
+import { reportUnexpectedError } from '../../lib/handled-errors.js';
 import ProgressBar from '../components/ProgressBar.jsx';
+import { reportHandledError } from '../monitoring.js';
 
 const store = createEvalStore();
 
@@ -266,6 +268,15 @@ export default function EvalScreen({
       signal: controller.signal,
       scanFn: scanForEval,
       onResult: (result, done) => {
+        if (result.status === 'error') {
+          reportUnexpectedError(new Error(result.error), reportHandledError, {
+            area: 'prompt-evaluation',
+            model: result.model,
+            inference: result.model.startsWith(BROWSER_MODEL_PREFIX)
+              ? 'in-browser'
+              : isLocalBaseUrl(baseUrl) ? 'local-provider' : 'cloud-provider',
+          });
+        }
         if (!activeRun) return;
         activeRun.run.results.push(result);
         activeRun.done = done;

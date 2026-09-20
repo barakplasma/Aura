@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "aura-preview",
+  "compatibility_date": "2026-09-20",
+  "workers_dev": true,
+  "build": {
+    "command": "npm run build",
+    "watch_dir": ["src", "lib", "scripts"]
+  },
+  "assets": {
+    "directory": "./public"
+  }
+}

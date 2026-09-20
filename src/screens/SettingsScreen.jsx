@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { IonContent } from '@ionic/react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
 import { PROVIDER_PRESETS, providerForUrl } from '../../lib/providers.js';
 import {
@@ -15,6 +16,7 @@ import {
 } from '../../lib/browser-engine.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 import ProgressBar from '../components/ProgressBar.jsx';
+import { reportHandledError } from '../monitoring.js';
 
 const SCAN_MODES = [
   { id: 'interval', label: 'INTERVAL' },
@@ -53,6 +55,7 @@ export default function SettingsScreen({
   webhookHeaders, setWebhookHeaders,
   webhookAction, setWebhookAction,
   webhookSchema, setWebhookSchema,
+  webhookIncludeImage, setWebhookIncludeImage,
   statusMsg,
   onStatusMsg,
 }) {
@@ -103,6 +106,7 @@ export default function SettingsScreen({
         device === 'webgpu' ? 'Model ready (WebGPU).' : 'Model ready — running on WASM (no WebGPU, expect it to be slow).',
       );
     } catch (err) {
+      reportHandledError(err, { area: 'browser-model-load', inference: 'in-browser' });
       setBrowserModelStatus(`Load failed: ${err.message}`);
     } finally {
       setDownloading(false);
@@ -128,6 +132,7 @@ export default function SettingsScreen({
       });
       setBrowserTestResult(result);
     } catch (err) {
+      reportHandledError(err, { area: 'browser-model-test', inference: 'in-browser' });
       setBrowserModelStatus(`Test failed: ${err.message}`);
     } finally {
       setTestingBrowser(false);
@@ -156,6 +161,7 @@ export default function SettingsScreen({
       if (list.length > 0 && !model) setModel(list[0]);
       onStatusMsg(`Found ${list.length} image-capable models.`);
     } catch (err) {
+      reportHandledError(err, { area: 'fetch-models', inference: isLocal ? 'local-provider' : 'cloud-provider' });
       onStatusMsg(`Fetch failed: ${err.message}. You can type a model name manually.`);
     } finally {
       setFetchingModels(false);
@@ -229,7 +235,7 @@ export default function SettingsScreen({
   }
 
   return (
-    <div className="screen screen-settings">
+    <IonContent className="aura-page screen screen-settings">
       <div className="screen-header">
         <span className="screen-title">SYSTEM SETTINGS</span>
       </div>
@@ -639,7 +645,18 @@ export default function SettingsScreen({
           <label className="field-label">BODY JSON SCHEMA (optional)</label>
           <textarea id="webhook-schema" className="dc-textarea" rows={3} value={webhookSchema} onChange={e => setWebhookSchema(e.target.value)} placeholder='{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}' />
         </div>
+        <label className="toggle-label">
+          <input
+            id="webhook-include-image"
+            type="checkbox"
+            className="dc-checkbox"
+            checked={webhookIncludeImage}
+            onChange={e => setWebhookIncludeImage(e.target.checked)}
+          />
+          <span>ATTACH LATEST FRAME TO NTFY ALERTS</span>
+        </label>
+        <p className="field-hint">For hosted ntfy topic URLs (https://ntfy.sh/topic). Aura uploads the alert JPEG with the generated alert text.</p>
       </div>
-    </div>
+    </IonContent>
   );
 }

@@ -1,19 +1,6 @@
-export default function TopBar({ dotClass, telemetry, model }) {
-  const statusLabel = dotClass === 'live' ? 'ACTIVE' : dotClass === 'demo' ? 'DEMO' : 'STANDBY';
-  return (
-    <header className="top-bar">
-      <div className="top-bar-left">
-        <span className="app-logo">◈ AURA</span>
-        <span className={`status-badge ${dotClass}`} aria-label={`Status: ${statusLabel}`}>
-          {statusLabel}
-        </span>
-      </div>
-      <div className="top-bar-right">
-        {model && <span className="telem-pair"><span className="telem-k">MODEL</span><span className="telem-v">{model.split('/').pop()}</span></span>}
-        <span className="telem-pair"><span className="telem-k">LAT</span><span className="telem-v">{telemetry.latency}ms</span></span>
-        <span className="telem-pair"><span className="telem-k">CONF</span><span className="telem-v">{telemetry.confidence}%</span></span>
-        <span className="telem-pair"><span className="telem-k">COST</span><span className="telem-v">${telemetry.cost}</span></span>
-      </div>
-    </header>
-  );
+import { IonBadge, IonButtons, IonChip, IonHeader, IonIcon, IonTitle, IonToolbar } from '@ionic/react';
+import { radioButtonOn } from 'ionicons/icons';
+export default function TopBar({ dotClass, telemetry }) {
+  const label = dotClass === 'live' ? 'Active' : dotClass === 'demo' ? 'Demo' : 'Standby';
+  return <IonHeader><IonToolbar><IonTitle>Aura</IonTitle><IonButtons slot="end"><IonChip color={dotClass === 'live' ? 'success' : dotClass === 'demo' ? 'warning' : 'medium'}><IonIcon icon={radioButtonOn} /><IonBadge color="transparent">{label}</IonBadge></IonChip>{telemetry.confidence > 0 && <IonChip>{telemetry.confidence}%</IonChip>}</IonButtons></IonToolbar></IonHeader>;
 }

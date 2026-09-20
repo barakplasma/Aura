@@ -1,110 +1,73 @@
-import ProgressBar, { progressLabel } from '../components/ProgressBar.jsx';
+import {
+  IonButton, IonCard, IonCardContent, IonContent, IonItem, IonLabel,
+  IonList, IonNote, IonProgressBar,
+} from '@ionic/react';
+import { progressLabel } from '../components/ProgressBar.jsx';
 
-// ms → compact human string ("850ms" / "1.4s"), "OFF" when there's no forced
-// timeout (MAX mode), or "—" when unknown (no samples yet).
 function fmtMs(ms) {
-  if (ms === Infinity) return 'OFF';
+  if (ms === Infinity) return 'Off';
   if (!Number.isFinite(ms)) return '—';
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-// Controls panel for the monitor tab. The camera preview itself lives in
-// MonitorStage (mounted at app level) so it survives tab switches.
-export default function MonitorScreen({ running, telemetry, progress, stats, onToggle, providerReady, engine, demoMode, onStartDemo, onOpenSettings }) {
-  const showProgress = running && progress && progress.phase !== 'idle';
-  return (
-    <div className="screen-monitor">
-      <div className="monitor-panel">
-        <div className="panel-label">DETECTION</div>
-        <div className="panel-row">
-          <span className="panel-k">CONF</span>
-          <span className="panel-v amber">{telemetry.confidence}%</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">LATENCY</span>
-          <span className="panel-v">{telemetry.latency}ms</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">ENGINE</span>
-          <span className="panel-v">{telemetry.mode}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Input and output tokens used across this frame's provider requests">LAST FRAME TOKENS</span>
-          <span className="panel-v">{telemetry.frameTokens}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">SESSION TOKENS</span>
-          <span className="panel-v">{telemetry.tokens}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">FRAME</span>
-          <span className="panel-v">{telemetry.frameDetails}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Effective throughput from the cycle-period EMA">SCANS/HR</span>
-          <span className="panel-v">{telemetry.scansPerHr}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Projected spend at the current cadence">EST $/HR</span>
-          <span className="panel-v amber">${telemetry.costPerHr}</span>
-        </div>
-        {telemetry.skipped > 0 && (
-          <div className="panel-row">
-            <span className="panel-k" title="Scans skipped because the camera track was muted (a paused/frozen frame isn't worth a token spend)">SKIPPED</span>
-            <span className="panel-v">{telemetry.skipped}</span>
-          </div>
-        )}
-      </div>
+function Metric({ value, label }) {
+  return <IonCard className="metric-card"><IonCardContent>
+    <strong>{value}</strong><IonNote>{label}</IonNote>
+  </IonCardContent></IonCard>;
+}
 
-      {showProgress && (
-        <div className="monitor-panel">
-          <div className="panel-label">SCAN CYCLE</div>
-          <ProgressBar phase={progress.phase} pct={progress.pct} label={progressLabel(progress)} />
-        </div>
-      )}
+function DataRow({ label, value, detail }) {
+  return <IonItem detail={detail}><IonLabel>{label}</IonLabel><IonNote slot="end">{value}</IonNote></IonItem>;
+}
 
-      <div className="monitor-panel">
-        <div className="panel-label">FRAME TIMING</div>
-        <div className="panel-row">
-          <span className="panel-k">MEDIAN</span>
-          <span className="panel-v">{fmtMs(stats.p50)}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">P90</span>
-          <span className="panel-v">{fmtMs(stats.p90)}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Auto-tuned to mean + 3 stddev of this session's latencies. Off in MAX mode.">TIMEOUT</span>
-          <span className="panel-v amber">{fmtMs(stats.timeoutMs)}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">SAMPLES</span>
-          <span className="panel-v">{stats.count}</span>
-        </div>
-      </div>
+export default function MonitorScreen({
+  running, telemetry, progress, stats, onToggle, providerReady, engine,
+  demoMode, onStartDemo, onOpenSettings,
+}) {
+  const showProgress = running && progress?.phase !== 'idle';
+  return <IonContent className="aura-page monitor-content">
+    <section className="metrics" aria-label="Current scan metrics">
+      <Metric value={`${telemetry.confidence}%`} label="Confidence" />
+      <Metric value={`${telemetry.latency}ms`} label="Latency" />
+      <Metric value={`$${telemetry.cost}`} label="Cost" />
+    </section>
 
-      {!providerReady && !demoMode && !running && (
-        <div className="setup-callout">
-          <div className="panel-label">PROVIDER NOT CONFIGURED</div>
-          <p className="setup-text">
-            {engine === 'browser'
-              ? 'Download the BROWSER MODEL in Settings to start monitoring — no key, no server, nothing leaves this device.'
-              : 'Set a base URL and model to start monitoring — a local server needs no API key. Or try a simulated demo.'}
-          </p>
-          <div className="btn-row">
-            <button className="dc-btn" onClick={onOpenSettings}>OPEN SETTINGS</button>
-            <button className="dc-btn outline" onClick={onStartDemo}>TRY DEMO</button>
-          </div>
-        </div>
-      )}
-      <button
-        id="toggle"
-        className={`arm-btn ${running ? 'armed' : ''}`}
-        onClick={onToggle}
-        aria-pressed={running}
-      >
-        {running ? '■ DISARM' : '▶ ARM SENTRY'}
-      </button>
+    {showProgress && <section className="scan-status ion-padding-horizontal" aria-live="polite">
+      <IonNote>{progressLabel(progress)}</IonNote>
+      <IonProgressBar type={Number.isFinite(progress.pct) ? undefined : 'indeterminate'} value={Number.isFinite(progress.pct) ? progress.pct / 100 : undefined} />
+    </section>}
+
+    <IonList inset aria-label="Scan details">
+      <DataRow label="Engine" value={telemetry.mode || '—'} />
+      <DataRow label="Frame" value={telemetry.frameDetails || '—'} />
+      <DataRow label="Last frame tokens" value={telemetry.frameTokens ?? '—'} />
+      <DataRow label="Session tokens" value={telemetry.tokens ?? '—'} />
+      <DataRow label="Scans per hour" value={telemetry.scansPerHr ?? '—'} />
+      <DataRow label="Estimated cost / hour" value={`$${telemetry.costPerHr ?? '0.0000'}`} />
+      {telemetry.skipped > 0 && <DataRow label="Skipped frames" value={telemetry.skipped} />}
+    </IonList>
+
+    <IonList inset aria-label="Frame timing">
+      <IonItem><IonLabel><h2>Frame timing</h2></IonLabel></IonItem>
+      <DataRow label="Median" value={fmtMs(stats.p50)} />
+      <DataRow label="P90" value={fmtMs(stats.p90)} />
+      <DataRow label="Adaptive timeout" value={fmtMs(stats.timeoutMs)} />
+      <DataRow label="Samples" value={stats.count} />
+    </IonList>
+
+    {!providerReady && !demoMode && !running && <IonCard className="notice"><IonCardContent>
+      <strong>Finish setup to monitor</strong>
+      <p>{engine === 'browser'
+        ? 'Download a browser model in Settings.'
+        : 'Choose a provider and vision model in Settings, or try the demo.'}</p>
+      <IonButton fill="outline" onClick={onOpenSettings}>Open settings</IonButton>
+      <IonButton fill="clear" onClick={onStartDemo}>Try demo</IonButton>
+    </IonCardContent></IonCard>}
+
+    <div className="wide-action">
+      <IonButton id="toggle" expand="block" size="large" color={running ? 'danger' : 'primary'} onClick={onToggle} aria-pressed={running}>
+        {running ? 'Disarm monitoring' : 'Arm monitoring'}
+      </IonButton>
     </div>
-  );
+  </IonContent>;
 }
