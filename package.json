@@ -9,7 +9,8 @@
     "dev": "npx serve public",
     "predeploy": "npm run build",
     "deploy": "npx gh-pages -d public -m \"deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ)\"",
-    "test": "node --test"
+    "test": "node --test",
+    "e2e": "node e2e/e2e.mjs"
   },
   "engines": {
     "node": ">=18"
