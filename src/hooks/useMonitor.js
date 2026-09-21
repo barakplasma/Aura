@@ -669,6 +669,10 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
             inference: isBrowserEngine
               ? "in-browser"
               : isLocalBaseUrl(s.baseUrl) ? "local-provider" : "cloud-provider",
+            ...(isBrowserEngine ? {
+              model: s.browserModel || "default",
+              ...(err.browserContext || {}),
+            } : {}),
           },
         )) {
           setStatus(`Error: ${err.message}`);

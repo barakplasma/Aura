@@ -54,7 +54,7 @@ test("pickBrowserModel: no WebGPU means the WASM-viable fallback, whatever the R
 test("pickBrowserModel: a Pixel 10 in Chrome gets the instruction-following default", () => {
   // Chrome caps navigator.deviceMemory at 8 by spec, so a 12-16 GB phone is
   // indistinguishable from an 8 GB one here. 8 must not read as "be careful".
-  const pixel10 = { hasWebGpu: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
+  const pixel10 = { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
   assert.equal(pickBrowserModel(pixel10), DEFAULT_BROWSER_MODEL);
   assert.notEqual(DEFAULT_BROWSER_MODEL, FALLBACK_BROWSER_MODEL);
 });
@@ -62,29 +62,29 @@ test("pickBrowserModel: a Pixel 10 in Chrome gets the instruction-following defa
 test("pickBrowserModel: unknown deviceMemory is treated as comfortable, not as the floor", () => {
   // Firefox and Safari don't implement deviceMemory at all.
   assert.equal(
-    pickBrowserModel({ hasWebGpu: true, maxBufferBytes: 2 ** 31 - 1 }),
+    pickBrowserModel({ hasWebGpu: true, hasShaderF16: true, maxBufferBytes: 2 ** 31 - 1 }),
     DEFAULT_BROWSER_MODEL,
   );
 });
 
 test("pickBrowserModel: a small GPU buffer limit rules out the bigger rows", () => {
   assert.equal(
-    pickBrowserModel({ hasWebGpu: true, deviceMemoryGB: 8, maxBufferBytes: 128 * 1024 * 1024 }),
+    pickBrowserModel({ hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 128 * 1024 * 1024 }),
     FALLBACK_BROWSER_MODEL,
   );
 });
 
 test("pickBrowserModel: low RAM falls back even with WebGPU", () => {
   assert.equal(
-    pickBrowserModel({ hasWebGpu: true, deviceMemoryGB: 2, maxBufferBytes: 2 ** 31 - 1 }),
+    pickBrowserModel({ hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 2, maxBufferBytes: 2 ** 31 - 1 }),
     FALLBACK_BROWSER_MODEL,
   );
 });
 
 test("pickBrowserModel never returns a row it isn't allowed to auto-select", () => {
   for (const env of [
-    { hasWebGpu: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 },
-    { hasWebGpu: true, deviceMemoryGB: 64, maxBufferBytes: Number.MAX_SAFE_INTEGER },
+    { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 },
+    { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 64, maxBufferBytes: Number.MAX_SAFE_INTEGER },
     { hasWebGpu: false },
   ]) {
     assert.equal(BROWSER_MODELS[pickBrowserModel(env)].autoSelectable, true);
@@ -116,10 +116,17 @@ test("probeBrowserEnv reads the adapter's storage-buffer limit", async () => {
   const env = await probeBrowserEnv({
     deviceMemory: 8,
     gpu: {
-      requestAdapter: async () => ({ limits: { maxStorageBufferBindingSize: 1024 } }),
+      requestAdapter: async () => ({ features: new Set(["shader-f16"]), limits: { maxStorageBufferBindingSize: 1024 } }),
     },
   });
-  assert.deepEqual(env, { hasWebGpu: true, deviceMemoryGB: 8, maxBufferBytes: 1024 });
+  assert.deepEqual(env, { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 1024 });
+});
+
+test("pickBrowserModel never recommends an fp16 model on an adapter without shader-f16", () => {
+  assert.equal(
+    pickBrowserModel({ hasWebGpu: true, hasShaderF16: false, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 }),
+    FALLBACK_BROWSER_MODEL,
+  );
 });
 
 // --- Qwen3.5 0.8B + SmolVLM2 500M rows ------------------------------------
@@ -162,7 +169,7 @@ test("SmolVLM2 500M is an opt-in row sharing the 256M's calling convention", () 
 });
 
 test("the auto-pick on a Pixel 10-class device is the Qwen3.5 row", () => {
-  const pixel10 = { hasWebGpu: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
+  const pixel10 = { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
   assert.equal(pickBrowserModel(pixel10), "qwen3.5-0.8b");
   assert.equal(DEFAULT_BROWSER_MODEL, "qwen3.5-0.8b");
 });

@@ -7,6 +7,7 @@ import {
   browserModelDevice,
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
+  FALLBACK_BROWSER_MODEL,
   resolveBrowserRuntime,
   selectBrowserDevice,
   _setWorkerFactory,
@@ -73,7 +74,7 @@ async function waitForPosted(fw, n) {
 // single-frame tests below can assert on and reply to it without repeating
 // the same start-and-wait dance.
 async function startedScan(fw, params) {
-  const p = scanBrowser(params);
+  const p = scanBrowser({ model: FALLBACK_BROWSER_MODEL, ...params });
   await waitForPosted(fw, 2); // setup load + this scan
   return { p, req: fw.posted.at(-1) };
 }
@@ -83,12 +84,11 @@ async function startedScan(fw, params) {
 // reply case below, which tests the load path failing. Returns `getWorker`
 // too, since a test recovering from a crash needs it again to grab the next
 // fake worker the factory produces.
-// Loads DEFAULT_BROWSER_MODEL, because that is what a scanBrowser() call with
-// no explicit `model` asks for — loading anything else here would make every
-// scan below post its own 'load' first and throw the message counts off.
+// Loads the WASM-safe row so these facade tests do not pretend Node's lack of
+// WebGPU can load the default fp16-only VLM.
 async function loadedFakeWorker(device = "wasm") {
   const getWorker = freshWorker();
-  const loadP = loadBrowserModel(DEFAULT_BROWSER_MODEL);
+  const loadP = loadBrowserModel(FALLBACK_BROWSER_MODEL);
   const fw = getWorker();
   fw.reply({ id: fw.posted[0].id, type: "ready", device });
   await loadP;
@@ -128,6 +128,17 @@ test("selectBrowserDevice uses WASM when WebGPU lacks shader-f16", async () => {
   );
 });
 
+test("selectBrowserDevice rejects a WebGPU-only model when WebGPU is absent", async () => {
+  assert.throws(
+    () => selectBrowserDevice(BROWSER_MODELS["qwen3.5-0.8b"], {}),
+    /does not provide WebGPU/,
+  );
+  assert.equal(
+    selectBrowserDevice(BROWSER_MODELS["smolvlm2-256m"], {}),
+    "wasm",
+  );
+});
+
 test("loadBrowserModel de-dupes overlapping calls for the same model into one worker request", async () => {
   const getWorker = freshWorker();
   const p1 = loadBrowserModel("smolvlm2-256m");
@@ -145,8 +156,8 @@ test("scanBrowser correlates concurrent requests by id, not by reply order", asy
   // message each (no interleaved 'load').
   const { fw } = await loadedFakeWorker("webgpu");
 
-  const scanA = scanBrowser({ mission: "a person at the door", image: "x".repeat(64) });
-  const scanB = scanBrowser({ mission: "a package on the porch", image: "y".repeat(64) });
+  const scanA = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a person at the door", image: "x".repeat(64) });
+  const scanB = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a package on the porch", image: "y".repeat(64) });
   await waitForPosted(fw, 3); // 1 load + 2 scan
 
   const [reqA, reqB] = fw.posted.slice(-2);
@@ -208,6 +219,7 @@ test("aborting a scan rejects the in-flight promise and tells the worker to stop
 
   const controller = new AbortController();
   const scanPromise = scanBrowser({
+    model: FALLBACK_BROWSER_MODEL,
     mission: "watch the door",
     image: "x".repeat(64),
     signal: controller.signal,
@@ -233,13 +245,14 @@ test("aborting a scan rejects the in-flight promise and tells the worker to stop
 test("a worker crash rejects every in-flight promise with a useful message", async () => {
   const { fw, getWorker } = await loadedFakeWorker();
 
-  const scanA = scanBrowser({ mission: "a", image: "x".repeat(64) });
-  const scanB = scanBrowser({ mission: "b", image: "y".repeat(64) });
+  const scanA = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a", image: "x".repeat(64) });
+  const scanB = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "b", image: "y".repeat(64) });
   await waitForPosted(fw, 3); // 1 load + 2 scan
   fw.crash("out of memory");
 
   await assert.rejects(scanA, /crash/i);
   await assert.rejects(scanB, /crash/i);
+  assert.equal(fw.terminated, true, "a failed worker is terminated before recovery");
   // The dead worker's cached state must not poison the next call — a fresh
   // load should work again with a brand-new fake worker.
   const p = loadBrowserModel("smolvlm2-256m");
@@ -329,7 +342,7 @@ test("scanBrowser on the Transformers runtime still answers through the worker a
 
 test("scanBrowser reports the fresh model load time on the first scan only", async () => {
   const getWorker = freshWorker();
-  const first = scanBrowser({ mission: "m", image: "x".repeat(64) });
+  const first = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "m", image: "x".repeat(64) });
   // The worker spawns after runtime resolution (an async probe deep) — spin
   // microtasks until the factory has actually run.
   for (let i = 0; i < 50 && !getWorker(); i++) await Promise.resolve();
@@ -344,7 +357,7 @@ test("scanBrowser reports the fresh model load time on the first scan only", asy
   assert.ok(Number.isFinite(r1.modelLoadMs) && r1.modelLoadMs >= 0, "first scan pays the load");
   assert.equal(r1.device, "wasm");
 
-  const second = scanBrowser({ mission: "m", image: "x".repeat(64) });
+  const second = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "m", image: "x".repeat(64) });
   // Warm model: no 'load' this time — the scan message is the next post.
   await waitForPosted(fw, 3);
   const req2 = fw.posted.at(-1);

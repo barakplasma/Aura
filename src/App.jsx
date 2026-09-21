@@ -137,6 +137,11 @@ export default function App() {
     else handleStart();
   }
 
+  async function handleDeployAndArm() {
+    setScreen('monitor');
+    if (!running) await handleStart();
+  }
+
   function handleResume() {
     setResumeDismissed(true);
     handleStart();
@@ -205,7 +210,7 @@ export default function App() {
 
   return (
     <IonApp>
-      <TopBar dotClass={dotClass} telemetry={telemetry} model={model} />
+      <TopBar dotClass={dotClass} />
       <IonToast isOpen={demoMode} message="Demo mode — simulated alerts, no API calls." color="warning" buttons={[{ text: 'Exit', handler: handleExitDemo }]} />
       <IonToast isOpen={showResumeBanner} message="Monitoring was interrupted by a reload." buttons={[{ text: 'Resume', handler: handleResume }, { text: 'Dismiss', role: 'cancel', handler: handleDismissResume }]} />
       <IonToast isOpen={showUpdateBanner} message="A new version is ready." buttons={[{ text: 'Update', handler: reloadToUpdate }, { text: 'Later', role: 'cancel', handler: handleDismissUpdate }]} />
@@ -229,16 +234,13 @@ export default function App() {
               action={action} setAction={setAction}
               speech={speech} setSpeech={setSpeech}
               haptics={haptics} setHaptics={setHaptics}
-              onNavigateMonitor={() => setScreen('monitor')}
+              onDeployAndArm={handleDeployAndArm}
               onNavigateOptimize={() => setScreen('optimize')}
             />
           )}
           {screen === 'monitor' && (
             <MonitorScreen
               running={running}
-              telemetry={telemetry}
-              progress={progress}
-              stats={stats}
               onToggle={handleToggle}
               providerReady={providerReady}
               engine={engine}

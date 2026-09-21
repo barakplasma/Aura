@@ -74,65 +74,36 @@ class InterruptableStoppingCriteria extends StoppingCriteria {
 
 const DEFAULT_MAX_NEW_TOKENS = 48;
 
-// --- WebGPU device limits -------------------------------------------------
-
-// ORT creates its WebGPU device with the spec's *minimum* limits — notably a
-// 128 MB maxStorageBufferBindingSize — regardless of what the GPU can
-// actually do, and transformers.js doesn't intervene: it calls
-// requestAdapter() only to probe fp16 support (its src/utils/dtypes.js), and
-// otherwise sets nothing but powerPreference. A model with a buffer over that
-// limit fails session creation and drops to WASM, which at 10-30s/scan reads
-// as "WebGPU isn't supported here" rather than as a ceiling that could have
-// been raised. Android adapters report smaller limits than desktop ones, so
-// this bites hardest on exactly the hardware the BROWSER engine targets.
-//
-// media-clusterer hit this first, against a 228 MB model — see its
-// src/sapiens2.ts, which this is a port of. The fix is to request a device
-// with the adapter's own limits and hand it to ORT before the first session.
-//
-// Entirely best-effort, and run at most once: every failure path leaves ORT
-// to create its own device exactly as it does today, so the worst case is
-// current behaviour. Note that *reading* env.backends.onnx.webgpu.device
-// before the first session is itself a device-creating side effect, so the
-// "already done" check is a local flag rather than a read of that property.
-let adapterLimitsApplied = false;
-
-async function useAdapterLimits() {
-  if (adapterLimitsApplied || typeof navigator === "undefined" || !navigator.gpu) return;
-  adapterLimitsApplied = true;
-  try {
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter?.limits) return;
-    // A storage binding is capped by both of these, so raising one alone
-    // still leaves the other at the spec minimum.
-    const { maxStorageBufferBindingSize, maxBufferSize } = adapter.limits;
-    const requiredLimits = {};
-    if (maxStorageBufferBindingSize) requiredLimits.maxStorageBufferBindingSize = maxStorageBufferBindingSize;
-    if (maxBufferSize) requiredLimits.maxBufferSize = maxBufferSize;
-    const device = await adapter.requestDevice({ requiredLimits });
-    if (device) env.backends.onnx.webgpu.device = device;
-  } catch {
-    // No adapter, limits refused, or ORT already holds a device — in every
-    // case ORT's own default device is still perfectly usable.
-  }
-}
-
 // One model loaded at a time — the app only ever runs one BROWSER-engine
 // model concurrently, and holding two in VRAM/RAM would be wasteful.
 let current = null; // { task, modelId, device, model, processor, recipe, stopping }
+let operationQueue = Promise.resolve();
 
-self.addEventListener("message", async (event) => {
+// Lets the facade distinguish an import/initialisation failure from a model
+// load or inference failure. This is intentionally emitted only after this
+// module and its Transformers.js imports have evaluated successfully.
+post({ type: "initialized" });
+
+self.addEventListener("message", (event) => {
   const data = event.data || {};
   const { id, type } = data;
-  try {
-    if (type === "load") await handleLoad(id, data);
-    else if (type === "scan") await handleScan(id, data);
-    else if (type === "abort") handleAbort(data);
-    else if (type === "unload") handleUnload(id, data);
-    else post({ id, type: "error", message: `Unknown message type: ${type}` });
-  } catch (err) {
-    post({ id, type: "error", message: err?.message || String(err) });
+  if (type === "abort") {
+    handleAbort(data);
+    return;
   }
+  // Loading, scanning, and unloading all touch the singleton model. Queue
+  // them so a model switch cannot allocate over an in-flight scan or let an
+  // older load overwrite a newer one.
+  operationQueue = operationQueue.then(async () => {
+    try {
+      if (type === "load") await handleLoad(id, data);
+      else if (type === "scan") await handleScan(id, data);
+      else if (type === "unload") await handleUnload(id, data);
+      else post({ id, type: "error", message: `Unknown message type: ${type}` });
+    } catch (err) {
+      post({ id, type: "error", message: err?.message || String(err) });
+    }
+  });
 });
 
 function post(msg) {
@@ -147,9 +118,8 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     post({ id, type: "ready", device: current.device });
     return;
   }
-  // Swapping models: drop the old one first so it can be garbage collected
-  // before the new one starts allocating.
-  current = null;
+  // Swapping models: dispose the old sessions before allocating a new model.
+  await disposeCurrent();
 
   const resolvedDevice =
     device || (typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm");
@@ -176,10 +146,6 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     const { loaded, total, pct } = aggregateProgress(progressState, expectedTotal);
     post({ id, type: "progress", file: info.file, loaded, total, pct });
   };
-
-  // Must happen before the first WebGPU session is created, which the model
-  // load below is.
-  if (resolvedDevice === "webgpu") await useAdapterLimits();
 
   const processor = await AutoProcessor.from_pretrained(model, { progress_callback });
 
@@ -287,7 +253,18 @@ function handleAbort() {
   current?.stopping.interrupt();
 }
 
-function handleUnload(id, { task }) {
-  if (current && (!task || current.task === task)) current = null;
+async function disposeCurrent(task) {
+  if (!current || (task && current.task !== task)) return;
+  const previous = current;
+  current = null;
+  // Transformers.js models own the expensive ONNX sessions. Dispose before
+  // another model is allowed to allocate; processors currently may not expose
+  // dispose, so make that optional.
+  await previous.model?.dispose?.();
+  await previous.processor?.dispose?.();
+}
+
+async function handleUnload(id, { task }) {
+  await disposeCurrent(task);
   post({ id, type: "ready", device: null });
 }

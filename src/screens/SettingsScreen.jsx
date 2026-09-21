@@ -5,6 +5,7 @@ import { PROVIDER_PRESETS, providerForUrl } from '../../lib/providers.js';
 import {
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
+  FALLBACK_BROWSER_MODEL,
   browserModelKeys,
   pickBrowserModel,
   probeBrowserEnv,
@@ -101,6 +102,22 @@ export default function SettingsScreen({
   const [browserModelStatus, setBrowserModelStatus] = useState('');
   const [testingBrowser, setTestingBrowser] = useState(false);
   const [browserTestResult, setBrowserTestResult] = useState(null);
+  const browserModelUnavailable = Boolean(
+    gpuEnv && browserModelCfg.requiresWebGpu && !gpuEnv.hasShaderF16,
+  );
+
+  // The stored default can be a WebGPU-only model from a different device.
+  // Once the real adapter probe completes, replace an impossible selection
+  // with the one verified WASM-capable row instead of leaving a broken model
+  // selected and waiting for the user to hit Download.
+  useEffect(() => {
+    if (browserModelUnavailable && setBrowserModel) {
+      setBrowserModel(FALLBACK_BROWSER_MODEL);
+      setBrowserModelStatus(
+        `${browserModelCfg.label} needs WebGPU fp16 here. Switched to SmolVLM2 256M (WASM; slower and more basic).`,
+      );
+    }
+  }, [browserModelUnavailable, browserModelCfg.label, setBrowserModel]);
 
   // Chrome built-in AI (Gemini Nano) — what can this browser do right now,
   // and which runtime does the current selection resolve to? Same async-probe
@@ -129,7 +146,10 @@ export default function SettingsScreen({
         device === 'webgpu' ? 'Model ready (WebGPU).' : 'Model ready — running on WASM (no WebGPU, expect it to be slow).',
       );
     } catch (err) {
-      reportHandledError(err, { area: 'browser-model-load', inference: 'in-browser' });
+      reportHandledError(err, {
+        area: 'browser-model-load', inference: 'in-browser', model: browserModelKey,
+        phase: 'model-load', ...(err.browserContext || {}),
+      });
       setBrowserModelStatus(`Load failed: ${err.message}`);
     } finally {
       setDownloading(false);
@@ -156,7 +176,10 @@ export default function SettingsScreen({
       });
       setBrowserTestResult(result);
     } catch (err) {
-      reportHandledError(err, { area: 'browser-model-test', inference: 'in-browser' });
+      reportHandledError(err, {
+        area: 'browser-model-test', inference: 'in-browser', model: browserModelKey,
+        phase: 'inference', ...(err.browserContext || {}),
+      });
       setBrowserModelStatus(`Test failed: ${err.message}`);
     } finally {
       setTestingBrowser(false);
@@ -419,12 +442,17 @@ export default function SettingsScreen({
                 value={browserModelKey}
                 onChange={(e) => setBrowserModel?.(e.target.value)}
               >
-                {browserModelKeys().map((key) => (
-                  <option key={key} value={key}>
-                    {BROWSER_MODELS[key].label} · {BROWSER_MODELS[key].sizeLabel}
-                    {BROWSER_MODELS[key].promptProfile === 'compact' ? ' · basic' : ''}
+                {browserModelKeys().map((key) => {
+                  const cfg = BROWSER_MODELS[key];
+                  const unsupported = Boolean(gpuEnv && cfg.requiresWebGpu && !gpuEnv.hasShaderF16);
+                  return (
+                  <option key={key} value={key} disabled={unsupported}>
+                    {cfg.label} · {cfg.sizeLabel}
+                    {cfg.promptProfile === 'compact' ? ' · basic' : ''}
+                    {unsupported ? ' · requires WebGPU fp16' : ''}
                   </option>
-                ))}
+                  );
+                })}
               </select>
               <div className="field-hint">
                 {browserModelCfg.sizeLabel} download, cached after the first load.{' '}
@@ -461,15 +489,18 @@ export default function SettingsScreen({
               {!hasWebGpu && !downloading && (
                 <div className="field-hint">No WebGPU detected on this browser/device — falls back to WASM, which is much slower (roughly 10-30s per scan).</div>
               )}
+              {gpuEnv?.hasWebGpu && !gpuEnv.hasShaderF16 && !downloading && (
+                <div className="field-hint">WebGPU is available, but not fp16. Larger models are unavailable; SmolVLM2 256M can run on WASM.</div>
+              )}
             </div>
             <div className="btn-row">
-              <button id="browser-load-btn" className="dc-btn" disabled={downloading} onClick={handleLoadBrowserModel}>
+              <button id="browser-load-btn" className="dc-btn" disabled={downloading || browserModelUnavailable} onClick={handleLoadBrowserModel}>
                 {downloading ? 'LOADING…' : 'DOWNLOAD / LOAD'}
               </button>
               <button
                 id="browser-test-btn"
                 className="dc-btn outline"
-                disabled={testingBrowser}
+                disabled={testingBrowser || browserModelUnavailable}
                 onClick={handleTestBrowserModel}
                 title={captureFrame ? '' : 'Start monitoring to capture from the camera'}
               >
