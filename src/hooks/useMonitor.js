@@ -9,6 +9,7 @@ import {
 } from "../../lib/training-store.js";
 import { recordLatency, percentile, tunedTimeoutMs } from "../../lib/stats.js";
 import { computeGapMs, emaUpdate } from "../../lib/scheduler.js";
+import { costForUsage } from "../../lib/pricing.js";
 import { shouldCatchUp, nextReconnectDelayMs } from "../../lib/keepalive.js";
 import { createAlertStore } from "../../lib/alert-store.js";
 import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
@@ -175,6 +176,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     inFlight: false,
     loopTimer: null,
     totalTokens: 0,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
     running: false,
     abort: null,
     // latency samples + current scan-cycle phase, read by the progress ticker.
@@ -186,9 +189,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     progressTimer: null,
     lastMissedAt: 0,
     switching: false,
-    // Per-session EMAs (α = 0.3) that feed the budget scheduler: tokens/scan,
-    // request payload bytes/scan, and scan duration (ms). null until sampled.
-    emaTokens: null,
+    // Per-session EMAs (α = 0.3) that feed the budget scheduler.
+    emaPromptTokens: null,
+    emaCompletionTokens: null,
     emaBytes: null,
     emaDuration: null,
     budgetWarned: false,
@@ -564,15 +567,15 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               minSamples: TIMEOUT_MIN_SAMPLES,
             });
         setStats({ p50, p90, timeoutMs, count: st.samples.length });
-        // Feed the budget scheduler's EMAs: tokens/scan (provider usage), the
+        // Feed the budget scheduler's EMAs: input/output tokens (provider usage), the
         // request payload size (base64 JPEG is ~¾ its char length, + prompt
         // overhead), and scan duration. Tokens stay null with no usage data.
-        const usageTokens =
-          result.usage?.reported && Number.isFinite(result.usage.total_tokens)
-            ? result.usage.total_tokens
-            : null;
-        if (usageTokens != null)
-          st.emaTokens = emaUpdate(st.emaTokens, usageTokens);
+        const usageTokens = result.usage?.reported && Number.isFinite(result.usage.total_tokens)
+          ? result.usage.total_tokens : null;
+        if (result.usage?.reported) {
+          st.emaPromptTokens = emaUpdate(st.emaPromptTokens, result.usage.prompt_tokens);
+          st.emaCompletionTokens = emaUpdate(st.emaCompletionTokens, result.usage.completion_tokens);
+        }
         const frameBytes = frame
           ? frame.length * 0.75 + PROMPT_OVERHEAD_BYTES
           : 0;
@@ -596,8 +599,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               : 0;
           const totalTokens = internalRef.current.totalTokens + t;
           internalRef.current.totalTokens = totalTokens;
-          const rate = parseFloat(s.rate) || 0;
-          const cost = ((totalTokens / 1e6) * rate).toFixed(4);
+          internalRef.current.totalPromptTokens += result.usage?.reported ? result.usage.prompt_tokens : 0;
+          internalRef.current.totalCompletionTokens += result.usage?.reported ? result.usage.completion_tokens : 0;
+          const cost = costForUsage({
+            prompt_tokens: internalRef.current.totalPromptTokens,
+            completion_tokens: internalRef.current.totalCompletionTokens,
+          }, s.pricing);
           return {
             latency: String(result.latencyMs ?? rtt),
             confidence: Number.isFinite(result.confidence)
@@ -611,7 +618,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
             frameDetails: st.frameDetails
               ? `${st.frameDetails.sourceWidth}×${st.frameDetails.sourceHeight} → ${st.frameDetails.width}×${st.frameDetails.height} · ${Math.round(st.frameDetails.bytes / 1024)} KB`
               : "—",
-            cost,
+            cost: cost == null ? "—" : cost.toFixed(4),
           };
         });
         if (result.triggered) {
@@ -682,10 +689,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           scanEvery: s.scanEvery,
           budgetPerHour: s.budgetPerHour,
           networkMbPerHour: s.networkMbPerHour,
-          rate: s.rate,
+          inputRate: s.pricing?.inputRate,
+          outputRate: s.pricing?.outputRate,
         },
         {
-          tokens: st.emaTokens,
+          promptTokens: st.emaPromptTokens,
+          completionTokens: st.emaCompletionTokens,
           bytes: st.emaBytes,
           durationMs: st.emaDuration,
         },
@@ -697,8 +706,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       const cyclePeriodMs = (st.emaDuration || 0) + gapMs;
       const scansPerHr =
         cyclePeriodMs > 0 ? Math.round(3600e3 / cyclePeriodMs) : 0;
-      const rate = parseFloat(s.rate) || 0;
-      const costPerHr = (((st.emaTokens || 0) * rate) / 1e6) * scansPerHr;
+      const scanCost = costForUsage({
+        prompt_tokens: st.emaPromptTokens,
+        completion_tokens: st.emaCompletionTokens,
+      }, s.pricing);
+      const costPerHr = (scanCost || 0) * scansPerHr;
       setTelemetry((prev) => {
         const nextScans = String(scansPerHr);
         const nextCost = costPerHr.toFixed(4);
@@ -882,13 +894,16 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     }
     internalRef.current.running = true;
     internalRef.current.totalTokens = 0;
+    internalRef.current.totalPromptTokens = 0;
+    internalRef.current.totalCompletionTokens = 0;
     // Fresh latency history each session — a new provider/model has its own
     // performance profile.
     internalRef.current.samples = [];
     internalRef.current.phase = "idle";
     internalRef.current.lastMissedAt = 0;
     // Reset the budget EMAs each session too — cost/size profiles are per-run.
-    internalRef.current.emaTokens = null;
+    internalRef.current.emaPromptTokens = null;
+    internalRef.current.emaCompletionTokens = null;
     internalRef.current.emaBytes = null;
     internalRef.current.emaDuration = null;
     internalRef.current.budgetWarned = false;

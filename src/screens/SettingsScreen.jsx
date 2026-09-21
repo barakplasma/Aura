@@ -45,7 +45,7 @@ export default function SettingsScreen({
   scanEveryUnit, setScanEveryUnit,
   budgetPerHour, setBudgetPerHour,
   networkMbPerHour, setNetworkMbPerHour,
-  rate, setRate,
+  pricing, pricingOverride, onSetPricingOverride, onResetPricingOverride,
   videoSource, setVideoSource,
   captureSize, setCaptureSize,
   customCaptureWidth, setCustomCaptureWidth,
@@ -71,6 +71,12 @@ export default function SettingsScreen({
   const [webhookStatus, setWebhookStatus] = useState('');
   const [cameras, setCameras] = useState([]);
   const [cameraStatus, setCameraStatus] = useState('');
+
+  function setManualRate(field, value) {
+    const other = field === 'inputRate' ? 'outputRate' : 'inputRate';
+    const fallback = pricingOverride?.[other] ?? pricing?.[other] ?? '';
+    onSetPricingOverride({ ...pricingOverride, [field]: value, [other]: fallback });
+  }
 
   // BROWSER MODEL — see lib/browser-models.js for the table and the picker.
   const browserModelKey =
@@ -205,7 +211,6 @@ export default function SettingsScreen({
     setShowProviderDropdown(false);
     setModels(preset.models || []);
     if (!model && preset.models?.[0]) setModel(preset.models[0]);
-    if (preset.local) setRate('0');
   }
 
   const isLocal = isLocalBaseUrl(baseUrl);
@@ -556,8 +561,23 @@ export default function SettingsScreen({
         )}
         {(scanMode === 'interval' || scanMode === 'budget') && (
           <div className="form-group">
-            <label className="field-label">COST RATE ($/1M tokens)</label>
-            <input id="rate" type="number" className="dc-input narrow" min="0" step="0.01" value={rate} onChange={e => setRate(e.target.value)} />
+            <label className="field-label">MODEL PRICING ($/1M TOKENS)</label>
+            {pricing?.source === 'unavailable' ? (
+              <div className="field-hint">No catalogue price found. Enter both rates to enable the dollar budget cap.</div>
+            ) : (
+              <div className="field-hint">
+                {pricing?.source === 'manual'
+                  ? 'Manual override for this provider and model.'
+                  : `${pricing?.estimated ? 'Upstream estimate' : 'Automatic'} price from ${pricing?.source === 'openrouter' ? 'OpenRouter' : pricing?.source === 'free' ? 'the local engine' : 'llm-prices'}${pricing?.updatedAt ? ` (${pricing.updatedAt})` : ''}.`}
+              </div>
+            )}
+            {pricing?.source !== 'free' && (
+              <div className="inline-row">
+                <input id="input-rate" aria-label="Input cost per million tokens" type="number" className="dc-input narrow" min="0" step="0.0001" placeholder={`input ${pricing?.inputRate ?? '—'}`} value={pricingOverride?.inputRate ?? ''} onChange={e => setManualRate('inputRate', e.target.value)} />
+                <input id="output-rate" aria-label="Output cost per million tokens" type="number" className="dc-input narrow" min="0" step="0.0001" placeholder={`output ${pricing?.outputRate ?? '—'}`} value={pricingOverride?.outputRate ?? ''} onChange={e => setManualRate('outputRate', e.target.value)} />
+                {pricingOverride && <button type="button" className="dc-btn outline" onClick={onResetPricingOverride}>USE AUTO</button>}
+              </div>
+            )}
           </div>
         )}
       </div>

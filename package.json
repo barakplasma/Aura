@@ -4,6 +4,8 @@
   "description": "Aura — turn any phone camera into an automated visual monitor powered by any OpenAI-compatible vision model. Bring your own API key + model. Pure static PWA, no backend required.",
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/refresh-pricing.js",
+    "refresh:pricing": "node scripts/refresh-pricing.js",
     "build": "node scripts/build-react.js",
     "predev": "node scripts/gen-icons.js && npm run build",
     "dev": "npx serve public",

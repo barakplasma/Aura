@@ -4,6 +4,7 @@ import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
 import { DEFAULT_BROWSER_MODEL } from '../lib/browser-engine.js';
+import { pricingKey, resolvePricing } from '../lib/pricing.js';
 import { resumeWindowOpen } from '../lib/keepalive.js';
 import TopBar from './components/TopBar.jsx';
 import NavRail from './components/NavRail.jsx';
@@ -55,7 +56,7 @@ export default function App() {
   const [scanEveryUnit, setScanEveryUnit] = useLocalStorage('aura.scanEveryUnit', 's');
   const [budgetPerHour, setBudgetPerHour] = useLocalStorage('aura.budgetPerHour', '0.10');
   const [networkMbPerHour, setNetworkMbPerHour] = useLocalStorage('aura.networkMbPerHour', '');
-  const [rate, setRate] = useLocalStorage('aura.rate', '0.10');
+  const [pricingOverrides, setPricingOverrides] = useLocalStorage('aura.pricingOverrides', {});
   const [cameraFacing, setCameraFacing] = useLocalStorage('aura.cameraFacing', 'environment');
   const [cameraDeviceId, setCameraDeviceId] = useLocalStorage('aura.cameraDeviceId', '');
   const [videoSource, setVideoSource] = useLocalStorage('aura.videoSource', 'camera');
@@ -89,17 +90,17 @@ export default function App() {
   // prompts against a provider the operator isn't using. Hide it, and don't
   // apply an artifact trained elsewhere to local scans (see useMonitor).
   const axAvailable = engine !== 'browser';
-  // The BROWSER engine never spends a cent — force the telemetry rate to 0
-  // rather than have it silently invent cost from a stale cloud rate (same
-  // effect as picking a local preset in SettingsScreen).
-  const effectiveRate = engine === 'browser' ? '0' : rate;
+  // BROWSER and local engines resolve to free pricing, while remote providers
+  // use the catalogued model rate or a scoped operator override.
+  const pricingOverride = pricingOverrides[pricingKey(baseUrl, model)];
+  const pricing = resolvePricing({ baseUrl, model, engine, override: pricingOverride });
 
   // Live settings ref — updated every render so tick() sees current values without stale closures
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
     engine, browserModel, browserRuntime,
-    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate: effectiveRate,
+    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, pricing,
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
     speech, haptics, demo: demoMode,
@@ -269,7 +270,7 @@ export default function App() {
               <EvalScreen
                 baseUrl={baseUrl}
                 apiKey={apiKey}
-                rate={rate}
+                pricingOverrides={pricingOverrides}
                 configuredModel={model}
                 mission={mission}
                 captureFrame={handleCaptureEvalFrame}
@@ -290,7 +291,14 @@ export default function App() {
               scanEveryUnit={scanEveryUnit} setScanEveryUnit={setScanEveryUnit}
               budgetPerHour={budgetPerHour} setBudgetPerHour={setBudgetPerHour}
               networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
-              rate={rate} setRate={setRate}
+              pricing={pricing}
+              pricingOverride={pricingOverride}
+              onSetPricingOverride={(override) => setPricingOverrides((current) => ({ ...current, [pricingKey(baseUrl, model)]: override }))}
+              onResetPricingOverride={() => setPricingOverrides((current) => {
+                const next = { ...current };
+                delete next[pricingKey(baseUrl, model)];
+                return next;
+              })}
               videoSource={videoSource} setVideoSource={setVideoSource}
               captureSize={captureSize} setCaptureSize={setCaptureSize}
               customCaptureWidth={customCaptureWidth} setCustomCaptureWidth={setCustomCaptureWidth}

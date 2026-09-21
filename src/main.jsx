@@ -11,7 +11,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { setupIonicReact } from '@ionic/react';
 import App from './App.jsx';
-import { migrateLegacySettings, migrateScanEveryKey, migrateBrowserModelKey } from '../lib/settings-migrate.js';
+import { migrateLegacySettings, migrateScanEveryKey, migrateBrowserModelKey, migrateLegacyRate } from '../lib/settings-migrate.js';
 
 // Ionic's React integration must be initialized before the first web component
 // renders. Without it a mobile browser can show partially-upgraded custom
@@ -27,6 +27,7 @@ try {
     migrateLegacySettings(localStorage);
     migrateScanEveryKey(localStorage);
     migrateBrowserModelKey(localStorage);
+    migrateLegacyRate(localStorage);
   }
 } catch {}
 

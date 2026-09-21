@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { fetchModels, scanClient, isLocalBaseUrl } from '../../lib/aura.js';
 import { expandMatrix, comboKey, runEvalMatrix, summarizeResults } from '../../lib/eval.js';
+import { pricingKey, resolvePricing } from '../../lib/pricing.js';
 import { createEvalStore, makeId } from '../../lib/eval-store.js';
 import { scanBrowser, probeChromeAI, DEFAULT_BROWSER_MODEL, BROWSER_MODELS } from '../../lib/browser-engine.js';
 import { reportUnexpectedError } from '../../lib/handled-errors.js';
@@ -101,7 +102,7 @@ function downloadJson(obj, filename) {
 }
 
 export default function EvalScreen({
-  baseUrl, apiKey, rate, configuredModel, mission, captureFrame, monitorRunning,
+  baseUrl, apiKey, pricingOverrides, configuredModel, mission, captureFrame, monitorRunning,
 }) {
   const [images, setImages] = useState([]);
   const [variants, setVariants] = useLocalStorage('aura.eval.variants', []);
@@ -354,7 +355,11 @@ export default function EvalScreen({
     }
   }
   const summary = runView
-    ? summarizeResults(runView.results, runView.expectedByImage, rate)
+    ? summarizeResults(runView.results, runView.expectedByImage, (evalModel) => resolvePricing({
+        baseUrl,
+        model: evalModel,
+        override: pricingOverrides?.[pricingKey(baseUrl, evalModel)],
+      }))
     : null;
   const imageById = Object.fromEntries(images.map((i) => [i.id, i]));
 
