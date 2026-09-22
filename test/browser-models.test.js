@@ -163,7 +163,11 @@ test("SmolVLM2 500M is an opt-in row sharing the 256M's calling convention", () 
   assert.equal(cfg.processorArgs, "text-first");
   assert.equal(cfg.chatStyle, "content-parts");
   assert.deepEqual(cfg.processorOptions, { do_image_splitting: false });
-  assert.equal(cfg.promptProfile, "json", "500M is expected to follow the real schema");
+  // Was "json" on the assumption that 500M follows the schema because 256M
+  // cannot. Measured on the Pixel 7a instead: given the schema it emitted
+  // `"100"` repeatedly to the token cap, so the compact one-line profile is
+  // the one its output actually parses.
+  assert.equal(cfg.promptProfile, "compact", "measured: it babbles on the JSON schema");
   assert.equal(cfg.autoSelectable, false, "a deliberate download, like FastVLM");
   assert.equal(cfg.requiresWebGpu, true);
 });

@@ -1,0 +1,190 @@
+<!doctype html>
+<!--
+  Dev-only BROWSER-engine probe. Not linked from the app; open it at
+  /probe.html on the dev server.
+
+  Why this exists: the app reports a scan as a verdict ("Nothing notable in
+  view.", 0%) but not the model's raw text or where the seconds went, so a
+  slow scan and a mis-parsed scan are indistinguishable from the UI. This page
+  speaks the worker protocol directly, prints every message with a timestamp,
+  and shows the raw generation — enough to tell "the model said no" from "the
+  model answered something the parser could not read", and to compare candidate
+  models against the same frame.
+
+  Query params (all optional):
+    model=<key>      a BROWSER_MODELS key (default qwen3.5-0.8b)
+    mission=<text>   detection target (default: a person sitting on a bench)
+    auto=1          load and scan without a click
+    frame=<url>     use an image instead of the camera
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aura probe</title>
+    <style>
+      body { font: 13px/1.45 ui-monospace, monospace; margin: 0; padding: 12px; background: #0b0d10; color: #dfe3e8; }
+      h1 { font-size: 14px; margin: 0 0 10px; letter-spacing: 0.08em; }
+      label { display: block; margin: 8px 0 3px; color: #8b94a1; font-size: 11px; letter-spacing: 0.06em; }
+      select, textarea, button { width: 100%; box-sizing: border-box; font: inherit; background: #15181d; color: #dfe3e8; border: 1px solid #2a2f37; border-radius: 6px; padding: 7px; }
+      button { margin-top: 6px; cursor: pointer; }
+      video { width: 100%; max-height: 130px; object-fit: cover; background: #000; border-radius: 6px; margin-top: 8px; }
+      pre { white-space: pre-wrap; word-break: break-word; background: #101317; border: 1px solid #22262d; border-radius: 6px; padding: 8px; margin: 8px 0 0; }
+      #summary { color: #7fd6a2; }
+    </style>
+  </head>
+  <body>
+    <h1>AURA BROWSER-ENGINE PROBE</h1>
+    <label>MODEL</label>
+    <select id="model"></select>
+    <label>MISSION</label>
+    <textarea id="mission" rows="2">a person sitting on a bench</textarea>
+    <button id="go">LOAD + SCAN</button>
+    <video id="video" autoplay playsinline muted></video>
+    <pre id="summary">idle</pre>
+    <pre id="out"></pre>
+
+    <script type="module">
+      const $ = (id) => document.getElementById(id);
+      const q = new URLSearchParams(location.search);
+      const t0 = Date.now();
+      const stamp = () => ((Date.now() - t0) / 1000).toFixed(1).padStart(6) + 's ';
+      const log = (m) => { $('out').textContent += stamp() + m + '\n'; };
+      const summary = (m) => { $('summary').textContent = m; };
+
+      // Mirrors lib/browser-models.js by hand. Hand-rolled on purpose: that
+      // module is bundled into assets/app.js and is not served standalone, and
+      // this page must work against a build that is mid-edit. Keys and recipe
+      // fields must be kept in sync when a row changes.
+      const MODELS = {
+        'smolvlm2-256m': {
+          label: 'SmolVLM2 256M (compact prompts, WASM-safe)',
+          modelId: 'HuggingFaceTB/SmolVLM2-256M-Video-Instruct',
+          dtype: { embed_tokens: 'q4', vision_encoder: 'fp32', decoder: 'q4' },
+          recipe: { processorArgs: 'images-first', chatStyle: 'inline-image', processorOptions: {}, imageProcessorConfig: null },
+        },
+        'smolvlm2-500m': {
+          label: 'SmolVLM2 500M',
+          modelId: 'HuggingFaceTB/SmolVLM2-500M-Video-Instruct',
+          dtype: { embed_tokens: 'q4', vision_encoder: 'fp16', decoder: 'q4' },
+          recipe: { processorArgs: 'text-first', chatStyle: 'content-parts', processorOptions: {}, imageProcessorConfig: null },
+        },
+        'lfm2.5-vl-450m': {
+          label: 'LFM2.5-VL 450M (CPU-tuned)',
+          modelId: 'Llamapeed/LFM2.5-VL-450M-ONNX',
+          dtype: { default: 'q4' },
+          recipe: { processorArgs: 'text-first', chatStyle: 'content-parts', processorOptions: {}, imageProcessorConfig: null },
+        },
+        'qwen3.5-0.8b': {
+          label: 'Qwen3.5 0.8B (default)',
+          modelId: 'onnx-community/Qwen3.5-0.8B-ONNX',
+          dtype: { embed_tokens: 'q4', vision_encoder: 'fp16', decoder_model_merged: 'q4' },
+          recipe: { processorArgs: 'text-first', chatStyle: 'content-parts', processorOptions: {}, imageProcessorConfig: { min_pixels: 65536, max_pixels: 307200 } },
+        },
+        'fastvlm-0.5b': {
+          label: 'FastVLM 0.5B',
+          modelId: 'LiquidAI/FastVLM-0.5B',
+          dtype: { default: 'q4' },
+          recipe: { processorArgs: 'text-first', chatStyle: 'content-parts', processorOptions: {}, imageProcessorConfig: null },
+        },
+      };
+
+      for (const [key, m] of Object.entries(MODELS)) {
+        const o = document.createElement('option');
+        o.value = key;
+        o.textContent = m.label;
+        $('model').appendChild(o);
+      }
+      if (q.get('model')) $('model').value = q.get('model');
+
+      // Same JSON schema the app sends for promptProfile:'json' models.
+      const SCHEMA = {
+        type: 'object',
+        properties: {
+          triggered: { type: 'boolean' },
+          what: { type: 'string' },
+          why: { type: 'string' },
+          confidence: { type: 'number', minimum: 0, maximum: 100 },
+        },
+        required: ['triggered'],
+      };
+
+      async function grabFrame() {
+        const url = q.get('frame');
+        if (url) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('frame load failed: ' + url)); img.src = url; });
+          const c = document.createElement('canvas');
+          c.width = 640; c.height = 480;
+          c.getContext('2d').drawImage(img, 0, 0, 640, 480);
+          return { jpeg: c.toDataURL('image/jpeg', 0.7).split(',')[1], source: 'image ' + url };
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'environment' } });
+        $('video').srcObject = stream;
+        await new Promise((res) => setTimeout(res, 1200));
+        const v = $('video');
+        const c = document.createElement('canvas');
+        c.width = 640; c.height = 480;
+        c.getContext('2d').drawImage(v, 0, 0, 640, 480);
+        stream.getTracks().forEach((t) => t.stop());
+        return { jpeg: c.toDataURL('image/jpeg', 0.7).split(',')[1], source: 'camera 640x480' };
+      }
+
+      $('go').onclick = async () => {
+        $('out').textContent = '';
+        const cfg = MODELS[$('model').value];
+        summary('loading ' + cfg.modelId);
+        const worker = new Worker('assets/ml.worker.js', { type: 'module' });
+        let id = 0;
+        const waiters = new Map();
+        worker.onmessage = (e) => {
+          const d = e.data || {};
+          if (d.type === 'progress') return; // noisy; counted below instead
+          log(d.type + (d.type === 'progress' ? '' : ' ' + JSON.stringify({ ...d, imageData: undefined }).slice(0, 400)));
+          if (d.id && waiters.has(d.id)) waiters.get(d.id)(d);
+        };
+        worker.onerror = (e) => log('worker-error ' + e.message + ' @' + e.filename + ':' + e.lineno);
+        const send = (type, params, ms = 600000) =>
+          new Promise((res, rej) => {
+            const reqId = ++id;
+            const timer = setTimeout(() => rej(new Error(type + ' timed out after ' + ms + 'ms')), ms);
+            waiters.set(reqId, (m) => { clearTimeout(timer); res(m); });
+            log('-> ' + type + ' ' + JSON.stringify(params).slice(0, 160));
+            worker.postMessage({ id: reqId, type, ...params });
+          });
+
+        const gpu = await navigator.gpu.requestAdapter();
+        log('adapter maxStorageBufferBindingSize = ' + gpu.limits.maxStorageBufferBindingSize + ' MB=' + Math.round(gpu.limits.maxStorageBufferBindingSize / 1048576));
+
+        const tLoad = Date.now();
+        const ready = await send('load', { task: 'vlm', model: cfg.modelId, dtype: cfg.dtype, device: 'webgpu', recipe: cfg.recipe });
+        log('ready after ' + ((Date.now() - tLoad) / 1000).toFixed(1) + 's');
+        summary('loaded in ' + ((Date.now() - tLoad) / 1000).toFixed(1) + 's — scanning');
+
+        const { jpeg, source } = await grabFrame();
+        log('frame from ' + source + ' (' + jpeg.length + ' b64 chars)');
+        const tScan = Date.now();
+        const scan = await send('scan', {
+          task: 'vlm',
+          text: 'DETECTION TARGET: ' + $('mission').value + '\nReturn the result as a single JSON object.',
+          imageData: jpeg,
+          schema: SCHEMA,
+          json: true,
+          maxNewTokens: 96,
+        });
+        const secs = ((Date.now() - tScan) / 1000).toFixed(1);
+        log('RAW TEXT: ' + JSON.stringify(scan.text));
+        log('PARSED: ' + JSON.stringify(scan.result) + '  meta=' + JSON.stringify(scan.meta));
+        if (scan.error) log('ERROR: ' + JSON.stringify(scan.error));
+        const tok = (scan.meta && scan.meta.completion_tokens) || 0;
+        summary(
+          [$('model').value, source, secs + 's', tok ? tok + ' tok (' + (tok / (secs || 1)).toFixed(1) + ' tok/s)' : 'no token meta', 'triggered=' + (scan.result && scan.result.triggered)].join(' | '),
+        );
+        worker.terminate();
+      };
+
+      if (q.get('auto') === '1') $('go').click();
+    </script>
+  </body>
+</html>

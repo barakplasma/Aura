@@ -42,6 +42,7 @@ import {
 } from "@huggingface/transformers";
 import { fetchModelSizeEstimate } from "../../lib/model-size.js";
 import { createProgressState, recordProgress, aggregateProgress } from "../../lib/download-progress.js";
+import { deviceRequest, limitReport } from "../../lib/webgpu-limits.js";
 
 // Point ONNX Runtime Web at same-origin WASM files instead of its default
 // CDN, so the browser engine works offline once cached (see
@@ -69,6 +70,53 @@ class InterruptableStoppingCriteria extends StoppingCriteria {
   }
   _call(input_ids) {
     return new Array(input_ids.length).fill(this.interrupted);
+  }
+}
+
+// Ask for a WebGPU device with the adapter's own limits, and hand it to ONNX
+// Runtime before the first session exists. ORT otherwise creates its device
+// with the spec minimum limits, whose 128 MB maxStorageBufferBindingSize is
+// smaller than a merged-decoder initializer, and the session then falls back
+// to WASM without saying so — see lib/webgpu-limits.js for the measurement.
+//
+// Assign, never read: `env.backends.onnx.webgpu.device` is itself
+// device-creating, so reading it here would choose a device for us.
+//
+// Bounded because creating a device is a new blocking step in the load path,
+// and a WebGPU device request has been observed to stall indefinitely on this
+// driver while another device is live. Giving up costs only the raised limit —
+// ONNX Runtime then creates the same default device it always did.
+//
+// Returns the resulting limits for the 'ready' message, or null when WebGPU
+// isn't in play or the request failed — a device we couldn't raise is not a
+// reason to abandon a load that would otherwise have worked on WASM.
+const DEVICE_REQUEST_TIMEOUT_MS = 20000;
+
+async function useAdapterLimits(device) {
+  if (device !== "webgpu" || typeof navigator?.gpu?.requestAdapter !== "function") return null;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return null;
+    const request = deviceRequest(adapter);
+    // Nothing to ask for (no reported buffer limits) means asking would create
+    // a device for no gain — leave ONNX Runtime to make its own.
+    if (!request) return null;
+    const gpuDevice = await Promise.race([
+      adapter.requestDevice(request),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`requestDevice() stalled past ${DEVICE_REQUEST_TIMEOUT_MS}ms`)),
+          DEVICE_REQUEST_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+    env.backends.onnx.webgpu.device = gpuDevice;
+    // The adapter travels along so the UI can show granted-vs-asked-for: a
+    // Worker may be handed a lower-limit adapter than the page that spawned it.
+    return limitReport(gpuDevice, adapter);
+  } catch (err) {
+    post({ type: "warn", message: `WebGPU adapter limits unavailable (${err?.message || err}); falling back to default device limits.` });
+    return null;
   }
 }
 
@@ -115,7 +163,7 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
 
   // Already loaded with the same model + device — nothing to do.
   if (current && current.modelId === model && current.device === device) {
-    post({ id, type: "ready", device: current.device });
+    post({ id, type: "ready", device: current.device, limits: current.limits ?? null });
     return;
   }
   // Swapping models: dispose the old sessions before allocating a new model.
@@ -123,6 +171,7 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
 
   const resolvedDevice =
     device || (typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm");
+  const limits = await useAdapterLimits(resolvedDevice);
 
   // transformers.js reports progress per file (config.json, tokenizer.json,
   // each ONNX weight shard, ...), one at a time — forwarding each event's own
@@ -167,12 +216,13 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     task,
     modelId: model,
     device: resolvedDevice,
+    limits,
     model: vlm,
     processor,
     recipe: recipe || {},
     stopping: new InterruptableStoppingCriteria(),
   };
-  post({ id, type: "ready", device: resolvedDevice });
+  post({ id, type: "ready", device: resolvedDevice, limits });
 }
 
 async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens }) {
@@ -223,6 +273,14 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
     // Greedy. A monitor that returns a different verdict for the same frame
     // is unusable, and it makes the eval screen's numbers mean something.
     do_sample: false,
+    // Greedy decoding on a small model repeats itself: measured on the
+    // reference phone, the compact action prompt produced "they're talking to
+    // each other." eight times in a row until the token cap, and that is what
+    // got spoken aloud. A repetition penalty discourages the loop without
+    // sampling, so verdicts stay deterministic for the same frame. Deliberately
+    // not `no_repeat_ngram_size`, which would forbid the repeated key
+    // punctuation the JSON profile legitimately emits.
+    repetition_penalty: 1.2,
     stopping_criteria: stopping,
   });
 

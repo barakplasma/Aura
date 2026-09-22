@@ -5,6 +5,8 @@ import {
   loadBrowserModel,
   isBrowserModelLoaded,
   browserModelDevice,
+  browserDeviceLimits,
+  unloadBrowserModel,
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
   FALLBACK_BROWSER_MODEL,
@@ -112,6 +114,35 @@ test("loadBrowserModel resolves on the worker's 'ready' reply, matched by id", a
   assert.equal(result.device, "webgpu");
   assert.equal(isBrowserModelLoaded("smolvlm2-256m"), true);
   assert.equal(browserModelDevice(), "webgpu");
+});
+
+// The worker reports the WebGPU limits its session actually got, because a
+// spec-minimum 128 MB binding ceiling means the model silently ran on WASM
+// while the UI said WebGPU. The number has to survive the facade to the
+// Settings STATUS line.
+test("loadBrowserModel publishes the worker's device limits", async () => {
+  const getWorker = freshWorker();
+  const p = loadBrowserModel(FALLBACK_BROWSER_MODEL);
+  const fw = getWorker();
+  fw.reply({
+    id: fw.posted[0].id,
+    type: "ready",
+    device: "webgpu",
+    limits: { maxStorageBufferMB: 2047, maxBufferMB: 4095, shaderF16: true },
+  });
+  await p;
+  assert.equal(browserDeviceLimits().maxStorageBufferMB, 2047);
+
+  const unloadP = unloadBrowserModel();
+  await waitForPosted(fw, 2);
+  fw.reply({ id: fw.posted.at(-1).id, type: "ready", device: null });
+  await unloadP;
+  assert.equal(browserDeviceLimits(), null, "unloading must not leave stale limits behind");
+});
+
+test("a worker that reports no limits leaves nothing stale to display", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  assert.equal(browserDeviceLimits(), null);
 });
 
 test("selectBrowserDevice uses WASM when WebGPU lacks shader-f16", async () => {

@@ -6,6 +6,7 @@ import {
   buildWebhookActionPrompt,
   buildCompactDetectionPrompt,
   buildCompactActionPrompt,
+  buildCompactWebhookActionPrompt,
   parseCompactAction,
   parseDetection,
   parseLooseDetection,
@@ -735,6 +736,19 @@ test("buildCompactActionPrompt is short, schema-free and carries the instruction
   assert.match(p, /Tell them to move back/);
   assert.match(p, /a person at the door/);
   assert.doesNotMatch(p, /Schema:|minified JSON/i);
+  assert.ok(p.split("\n").length <= 6);
+});
+
+// Measured on the reference phone: asked for strict JSON, the 500M compact
+// model obliged with a lone `{`, so the sink received `{"message":"{"}`.
+// The compact webhook prompt must ask for prose; only the prohibition may
+// mention JSON.
+test("buildCompactWebhookActionPrompt asks for a sentence, never an object", () => {
+  const p = buildCompactWebhookActionPrompt("Say what you saw", "a person on the bench");
+  assert.match(p, /Say what you saw/);
+  assert.match(p, /a person on the bench/);
+  assert.doesNotMatch(p, /Schema:|minified JSON/i);
+  assert.equal((p.match(/JSON/g) || []).length, 1, "JSON appears only in the prohibition");
   assert.ok(p.split("\n").length <= 6);
 });
 

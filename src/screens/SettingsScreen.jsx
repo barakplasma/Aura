@@ -15,6 +15,7 @@ import {
   clearBrowserModelCache,
   isBrowserModelLoaded,
   browserModelDevice,
+  browserDeviceLimits,
   scanBrowser,
 } from '../../lib/browser-engine.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
@@ -480,7 +481,22 @@ export default function SettingsScreen({
                 {downloading
                   ? `DOWNLOADING ${downloadPct != null ? `${downloadPct}%` : '…'}`
                   : isBrowserModelLoaded(browserModelKey)
-                    ? `READY${browserModelDevice() === 'wasm' ? ' (WASM — no WebGPU, expect it to be slow)' : ' (WebGPU)'}`
+                    ? `READY${(() => {
+                        const l = browserDeviceLimits();
+                        // WebGPU with spec-minimum buffers silently runs WASM,
+                        // so name the buffer ceiling rather than trusting the
+                        // device label alone — and name the ceiling that was
+                        // asked for too, because a clamped grant is a
+                        // different problem from never having asked.
+                        if (browserModelDevice() === 'wasm')
+                          return ' (WASM — no WebGPU, expect it to be slow)';
+                        const got = l?.maxStorageBufferMB;
+                        if (got == null) return ' (WebGPU)';
+                        const asked = l.adapterMaxStorageBufferMB;
+                        return asked != null && asked > got
+                          ? ` (WebGPU · ${got} MB of ${asked} MB buffers — larger models fall back to WASM)`
+                          : ` (WebGPU · ${got} MB buffers)`;
+                      })()}`
                     : 'NOT DOWNLOADED'}
               </p>
               {downloading && (
@@ -511,6 +527,15 @@ export default function SettingsScreen({
             {browserTestResult && (
               <p className="status-msg">
                 {browserTestResult.triggered ? 'TRIGGERED' : 'clear'} {Math.round(browserTestResult.confidence)}% — "{browserTestResult.reason}" ({browserTestResult.latencyMs}ms)
+                {/* The unprocessed model output. "Nothing notable in view." is
+                    also parseLooseDetection()'s fallback, so without this the
+                    model saw-nothing and parser-choke cases look identical. */}
+                {browserTestResult.rawText && browserTestResult.rawText !== browserTestResult.reason && (
+                  <>
+                    <br />
+                    <span className="muted">model said: {String(browserTestResult.rawText).slice(0, 400)}</span>
+                  </>
+                )}
               </p>
             )}
             {browserModelStatus && <p id="browser-model-status" className="status-msg" role="status">{browserModelStatus}</p>}
