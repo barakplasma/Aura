@@ -45,13 +45,20 @@ import { createProgressState, recordProgress, aggregateProgress } from "../../li
 import { deviceRequest, limitReport } from "../../lib/webgpu-limits.js";
 import { verdictStats, singleTokenId } from "../../lib/logprob.js";
 
-// Point ONNX Runtime Web at same-origin WASM files instead of its default
-// CDN, so the browser engine works offline once cached (see
-// scripts/build-react.js, which copies these from
-// node_modules/onnxruntime-web/dist into public/ort/, and
-// scripts/sw-template.js's runtime cache rule for ort/). `.href` matters:
+// Point ONNX Runtime Web at same-origin WASM files instead of its default CDN,
+// so the browser engine works offline once cached (see scripts/build-react.js,
+// which copies these from node_modules/onnxruntime-web/dist into public/ort/,
+// and scripts/sw-template.js's runtime cache rule for ort/). `.href` matters:
 // onnxruntime-web only treats wasmPaths as a directory prefix when it's a
 // plain string, not a URL object.
+//
+// Do NOT "helpfully" pin the pair as { mjs, wasm }. The file names in
+// onnxruntime-web 1.31.0-dev are misleading: the glue that actually defines
+// `webgpuInit` is `ort-wasm-simd-threaded.asyncify.mjs`, while
+// `ort-wasm-simd-threaded.jsep.mjs` is a 30 KB loader that defines nothing.
+// Asking for the jsep pair therefore yields
+// "no available backend found. ERR: [webgpu] TypeError: … webgpuInit is not a
+// function", i.e. it *breaks* WebGPU rather than enabling it. Let ORT choose.
 env.backends.onnx.wasm.wasmPaths = new URL("../ort/", self.location).href;
 
 // A StoppingCriteria whose interrupt() can be flipped mid-generation so an
@@ -121,6 +128,24 @@ async function useAdapterLimits(device) {
   }
 }
 
+// What the execution stack actually ended up being, as opposed to what we
+// asked for: `device: "webgpu"` in a load request only says a session was
+// created. These are the inputs that decide whether that session can really
+// use the GPU — cross-origin isolation and thread count — plus the WASM
+// directory ORT was pointed at, so an observation can be compared against
+// measured scan latency rather than argued about. (A WASM *file name* turned
+// out not to identify the device: see the note above `wasmPaths`.)
+function runtimeInfo() {
+  const wasm = env.backends?.onnx?.wasm || {};
+  return {
+    isolated: !!self.crossOriginIsolated,
+    threads: navigator.hardwareConcurrency ?? null,
+    numThreads: wasm.numThreads ?? null,
+    proxy: !!wasm.proxy,
+    wasmPaths: String(wasm.wasmPaths ?? ""),
+  };
+}
+
 const DEFAULT_MAX_NEW_TOKENS = 48;
 
 // One model loaded at a time — the app only ever runs one BROWSER-engine
@@ -159,12 +184,34 @@ function post(msg) {
   self.postMessage(msg);
 }
 
+// ONNX Runtime explains a WebGPU→CPU downgrade with a console warning, and
+// transformers.js does the same when a requested device is unavailable — but
+// Android Chrome exposes no worker console over CDP, and nothing in the app
+// displayed these lines, so the reason a GPU-attached phone executed every
+// graph on one CPU thread vanished completely. Forward them to the page, which
+// echoes to its console and keeps a tail (lib/browser-engine.js handleMessage).
+for (const kind of ["warn", "error"]) {
+  const original = console[kind].bind(console);
+  console[kind] = (...args) => {
+    original(...args);
+    try {
+      const text = args
+        .map((a) => (typeof a === "string" ? a : String(a?.message ?? a)))
+        .join(" ");
+      post({ type: "warn", message: `${kind}: ${text}` });
+    } catch {
+      // A worker under memory pressure can fail to clone; the original console
+      // line already went out, so losing the forward is not worth throwing over.
+    }
+  };
+}
+
 async function handleLoad(id, { task, model, dtype, device, recipe }) {
   if (task !== "vlm") throw new Error(`Unsupported task: ${task}`);
 
   // Already loaded with the same model + device — nothing to do.
   if (current && current.modelId === model && current.device === device) {
-    post({ id, type: "ready", device: current.device, limits: current.limits ?? null });
+    post({ id, type: "ready", device: current.device, limits: current.limits ?? null, runtime: runtimeInfo() });
     return;
   }
   // Swapping models: dispose the old sessions before allocating a new model.
@@ -231,7 +278,7 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
       no: singleTokenId(processor.tokenizer, "NO"),
     },
   };
-  post({ id, type: "ready", device: resolvedDevice, limits });
+  post({ id, type: "ready", device: resolvedDevice, limits, runtime: runtimeInfo() });
 }
 
 async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens, wantLogits }) {

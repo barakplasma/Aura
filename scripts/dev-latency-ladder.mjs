@@ -30,6 +30,12 @@ const WANTED = (process.env.MODELS || Object.keys(BROWSER_MODELS).join(","))
 const SAMPLES = Number(process.env.SAMPLES || 5);
 // Per-model ceiling: the WASM-fallback rows need minutes per scan.
 const MODEL_BUDGET_MS = Number(process.env.MODEL_BUDGET_MS || 12 * 60_000);
+
+// NO_GPU=1 removes navigator.gpu before the app boots, so the worker resolves
+// device 'wasm' and ORT never touches the GPU. That turns "is this row really
+// running on the GPU?" into a measured p50/p90 delta rather than an argument
+// about which WASM file name implies which execution provider.
+const NO_GPU = process.env.NO_GPU === "1";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function pageTarget() {
@@ -43,6 +49,13 @@ async function pageTarget() {
     // a recoverable kill into "no Aura tab" for every row of a run.
     pages.find((x) => (x.title || "").includes("Aura"));
   if (!t) throw new Error(`no Aura tab at ${APP} — open it on the phone (is CDP forwarded?)`);
+  const matched = pages.filter((x) => x.url.startsWith(APP.replace(/\/$/, "")));
+  if (matched.length > 1) {
+    // Two tabs both hold the camera and both spawn a worker, so every sample
+    // becomes a race between two monitors on two models. Refusing costs one
+    // line; a table of numbers that describe neither model cost 80 minutes.
+    throw new Error(`${matched.length} Aura tabs open — close all but one`);
+  }
   if (!t.url.startsWith(APP.replace(/\/$/, ""))) {
     process.stderr.write(`  (reusing Aura tab ${t.id} with blank url — reviving it)\n`);
   }

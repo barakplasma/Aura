@@ -38,15 +38,31 @@ async function targets() {
   }
 }
 
-function connect(url) {
+function connect(url, openMs = 8_000) {
   return new Promise((resolve, reject) => {
+    // A starved renderer still answers the HTTP /json listing yet never fires
+    // `open` on the debugger socket. One run hung here for ~80 minutes on a
+    // worker that could not reply, so the open itself is timed: a watcher that
+    // cannot report the stall it exists to find is worse than no watcher.
     const ws = new WebSocket(url);
     let id = 0;
     const waiting = new Map();
+    const timer = setTimeout(() => {
+      try {
+        ws.close();
+      } catch {}
+      reject(new Error(`open timed out after ${openMs}ms (target starved)`));
+    }, openMs);
+    const done = (err) => {
+      clearTimeout(timer);
+      if (err) reject(err);
+    };
+    ws.onerror = () => done(new Error(`ws error ${url}`));
+    ws.onclose = () => done(new Error(`ws closed ${url}`));
     ws.onmessage = (m) => {
       const d = JSON.parse(m.data);
       if (d.id && waiting.has(d.id)) {
-        const { ok } = waiting.get(d.id);
+        const ok = waiting.get(d.id);
         waiting.delete(d.id);
         ok(d.result);
       } else if (d.method === "Runtime.consoleAPICalled") {
@@ -58,19 +74,27 @@ function connect(url) {
         emit("exception", d.params?.exceptionDetails?.exception?.description || "exception");
       }
     };
-    ws.onerror = () => reject(new Error(`ws error ${url}`));
-    ws.onopen = () =>
+    ws.onopen = () => {
+      clearTimeout(timer);
+      ws.onerror = () => {};
+      ws.onclose = () => {};
       resolve({
         ws,
-        send(method, params = {}) {
+        send(method, params = {}, ms = 10_000) {
           const mid = ++id;
-          return new Promise((ok) => {
-            waiting.set(mid, { ok });
-            setTimeout(() => waiting.delete(mid), 10_000);
+          return new Promise((ok, fail) => {
+            // A dropped entry is not an answer: the original left the promise
+            // unsettled, so `await send("Runtime.enable")` on a starved worker
+            // parked the whole watcher until the deadline killed it.
+            waiting.set(mid, { ok, fail });
+            setTimeout(() => {
+              if (waiting.delete(mid)) fail(new Error(`${method} timed out after ${ms}ms`));
+            }, ms);
             ws.send(JSON.stringify({ id: mid, method, params }));
           });
         },
       });
+    };
   });
 }
 
@@ -83,12 +107,16 @@ const seen = new Map(); // targetId -> ws
 while (Date.now() < DEADLINE) {
   for (const t of await targets()) {
     if (t.type !== "worker" || !t.webSocketDebuggerUrl) continue;
-    if (seen.has(t.url)) continue;
-    seen.set(t.url, true);
-    console.log(`--- worker ${t.targetId} ${t.url.slice(0, 60)}`);
+    // Worker targets report an empty url here (blob-backed threads), so keying
+    // on url collapsed every thread after the first into "already seen" and
+    // the watcher watched one worker out of eight.
+    const key = t.webSocketDebuggerUrl;
+    if (seen.has(key)) continue;
+    seen.set(key, true);
+    console.log(`--- worker ${t.targetId || "?"} ${t.title || t.url || key}`);
     try {
       const c = await connect(t.webSocketDebuggerUrl);
-      await c.send("Runtime.enable");
+      await c.send("Runtime.enable", {}, 6_000);
       // A worker already past its model load has printed its provider line, so
       // ask for the state we can still read: what ORT reports about itself.
       await c
