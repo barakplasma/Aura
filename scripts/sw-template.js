@@ -59,12 +59,40 @@ self.addEventListener("fetch", (event) => {
   // back to the cached shell when offline.
   if (req.mode === "navigate") {
     event.respondWith(
-      fetch(req).catch(
-        async () =>
-          (await caches.match(
+      (async () => {
+        let resp;
+        try {
+          resp = await fetch(req);
+        } catch {
+          resp = await caches.match(
             new URL("index.html", self.registration.scope).href,
-          )) || Response.error(),
-      ),
+          );
+        }
+        if (!resp) return Response.error();
+        // Cross-origin isolation, injected here because most places this app
+        // is hosted cannot send it: GitHub Pages has no header configuration,
+        // and `serve` (the dev loop) sends none either. Without isolation the
+        // browser withholds SharedArrayBuffer, and ONNX Runtime then loads
+        // `ort-wasm-simd-threaded.asyncify.wasm` — the single-threaded CPU
+        // build — instead of the `jsep` build that can hold a WebGPU session.
+        // That is why the BROWSER engine ran on one core with a GPU attached.
+        // A synthetic response's headers count for isolation, so a service
+        // worker is the only portable way to get GPU inference on Pages.
+        //
+        // COEP `require-corp` makes every cross-origin subresource prove it is
+        // CORS-readable. Model weights come from the Hugging Face CDN, which
+        // sends `Access-Control-Allow-Origin: *`; nothing else is loaded
+        // cross-origin (see public/index.html: local CSS, icons, manifest).
+        return new Response(resp.body, {
+          status: resp.status,
+          statusText: resp.statusText,
+          headers: {
+            ...Object.fromEntries(resp.headers.entries()),
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+          },
+        });
+      })(),
     );
     return;
   }

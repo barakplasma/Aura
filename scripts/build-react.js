@@ -56,20 +56,32 @@ console.log("React bundle built.");
 // The BROWSER engine's worker points ONNX Runtime Web at these same-origin
 // files (env.backends.onnx.wasm.wasmPaths in src/workers/ml.worker.js)
 // instead of its default CDN, so the app keeps working offline once cached.
-// onnxruntime-web ships one universal WASM binary (SIMD + threading + JSEP/
-// WebGPU support merged) — copy just that pair rather than the whole dist/.
+//
+// The `jsep` pair is the one that matters: JSEP is the glue that lets an
+// ORT session drive the WebGPU API, so a build without it cannot create a
+// WebGPU session at all and silently runs on CPU WASM. Shipping only the
+// asyncify pair — as this script did — is why every scan on the reference
+// phone starved its own renderer: the WebGPU device was requested and its
+// adapter limits reported back, while the graphs executed on one CPU thread.
+// `jspi` is Node-only and the bare `threaded` pair adds nothing on top of
+// JSEP, so both are skipped; the list is derived from dist/ rather than
+// hard-coded so a version bump cannot silently drop a binary again.
 async function copyOnnxRuntimeFiles() {
   const ortDist = path.join(root, "node_modules", "onnxruntime-web", "dist");
   const ortOut = path.join(root, "public", "ort");
   await rm(ortOut, { recursive: true, force: true });
   await mkdir(ortOut, { recursive: true });
-  const files = [
-    "ort-wasm-simd-threaded.asyncify.wasm",
-    "ort-wasm-simd-threaded.asyncify.mjs",
-  ];
+  const all = await readdir(ortDist);
+  const files = all.filter(
+    (f) => /^ort-wasm-.*\.(wasm|mjs)$/.test(f) && !f.includes("jspi"),
+  );
+  if (!files.some((f) => f.includes("jsep"))) {
+    throw new Error(`no JSEP runtime in ${ortDist} — WebGPU would be unavailable`);
+  }
   await Promise.all(
     files.map((f) => copyFile(path.join(ortDist, f), path.join(ortOut, f))),
   );
+  console.log(`ONNX Runtime: ${files.length} files -> public/ort/`);
 }
 
 // Generate public/sw.js from the template with a precache list of the shell

@@ -15,6 +15,7 @@ import { createAlertStore } from "../../lib/alert-store.js";
 import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
 import { useWakeLock } from "./useWakeLock.js";
 import { normalizeCaptureSize } from "../../lib/frame.js";
+import { focusConstraint } from "../../lib/camera-focus.js";
 import { processingProgress } from "../../lib/progress.js";
 import { reportUnexpectedError } from "../../lib/handled-errors.js";
 import { encodeNtfyHeader, isHostedNtfyTopicUrl } from "../../lib/ntfy.js";
@@ -798,6 +799,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       audio: false,
       video,
     });
+    // Ask for continuous autofocus before the first frame reaches the model.
+    // The driver default on the reference phone left a close subject out of
+    // focus, and no prompt or model choice can recover detail the sensor never
+    // resolved. A rejection here means a fixed-focus driver, which is exactly
+    // the case the capability gate above is meant to fall through.
+    const track = stream.getVideoTracks()[0];
+    const want = focusConstraint(track?.getCapabilities?.() || {});
+    if (track && Object.keys(want).length) {
+      try {
+        await track.applyConstraints(want);
+      } catch {
+        // Keep the driver's defaults.
+      }
+    }
     attachTrackHandlers(stream);
     return stream;
   }, [attachTrackHandlers, settingsRef, stop]);

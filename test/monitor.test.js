@@ -161,6 +161,33 @@ test("parseLooseDetection parses a loose YES/NO line", () => {
   assert.equal(r2.reason, "nothing happening here");
 });
 
+// The observation-first compact prompt puts the verdict at the END of the
+// answer, and sometimes on a second line. Measured on the reference phone:
+// with the verdict-at-the-front prompt the 500M model answered the single
+// token "YES" to every mission, including "a bicycle with a front basket"
+// pointed at a shelf of books.
+test("parseLooseDetection reads a verdict at the end of an observation", () => {
+  const r = parseLooseDetection("books and papers on a desk, no person NO 10");
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "books and papers on a desk, no person");
+});
+
+test("parseLooseDetection reads a verdict on a later line than the observation", () => {
+  const r = parseLooseDetection("a dark binder standing on the shelf\nYES 70 book visible");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 70);
+});
+
+// The number is what tells the two apart: a trailing "no" inside the reason
+// must not be mistaken for the verdict.
+test("parseLooseDetection keeps the numbered verdict over a later no", () => {
+  const r = parseLooseDetection("YES 90 no one else in frame");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 90);
+  assert.equal(r.reason, "no one else in frame");
+});
+
 test("parseLooseDetection tolerates extra whitespace/punctuation and missing parts", () => {
   const r = parseLooseDetection("  YES.\n");
   assert.equal(r.triggered, true);

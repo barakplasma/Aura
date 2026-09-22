@@ -43,6 +43,7 @@ import {
 import { fetchModelSizeEstimate } from "../../lib/model-size.js";
 import { createProgressState, recordProgress, aggregateProgress } from "../../lib/download-progress.js";
 import { deviceRequest, limitReport } from "../../lib/webgpu-limits.js";
+import { verdictStats, singleTokenId } from "../../lib/logprob.js";
 
 // Point ONNX Runtime Web at same-origin WASM files instead of its default
 // CDN, so the browser engine works offline once cached (see
@@ -212,6 +213,10 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     progress_callback,
   });
 
+  // Verdict vocabulary ids, resolved once per model. Some families encode
+  // "YES"/"NO" as several tokens, in which case singleTokenId() returns null
+  // and the margin column is simply absent; the per-token probability of the
+  // emitted token still works without it.
   current = {
     task,
     modelId: model,
@@ -221,13 +226,17 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     processor,
     recipe: recipe || {},
     stopping: new InterruptableStoppingCriteria(),
+    verdictIds: {
+      yes: singleTokenId(processor.tokenizer, "YES"),
+      no: singleTokenId(processor.tokenizer, "NO"),
+    },
   };
   post({ id, type: "ready", device: resolvedDevice, limits });
 }
 
-async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens }) {
+async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens, wantLogits }) {
   if (!current) throw new Error("No model loaded — send a 'load' message first.");
-  const { model, processor, recipe, stopping } = current;
+  const { model, processor, recipe, stopping, verdictIds } = current;
   stopping.reset();
   const start = performance.now();
 
@@ -267,7 +276,7 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
       : await processor(text, images, opts);
 
   const promptLength = inputs.input_ids.dims.at(-1);
-  const outputIds = await model.generate({
+  const base = {
     ...inputs,
     max_new_tokens: maxNewTokens ?? DEFAULT_MAX_NEW_TOKENS,
     // Greedy. A monitor that returns a different verdict for the same frame
@@ -282,7 +291,25 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
     // punctuation the JSON profile legitimately emits.
     repetition_penalty: 1.2,
     stopping_criteria: stopping,
-  });
+  };
+  // Scores cost one extra vocab-width row per step (~28 MB for 48 steps at a
+  // 150k vocabulary), so they are requested only for scans whose caller reads
+  // them. Not every exported graph supports them: on failure the scan is
+  // retried once without scores and the model is remembered as unable, so a
+  // live monitor never repeats a generation it cannot use.
+  let outputIds = null;
+  let scores = null;
+  if (wantLogits && !current.scoresUnsupported) {
+    try {
+      const gen = await model.generate({ ...base, output_scores: true });
+      [outputIds, scores] = Array.isArray(gen) ? gen : [gen, null];
+    } catch (err) {
+      current.scoresUnsupported = true;
+      console.warn("[aura] output_scores unsupported, falling back:", String(err?.message).slice(0, 120));
+      if (stopping.shouldStop) throw err;
+    }
+  }
+  if (!outputIds) outputIds = await model.generate(base);
 
   const generatedLength = outputIds.dims?.at(-1) ?? promptLength;
   const decoded = processor.batch_decode(
@@ -291,10 +318,14 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
   );
   const latencyMs = Math.round(performance.now() - start);
   const completionTokens = Math.max(0, generatedLength - promptLength);
+  const emitted = outputIds?.data
+    ? Array.from(outputIds.data).slice(promptLength).map(Number)
+    : [];
   post({
     id,
     type: "result",
     text: (decoded?.[0] || "").trim(),
+    logits: scores ? verdictStats(scores, emitted, verdictIds) : null,
     usage: {
       prompt_tokens: promptLength,
       completion_tokens: completionTokens,
