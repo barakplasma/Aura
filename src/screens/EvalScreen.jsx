@@ -128,7 +128,13 @@ export default function EvalScreen({
     return () => { live = false; };
   }, []);
   const browserEvalModelIds = [
-    ...(hasWebGpu ? Object.keys(BROWSER_MODELS).map((k) => `${BROWSER_MODEL_PREFIX}${k}`) : []),
+    // Rows with a knownIssue (measured "does not finish") would just burn an eval slot
+    // on a run that never completes.
+    ...(hasWebGpu
+      ? Object.keys(BROWSER_MODELS)
+          .filter((k) => !BROWSER_MODELS[k].knownIssue)
+          .map((k) => `${BROWSER_MODEL_PREFIX}${k}`)
+      : []),
     ...(chromeAICapable ? [CHROME_AI_MODEL_ID] : []),
   ];
 

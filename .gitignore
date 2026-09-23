@@ -19,6 +19,9 @@ public/sw.js
 public/assets/ml.worker.js
 public/assets/ml.worker.js.map
 public/ort/
+# ONNX Runtime loader bundles the worker imports relative to itself — copied
+# from node_modules by scripts/build-react.js on every build, like public/ort/.
+public/assets/ort*.bundle.min.mjs
 npm-debug.log*
 .DS_Store
 megalinter-reports/

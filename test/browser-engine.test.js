@@ -5,6 +5,8 @@ import {
   loadBrowserModel,
   isBrowserModelLoaded,
   browserModelDevice,
+  browserDeviceLimits,
+  unloadBrowserModel,
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
   FALLBACK_BROWSER_MODEL,
@@ -112,6 +114,35 @@ test("loadBrowserModel resolves on the worker's 'ready' reply, matched by id", a
   assert.equal(result.device, "webgpu");
   assert.equal(isBrowserModelLoaded("smolvlm2-256m"), true);
   assert.equal(browserModelDevice(), "webgpu");
+});
+
+// The worker reports the WebGPU limits its session actually got, because a
+// spec-minimum 128 MB binding ceiling means the model silently ran on WASM
+// while the UI said WebGPU. The number has to survive the facade to the
+// Settings STATUS line.
+test("loadBrowserModel publishes the worker's device limits", async () => {
+  const getWorker = freshWorker();
+  const p = loadBrowserModel(FALLBACK_BROWSER_MODEL);
+  const fw = getWorker();
+  fw.reply({
+    id: fw.posted[0].id,
+    type: "ready",
+    device: "webgpu",
+    limits: { maxStorageBufferMB: 2047, maxBufferMB: 4095, shaderF16: true },
+  });
+  await p;
+  assert.equal(browserDeviceLimits().maxStorageBufferMB, 2047);
+
+  const unloadP = unloadBrowserModel();
+  await waitForPosted(fw, 2);
+  fw.reply({ id: fw.posted.at(-1).id, type: "ready", device: null });
+  await unloadP;
+  assert.equal(browserDeviceLimits(), null, "unloading must not leave stale limits behind");
+});
+
+test("a worker that reports no limits leaves nothing stale to display", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  assert.equal(browserDeviceLimits(), null);
 });
 
 test("selectBrowserDevice uses WASM when WebGPU lacks shader-f16", async () => {
@@ -269,6 +300,83 @@ test("a worker 'error' message (not just an error event) also fails the pending 
   const fw = getWorker();
   fw.reply({ id: fw.posted[0].id, type: "error", message: "model repo not found" });
   await assert.rejects(loadP, /model repo not found/);
+});
+
+test("the logit margin overrides a confidence the model wrote", async () => {
+  // A small model's "Confidence: 95" is generated text; P(YES) vs P(NO) at the
+  // verdict step is the evidence. At 30% it must not clear a 60% threshold.
+  const { fw } = await loadedFakeWorker("webgpu");
+  const { p, req } = await startedScan(fw, { mission: "a person", image: "x".repeat(64), threshold: 60 });
+  assert.equal(req.wantLogits, true);
+  assert.equal(req.repetitionPenalty, undefined, "the verdict step must not be penalised");
+  fw.reply({
+    id: req.id,
+    type: "result",
+    text: "YES, Confidence: 95, Explanation: a person",
+    logits: { verdictAtFirstStep: true, verdictProb: 0.3, firstTokenProb: 0.3 },
+    timing: { preprocessMs: 5, prefillMs: 900, decodeMs: 300 },
+    usage: {},
+  });
+  const r = await p;
+  assert.equal(r.confidence, 30);
+  assert.equal(r.triggered, false);
+  assert.equal(r.timing.prefillMs, 900, "the prefill/decode split reaches the caller");
+});
+
+test("a margin read at a non-verdict step leaves the parsed confidence alone", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  const { p, req } = await startedScan(fw, { mission: "a person", image: "x".repeat(64) });
+  fw.reply({
+    id: req.id,
+    type: "result",
+    text: "NO 5 empty room",
+    logits: { verdictAtFirstStep: false, verdictProb: 0.9 },
+    usage: {},
+  });
+  assert.equal((await p).confidence, 5);
+});
+
+test("only the prose legs ask for a repetition penalty", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  const p = scanBrowser({
+    model: FALLBACK_BROWSER_MODEL,
+    mission: "a person",
+    action: "say hello",
+    webhookAction: "summarise",
+    image: "x".repeat(64),
+    threshold: 50,
+  });
+  await waitForPosted(fw, 2);
+  const det = fw.posted.at(-1);
+  fw.reply({ id: det.id, type: "result", text: "YES 90 a person", usage: {} });
+  await waitForPosted(fw, 3);
+  const act = fw.posted.at(-1);
+  assert.equal(act.purpose, "announce");
+  assert.ok(act.repetitionPenalty > 1);
+  assert.notEqual(act.wantLogits, true);
+  fw.reply({ id: act.id, type: "result", text: "Hello there.", usage: {} });
+  await waitForPosted(fw, 4);
+  const wh = fw.posted.at(-1);
+  assert.equal(wh.purpose, "webhook");
+  assert.ok(wh.repetitionPenalty > 1);
+  fw.reply({ id: wh.id, type: "result", text: "A person arrived.", usage: {} });
+  const r = await p;
+  assert.equal(r.triggered, true);
+});
+
+test("a lost GPU device fails in-flight work and replaces the worker", async () => {
+  const { fw, getWorker } = await loadedFakeWorker("webgpu");
+  const scan = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a", image: "x".repeat(64) });
+  await waitForPosted(fw, 2);
+  fw.reply({ type: "fatal", message: "WebGPU device lost: unknown" });
+  await assert.rejects(scan, /lost its GPU/);
+  assert.equal(fw.terminated, true);
+  assert.equal(isBrowserModelLoaded(FALLBACK_BROWSER_MODEL), false);
+  const p = loadBrowserModel(FALLBACK_BROWSER_MODEL);
+  const fw2 = getWorker();
+  assert.notEqual(fw2, fw, "the next call spawns a fresh worker");
+  fw2.reply({ id: fw2.posted[0].id, type: "ready", device: "webgpu" });
+  await p;
 });
 
 // --- Chrome built-in AI runtime -------------------------------------------

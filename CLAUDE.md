@@ -118,6 +118,14 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - A row is only `autoSelectable` if `pickBrowserModel()` may hand it to someone who
   never opened Settings. Anything whose download needs a deliberate yes stays
   `false` and is picked manually.
+- A failure measured on one device is a row's `knownIssue` (warns, never auto-picked,
+  skipped by the eval matrix), not a device gate. `modelUnsupportedReason()` is only for
+  facts about *this* device (WebGPU fp16), and only it disables a picker option.
+- BROWSER confidence comes from the YES-vs-NO logit margin at the first decode step
+  (`logitConfidence()` in `lib/logprob.js`) whenever that step emitted a verdict; a number
+  the model wrote is the fallback. Nothing may penalise or reshape the detection leg's
+  first-step logits — the prose legs' repetition penalty is `lib/repetition-penalty.js`,
+  which only sees generated tokens (the library's `repetition_penalty` also hits the prompt).
 - There is no silent mock: a misconfigured or unreachable provider throws. A blank
   API key is *not* misconfiguration — it's the normal local-server setup, and the
   request goes out for real. Demo mode is the only simulated path: explicit opt-in

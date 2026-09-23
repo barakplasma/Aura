@@ -6,6 +6,8 @@ import {
   FALLBACK_BROWSER_MODEL,
   browserModelKeys,
   getBrowserModel,
+  modelKnownIssue,
+  modelUnsupportedReason,
   pickBrowserModel,
   probeBrowserEnv,
 } from "../lib/browser-models.js";
@@ -51,11 +53,14 @@ test("pickBrowserModel: no WebGPU means the WASM-viable fallback, whatever the R
   assert.equal(pickBrowserModel({}), FALLBACK_BROWSER_MODEL);
 });
 
-test("pickBrowserModel: a Pixel 10 in Chrome gets the instruction-following default", () => {
+test("pickBrowserModel: a Pixel 10 in Chrome gets the largest auto-selectable row that runs", () => {
   // Chrome caps navigator.deviceMemory at 8 by spec, so a 12-16 GB phone is
   // indistinguishable from an 8 GB one here. 8 must not read as "be careful".
+  // Not the DEFAULT any more: the default must be measured-working
+  // (smolvlm2-500m), while auto-pick recommends the largest runnable row,
+  // which after grey-lining qwen is LFM2.5-VL.
   const pixel10 = { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
-  assert.equal(pickBrowserModel(pixel10), DEFAULT_BROWSER_MODEL);
+  assert.equal(pickBrowserModel(pixel10), "lfm2.5-vl-450m");
   assert.notEqual(DEFAULT_BROWSER_MODEL, FALLBACK_BROWSER_MODEL);
 });
 
@@ -63,7 +68,7 @@ test("pickBrowserModel: unknown deviceMemory is treated as comfortable, not as t
   // Firefox and Safari don't implement deviceMemory at all.
   assert.equal(
     pickBrowserModel({ hasWebGpu: true, hasShaderF16: true, maxBufferBytes: 2 ** 31 - 1 }),
-    DEFAULT_BROWSER_MODEL,
+    "lfm2.5-vl-450m",
   );
 });
 
@@ -163,13 +168,36 @@ test("SmolVLM2 500M is an opt-in row sharing the 256M's calling convention", () 
   assert.equal(cfg.processorArgs, "text-first");
   assert.equal(cfg.chatStyle, "content-parts");
   assert.deepEqual(cfg.processorOptions, { do_image_splitting: false });
-  assert.equal(cfg.promptProfile, "json", "500M is expected to follow the real schema");
+  // Was "json" on the assumption that 500M follows the schema because 256M
+  // cannot. Measured on the Pixel 7a instead: given the schema it emitted
+  // `"100"` repeatedly to the token cap, so the compact one-line profile is
+  // the one its output actually parses.
+  assert.equal(cfg.promptProfile, "compact", "measured: it babbles on the JSON schema");
   assert.equal(cfg.autoSelectable, false, "a deliberate download, like FastVLM");
   assert.equal(cfg.requiresWebGpu, true);
 });
 
-test("the auto-pick on a Pixel 10-class device is the Qwen3.5 row", () => {
+test("a measured failure on one phone warns and blocks auto-pick, but does not disable the row", () => {
   const pixel10 = { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
-  assert.equal(pickBrowserModel(pixel10), "qwen3.5-0.8b");
-  assert.equal(DEFAULT_BROWSER_MODEL, "qwen3.5-0.8b");
+  // qwen3.5-0.8b hung and took a Pixel 7a down (VK_ERROR_DEVICE_LOST). That
+  // is a verdict about one device: the recommendation must avoid it, but a
+  // capable device can still choose it deliberately.
+  assert.match(modelKnownIssue("qwen3.5-0.8b"), /Pixel 7a/);
+  assert.equal(modelUnsupportedReason("qwen3.5-0.8b", { hasWebGpu: true, hasShaderF16: true }), null);
+  assert.notEqual(pickBrowserModel(pixel10), "qwen3.5-0.8b");
+  assert.equal(DEFAULT_BROWSER_MODEL, "smolvlm2-500m");
+  assert.equal(modelKnownIssue(DEFAULT_BROWSER_MODEL), null, "the default must have no known issue");
+  assert.equal(modelUnsupportedReason(DEFAULT_BROWSER_MODEL, { hasWebGpu: true, hasShaderF16: true }), null);
+  assert.equal(modelKnownIssue("no-such-row"), null);
+});
+
+test("modelUnsupportedReason names the device gate separately from the catalogue gate", () => {
+  // Device lacks shader-f16: every WebGPU row greys for that reason, even
+  // rows that are fine on real hardware.
+  assert.equal(modelUnsupportedReason("smolvlm2-500m", { hasShaderF16: false }), "requires WebGPU fp16");
+  // Device without WebGPU at all.
+  assert.equal(modelUnsupportedReason("fastvlm-0.5b", { hasWebGpu: false }), "requires WebGPU fp16");
+  // With no gate at all: the 256M row is the no-WebGPU floor.
+  assert.equal(modelUnsupportedReason("smolvlm2-256m", {}), null);
+  assert.equal(modelUnsupportedReason("no-such-row"), "unknown model");
 });

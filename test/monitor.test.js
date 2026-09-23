@@ -6,6 +6,7 @@ import {
   buildWebhookActionPrompt,
   buildCompactDetectionPrompt,
   buildCompactActionPrompt,
+  buildCompactWebhookActionPrompt,
   parseCompactAction,
   parseDetection,
   parseLooseDetection,
@@ -160,6 +161,33 @@ test("parseLooseDetection parses a loose YES/NO line", () => {
   assert.equal(r2.reason, "nothing happening here");
 });
 
+// The observation-first compact prompt puts the verdict at the END of the
+// answer, and sometimes on a second line. Measured on the reference phone:
+// with the verdict-at-the-front prompt the 500M model answered the single
+// token "YES" to every mission, including "a bicycle with a front basket"
+// pointed at a shelf of books.
+test("parseLooseDetection reads a verdict at the end of an observation", () => {
+  const r = parseLooseDetection("books and papers on a desk, no person NO 10");
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "books and papers on a desk, no person");
+});
+
+test("parseLooseDetection reads a verdict on a later line than the observation", () => {
+  const r = parseLooseDetection("a dark binder standing on the shelf\nYES 70 book visible");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 70);
+});
+
+// The number is what tells the two apart: a trailing "no" inside the reason
+// must not be mistaken for the verdict.
+test("parseLooseDetection keeps the numbered verdict over a later no", () => {
+  const r = parseLooseDetection("YES 90 no one else in frame");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 90);
+  assert.equal(r.reason, "no one else in frame");
+});
+
 test("parseLooseDetection tolerates extra whitespace/punctuation and missing parts", () => {
   const r = parseLooseDetection("  YES.\n");
   assert.equal(r.triggered, true);
@@ -245,6 +273,79 @@ test("parseLooseDetection reads a YES line buried under thinking output (regress
   assert.equal(r.triggered, true);
   assert.equal(r.confidence, 70);
   assert.equal(r.reason, "package on the doorstep");
+});
+
+test("buildCompactDetectionPrompt asks for the format SmolVLM is post-trained on", () => {
+  const p = buildCompactDetectionPrompt("a stack of books");
+  assert.match(p, /does this image satisfy the mission/);
+  assert.match(p, /Answer with YES or NO first/);
+  assert.match(p, /Confidence: 0-100/);
+  // The example answers NO: a YES example is what fed the always-YES bias.
+  assert.match(p, /Example: NO, Confidence: 10, Explanation: books/);
+});
+
+test("parseLooseDetection reads the Answer/Confidence/Explanation format", () => {
+  const r = parseLooseDetection(
+    "Answer: YES, Confidence: 82, Explanation: a stack of books on the shelf",
+  );
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 82);
+  assert.equal(r.reason, "a stack of books on the shelf");
+
+  const multi = parseLooseDetection(
+    "Answer: NO\nConfidence: 8\nExplanation: papers and a laptop, no bicycle",
+  );
+  assert.equal(multi.triggered, false);
+  assert.equal(multi.confidence, 8);
+  assert.equal(multi.reason, "papers and a laptop, no bicycle");
+});
+
+test("parseLooseDetection reads the verdict-first form the prompt asks for", () => {
+  const r = parseLooseDetection(
+    "NO, Confidence: 10, Explanation: books and papers on a desk",
+  );
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "books and papers on a desk");
+
+  const yes = parseLooseDetection("YES, Confidence: 95, Explanation: a stack of books");
+  assert.equal(yes.triggered, true);
+  assert.equal(yes.confidence, 95);
+  assert.equal(yes.reason, "a stack of books");
+});
+
+test("parseLooseDetection prefers a named Confidence over position guessing", () => {
+  // The loose scan alone cannot use this number: no digit sits next to YES,
+  // so confidence would default to 100 and the labels would be spoken.
+  const r = parseLooseDetection("Answer: YES, Confidence: 20, Explanation: maybe");
+  assert.equal(r.confidence, 20);
+  assert.equal(r.reason, "maybe");
+  assert.ok(!/confidence/i.test(r.reason));
+});
+
+test("parseLooseDetection does not read the echoed format line as an answer", () => {
+  const r = parseLooseDetection("Answer: YES or NO, Confidence: 0-100");
+  assert.equal(r.triggered, false);
+});
+
+test("parseLooseDetection defaults confidence when the model omits it", () => {
+  const r = parseLooseDetection("Answer: YES, Explanation: person at the door");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 100);
+  assert.equal(r.reason, "person at the door");
+
+  const no = parseLooseDetection("Answer: NO.");
+  assert.equal(no.triggered, false);
+  assert.equal(no.confidence, 0);
+});
+
+test("parseLooseDetection stays conservative on a caption that ignores the question", () => {
+  // Verbatim output from the 500M on the reference phone when asked about a
+  // bicycle while looking at a shelf of books.
+  const r = parseLooseDetection("Mark down the information visible in the image.");
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 0);
+  assert.ok(r.reason.length > 0);
 });
 
 test("buildWebhookActionPrompt embeds action, reason, and optional schema", () => {
@@ -735,6 +836,19 @@ test("buildCompactActionPrompt is short, schema-free and carries the instruction
   assert.match(p, /Tell them to move back/);
   assert.match(p, /a person at the door/);
   assert.doesNotMatch(p, /Schema:|minified JSON/i);
+  assert.ok(p.split("\n").length <= 6);
+});
+
+// Measured on the reference phone: asked for strict JSON, the 500M compact
+// model obliged with a lone `{`, so the sink received `{"message":"{"}`.
+// The compact webhook prompt must ask for prose; only the prohibition may
+// mention JSON.
+test("buildCompactWebhookActionPrompt asks for a sentence, never an object", () => {
+  const p = buildCompactWebhookActionPrompt("Say what you saw", "a person on the bench");
+  assert.match(p, /Say what you saw/);
+  assert.match(p, /a person on the bench/);
+  assert.doesNotMatch(p, /Schema:|minified JSON/i);
+  assert.equal((p.match(/JSON/g) || []).length, 1, "JSON appears only in the prohibition");
   assert.ok(p.split("\n").length <= 6);
 });
 

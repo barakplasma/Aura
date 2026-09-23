@@ -1,0 +1,4 @@
+# Disables Jekyll processing for the GitHub Pages deploy
+# (.github/workflows/deploy.yml publishes public/ verbatim). Without this file
+# Pages runs the tree through Jekyll, which ignores dot-prefixed entries and can
+# choke on non-front-matter files, so an asset can silently fail to publish.

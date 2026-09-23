@@ -1,4 +1,5 @@
 import * as esbuild from "esbuild";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -56,19 +57,80 @@ console.log("React bundle built.");
 // The BROWSER engine's worker points ONNX Runtime Web at these same-origin
 // files (env.backends.onnx.wasm.wasmPaths in src/workers/ml.worker.js)
 // instead of its default CDN, so the app keeps working offline once cached.
-// onnxruntime-web ships one universal WASM binary (SIMD + threading + JSEP/
-// WebGPU support merged) — copy just that pair rather than the whole dist/.
+//
+// Every WASM variant in dist/ is copied except `jspi` (Node-only). Which one
+// the worker instantiates is ORT's choice, not this script's — see the note
+// above `wasmPaths` in src/workers/ml.worker.js for why naming the pair is
+// wrong in onnxruntime-web 1.31.0-dev.
+//
+// The version check is the point of this function. The ORT *JavaScript* is
+// bundled into ml.worker.js by esbuild, while the WASM it instantiates is
+// fetched from public/ort/ at runtime — two paths that can silently disagree,
+// because `onnxruntime-web/webgpu` is imported from inside
+// @huggingface/transformers, which prefers a nested copy of the package. A WASM
+// glue from a different version does not export the init function the bundled
+// JS calls, so the BROWSER engine dies at load with
+// "no available backend found. ERR: [webgpu] TypeError: … webgpuInit is not a
+// function" after every other signal (adapter, limits, isolation) looked fine.
 async function copyOnnxRuntimeFiles() {
-  const ortDist = path.join(root, "node_modules", "onnxruntime-web", "dist");
+  const transformersDir = path.join(root, "node_modules", "@huggingface", "transformers");
+  const nested = path.join(transformersDir, "node_modules", "onnxruntime-web");
+  const ortDir = existsSync(nested)
+    ? nested
+    : path.join(root, "node_modules", "onnxruntime-web");
+  const ortDist = path.join(ortDir, "dist");
   const ortOut = path.join(root, "public", "ort");
+
+  const specs = JSON.parse(
+    await readFile(path.join(transformersDir, "package.json"), "utf8"),
+  );
+  const want = String(specs.dependencies?.["onnxruntime-web"] || "").replace(/^[\^~]/, "");
+  const have = JSON.parse(
+    await readFile(path.join(ortDir, "package.json"), "utf8"),
+  ).version;
+  if (want && want !== have) {
+    throw new Error(
+      `onnxruntime-web version mismatch: @huggingface/transformers wants ${want}, ` +
+        `but public/ort would ship ${have} from ${ortDir} — WebGPU init would fail`,
+    );
+  }
+
   await rm(ortOut, { recursive: true, force: true });
   await mkdir(ortOut, { recursive: true });
-  const files = [
-    "ort-wasm-simd-threaded.asyncify.wasm",
-    "ort-wasm-simd-threaded.asyncify.mjs",
-  ];
+  const all = await readdir(ortDist);
+  const files = all.filter(
+    (f) => /^ort-wasm-.*\.(wasm|mjs)$/.test(f) && !f.includes("jspi"),
+  );
+  if (!files.some((f) => f.includes("jsep"))) {
+    throw new Error(`no JSEP runtime in ${ortDist} — WebGPU would be unavailable`);
+  }
   await Promise.all(
     files.map((f) => copyFile(path.join(ortDist, f), path.join(ortOut, f))),
+  );
+
+  // transformers.js resolves its ORT entry points against `import.meta.url`:
+  // `new URL("ort.webgpu.bundle.min.mjs", import.meta.url)`. esbuild flattens
+  // transformers.js into public/assets/ml.worker.js, so that lookup lands on
+  // /assets/ rather than /ort/. With nothing there, the worker throws during
+  // module import — before it ever fetches a WASM binary — and the app can
+  // only surface "Browser engine worker crashed: unknown error". Ship the
+  // loader bundles beside the worker that asks for them. (`/assets/*.mjs` is
+  // not precached below, so it is served by plain pass-through, which keeps it
+  // COEP-clean without the worker having to synthesise the response.)
+  const loaders = all.filter(
+    (f) => /^ort(\.[a-z]+)?\.bundle\.min\.mjs$/.test(f) && !f.includes("jspi"),
+  );
+  if (!loaders.includes("ort.webgpu.bundle.min.mjs")) {
+    throw new Error(
+      `no WebGPU ORT loader in ${ortDist} — the browser worker would die on import`,
+    );
+  }
+  await mkdir(outdir, { recursive: true });
+  await Promise.all(
+    loaders.map((f) => copyFile(path.join(ortDist, f), path.join(outdir, f))),
+  );
+  console.log(
+    `ONNX Runtime: ${files.length} files -> public/ort/, ${loaders.length} loaders -> public/assets/`,
   );
 }
 
