@@ -28,6 +28,10 @@ const ONLY = (process.env.MODELS || Object.keys(BROWSER_MODELS).join(","))
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+// Candidate screening needs raw repo ids before a BROWSER_MODELS row exists:
+// `REPOS=onnx-community/nanoLLaVA-1.5 node scripts/dev-tokenizer-probe.mjs`
+// probes exactly those, by the same method and with the same output shape.
+const RAW_REPOS = ONLY.filter((k) => k.includes("/"));
 
 // The labelled format the compact detection prompt asks the model for, measured
 // as it would actually be emitted rather than as bare words.
@@ -35,7 +39,10 @@ const FORMAT_PIECES = ["YES,", "NO,", "Confidence: 90,", "Explanation: a stack o
 
 const rows = [];
 for (const key of ONLY) {
-  const spec = BROWSER_MODELS[key];
+  // A raw `owner/repo` entry bypasses the table: candidate screening.
+  const spec = key.includes("/")
+    ? { modelId: key, promptProfile: null }
+    : BROWSER_MODELS[key];
   if (!spec) {
     rows.push({ key, error: "not in BROWSER_MODELS" });
     continue;
