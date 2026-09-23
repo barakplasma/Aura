@@ -203,41 +203,59 @@ async function main() {
   await client.send("Page.enable");
   await client.send("Page.addScriptToEvaluateOnNewDocument", { source: HOOK });
   // No reload per mission. A 500M weight load plus WebGPU init costs 6-9
-  // minutes on this phone and starved the first run of samples; the monitor
-  // re-reads the mission textarea before every scan, so the A/B can swap it on
-  // a live worker and pay the load tax once.
+  // minutes on this phone and starved the first run of samples. The monitor
+  // re-reads the mission before every scan, so the A/B can swap it on a live
+  // worker and pay that tax once.
   await client.send("Page.navigate", { url: APP });
   await sleep(9_000);
 
-  // Arm idempotently by reading the button: the app restores `armed` from
-  // localStorage, so a blind click can disarm a running monitor and spend the
-  // whole budget collecting nothing.
-  const toggleText = `String((document.getElementById('toggle')?.textContent || 'missing').trim())`;
-  if (String((await client.tryEval(toggleText)) || "").startsWith("Arm")) {
-    await client.tryEval(`document.getElementById('toggle').click()`);
-    await sleep(5_000); // let the worker come up before the first scan
-  }
-
-  // React owns the textarea's value, so assign through the prototype setter —
-  // writing `.value` directly makes React think nothing changed and drop it.
-  const setMission = async (mission) => {
-    const got = await client.tryEval(
-      `(() => { const el = document.getElementById('mission'); if (!el) return 'MISSING';
-        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, ${JSON.stringify(mission)});
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        return String(el.value); })()`,
+  const goTab = async (label) => {
+    const ok = await client.tryEval(
+      `(() => { const b = [...document.querySelectorAll('ion-tab-button')]
+          .find(x => new RegExp(${JSON.stringify(label)}, 'i').test(x.textContent || ''));
+        if (!b) return 'TAB MISSING'; b.click(); return 'ok'; })()`,
     );
-    if (String(got) !== mission) throw new Error(`mission did not stick (read back: ${got})`);
+    if (String(ok) !== "ok") throw new Error(`cannot open the ${label} tab: ${ok}`);
+    await sleep(2_500);
   };
 
-  // Cursor, not a rescan: `window.__v` is append-only, so re-reading the whole
-  // array each poll counted every scan again — the first run reported two
-  // identical samples and called it two observations.
+  // The mission field is an Ionic custom element on the Missions tab: its real
+  // textarea sits in shadow DOM, React state updates only from `ionInput`
+  // (which the inner textarea emits for a composed `input` event), and the
+  // field is not in the document at all while another tab is mounted. An
+  // earlier revision looked for `#mission` and reported "MISSING".
+  const setMission = async (mission) => {
+    await goTab("mission");
+    const got = await client.tryEval(
+      `(() => { const host = document.querySelector('ion-textarea[label="Watch for"]') || document.querySelector('ion-textarea');
+        if (!host) return 'FIELD MISSING';
+        const ta = host.shadowRoot?.querySelector('textarea') || host.querySelector('textarea') || host;
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, ${JSON.stringify(mission)});
+        ta.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        return String(ta.value); })()`,
+    );
+    if (String(got) !== mission) throw new Error(`mission did not stick (read back: ${got})`);
+    await goTab("home");
+  };
+
+  // Arm idempotently by reading the button: the app restores `armed` from
+  // localStorage, so a blind click can disarm a running monitor and spend the
+  // whole budget collecting nothing. Re-checked per mission because a tab
+  // switch or a failed scan can leave the monitor stopped mid-run.
+  const toggleText = `String((document.getElementById('toggle')?.textContent || 'missing').trim())`;
+
+  // Cursor, not a rescan: `window.__v` is append-only, so re-reading it from 0
+  // each poll counted every scan again — the first run reported two identical
+  // samples and called them two observations.
   let cursor = 0;
   const rows = [];
   for (const mission of MISSIONS) {
     console.log(`\n=== mission: "${mission}" ===`);
     await setMission(mission);
+    if (String((await client.tryEval(toggleText)) || "").startsWith("Arm")) {
+      await client.tryEval(`document.getElementById('toggle').click()`);
+      await sleep(6_000); // let the worker come up before the first scan
+    }
     const scans = [];
     const deadline = Date.now() + MISSION_BUDGET_MS;
     let lastLog = 0;

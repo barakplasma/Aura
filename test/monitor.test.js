@@ -275,6 +275,79 @@ test("parseLooseDetection reads a YES line buried under thinking output (regress
   assert.equal(r.reason, "package on the doorstep");
 });
 
+test("buildCompactDetectionPrompt asks for the format SmolVLM is post-trained on", () => {
+  const p = buildCompactDetectionPrompt("a stack of books");
+  assert.match(p, /does this image satisfy the mission/);
+  assert.match(p, /Answer with YES or NO first/);
+  assert.match(p, /Confidence: 0-100/);
+  // The example answers NO: a YES example is what fed the always-YES bias.
+  assert.match(p, /Example: NO, Confidence: 10, Explanation: books/);
+});
+
+test("parseLooseDetection reads the Answer/Confidence/Explanation format", () => {
+  const r = parseLooseDetection(
+    "Answer: YES, Confidence: 82, Explanation: a stack of books on the shelf",
+  );
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 82);
+  assert.equal(r.reason, "a stack of books on the shelf");
+
+  const multi = parseLooseDetection(
+    "Answer: NO\nConfidence: 8\nExplanation: papers and a laptop, no bicycle",
+  );
+  assert.equal(multi.triggered, false);
+  assert.equal(multi.confidence, 8);
+  assert.equal(multi.reason, "papers and a laptop, no bicycle");
+});
+
+test("parseLooseDetection reads the verdict-first form the prompt asks for", () => {
+  const r = parseLooseDetection(
+    "NO, Confidence: 10, Explanation: books and papers on a desk",
+  );
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "books and papers on a desk");
+
+  const yes = parseLooseDetection("YES, Confidence: 95, Explanation: a stack of books");
+  assert.equal(yes.triggered, true);
+  assert.equal(yes.confidence, 95);
+  assert.equal(yes.reason, "a stack of books");
+});
+
+test("parseLooseDetection prefers a named Confidence over position guessing", () => {
+  // The loose scan alone cannot use this number: no digit sits next to YES,
+  // so confidence would default to 100 and the labels would be spoken.
+  const r = parseLooseDetection("Answer: YES, Confidence: 20, Explanation: maybe");
+  assert.equal(r.confidence, 20);
+  assert.equal(r.reason, "maybe");
+  assert.ok(!/confidence/i.test(r.reason));
+});
+
+test("parseLooseDetection does not read the echoed format line as an answer", () => {
+  const r = parseLooseDetection("Answer: YES or NO, Confidence: 0-100");
+  assert.equal(r.triggered, false);
+});
+
+test("parseLooseDetection defaults confidence when the model omits it", () => {
+  const r = parseLooseDetection("Answer: YES, Explanation: person at the door");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 100);
+  assert.equal(r.reason, "person at the door");
+
+  const no = parseLooseDetection("Answer: NO.");
+  assert.equal(no.triggered, false);
+  assert.equal(no.confidence, 0);
+});
+
+test("parseLooseDetection stays conservative on a caption that ignores the question", () => {
+  // Verbatim output from the 500M on the reference phone when asked about a
+  // bicycle while looking at a shelf of books.
+  const r = parseLooseDetection("Mark down the information visible in the image.");
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 0);
+  assert.ok(r.reason.length > 0);
+});
+
 test("buildWebhookActionPrompt embeds action, reason, and optional schema", () => {
   const p = buildWebhookActionPrompt("send details", "intruder detected");
   assert.match(p, /send details/);
