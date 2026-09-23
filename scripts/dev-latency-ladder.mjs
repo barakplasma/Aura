@@ -124,9 +124,15 @@ function connect(url) {
 
 // Wraps Worker so every scan/result pair is timed in the page. Patched before
 // any app code runs, because the app builds its worker inside useMonitor.
+// Versioned because Page.addScriptToEvaluateOnNewDocument registrations
+// accumulate in the tab across runs: whichever hook was registered first wins
+// the `__latPatched` race forever, and a later run would quietly sample the
+// older hook's payload shape. Records carry this number so the collector can
+// refuse samples it did not produce.
+const HOOK_V = 3;
 const HOOK = `(() => {
-  if (window.__latPatched) return;
-  window.__latPatched = true;
+  if (window.__latV === ${HOOK_V}) return;
+  window.__latV = ${HOOK_V};
   window.__lat = [];
   const pending = new Map();
   const Native = window.Worker;
@@ -142,10 +148,12 @@ const HOOK = `(() => {
         return post(msg, ...rest);
       };
       const record = (ev) => {
+        const d = ev.data;
         if (!d || d.type !== 'result' || !pending.has(d.id)) return;
         const p = pending.get(d.id);
         pending.delete(d.id);
         window.__lat.push({
+          v: ${HOOK_V},
           at: new Date().toLocaleTimeString(),
           latencyMs: d.latencyMs ?? null,
           wallMs: Date.now() - p.t0,
@@ -206,9 +214,17 @@ async function runModel(key) {
   const deadline = Date.now() + MODEL_BUDGET_MS;
   let rows = [];
   let ep = null;
+  let warnedStale = false;
   while (Date.now() < deadline) {
     await sleep(15_000);
-    const seen = JSON.parse((await client.tryEval(`JSON.stringify(window.__lat || [])`)) || "[]");
+    const raw = JSON.parse((await client.tryEval(`JSON.stringify(window.__lat || [])`)) || "[]");
+    const seen = raw.filter((r) => r && r.v === HOOK_V);
+    if (raw.length && !seen.length && !warnedStale) {
+      warnedStale = true;
+      console.log(
+        `  note: ${raw.length} samples came from a stale hook version — close and reopen the app tab`,
+      );
+    }
     // The Settings STATUS line reports the granted device, which is the
     // execution-provider column this table needs: a WASM fallback stays
     // invisible in latency numbers until they are already minutes long.
