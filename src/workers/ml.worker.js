@@ -40,6 +40,7 @@
 import {
   AutoProcessor,
   AutoModelForImageTextToText,
+  AutoTokenizer,
   RawImage,
   StoppingCriteria,
   env,
@@ -268,7 +269,13 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
   // Verdict vocabulary ids, resolved once per model. Some families encode
   // "YES"/"NO" as several tokens, in which case singleTokenId() returns null
   // and the margin column is simply absent; the per-token probability of the
-  // emitted token still works without it.
+  // emitted token still works without it. The tokenizer itself may also be
+  // absent: transformers.js 4.3 processors do not always attach one, and the
+  // reference phone's ready line reported `yes/no ids=null` for every model
+  // while the Node tokenizer probe resolved single-token YES/NO from the same
+  // repos via AutoTokenizer — so fall back to an explicit load.
+  const verdictTokenizer =
+    processor.tokenizer ?? (await AutoTokenizer.from_pretrained(model));
   current = {
     task,
     modelId: model,
@@ -279,14 +286,14 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     recipe: recipe || {},
     stopping: new InterruptableStoppingCriteria(),
     verdictIds: {
-      yes: singleTokenId(processor.tokenizer, "YES"),
-      no: singleTokenId(processor.tokenizer, "NO"),
+      yes: singleTokenId(verdictTokenizer, "YES"),
+      no: singleTokenId(verdictTokenizer, "NO"),
     },
   };
   post({ id, type: "ready", device: resolvedDevice, limits, runtime: runtimeInfo() });
 }
 
-async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens, wantLogits }) {
+async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens, wantLogits, purpose }) {
   if (!current) throw new Error("No model loaded — send a 'load' message first.");
   const { model, processor, recipe, stopping, verdictIds } = current;
   stopping.reset();
@@ -369,6 +376,10 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
   post({
     id,
     type: "result",
+    // Echoed so harnesses can tell the three generation legs apart — without
+    // it the verdict probe counted one detection as three scans (detect,
+    // announce, webhook all arrive as anonymous results).
+    purpose: purpose ?? null,
     text: (decoded?.[0] || "").trim(),
     logits: logits ? { ...logits, decodeSteps: capture.state.steps } : null,
     usage: {

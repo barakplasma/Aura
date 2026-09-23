@@ -137,7 +137,7 @@ function connect(url) {
 // useMonitor, so patching any earlier than document_start loses the race.
 // Registrations from earlier runs stay installed in the tab, so records carry
 // a version and the collector only accepts its own.
-const HOOK_V = 1;
+const HOOK_V = 2;
 const HOOK = `(() => {
   if (window.__vV === ${HOOK_V}) return;
   window.__vV = ${HOOK_V};
@@ -155,13 +155,15 @@ const HOOK = `(() => {
           window.__v.push({
             v: ${HOOK_V},
             kind: 'scan',
+            purpose: m.purpose ?? null,
             ms: m.latencyMs ?? null,
             t: Math.round(performance.now()),
             tokens: m.usage ? m.usage.completion_tokens ?? null : null,
-            truncated: !!m.truncated,
+            decodeSteps: m.logits ? m.logits.decodeSteps ?? null : null,
             yesNoIds: m.yesNoIds ?? null,
             firstTokenProb: m.logits ? m.logits.firstTokenProb : null,
             yesProb: m.logits ? m.logits.yesProb ?? null : null,
+            verdictProb: m.logits ? m.logits.verdictProb ?? null : null,
             text: String(m.text ?? '').replace(/\\s+/g, ' ').trim().slice(0, 320),
           });
         } else if (m.type === 'error') {
@@ -172,6 +174,9 @@ const HOOK = `(() => {
   }
   window.Worker = Spied;
 })()`;
+// HOOK_V is 2: v1 counted every worker result as a detection scan, so one
+// real look at the frame satisfied SAMPLES=3 via its announce and webhook
+// legs (workers did not echo purpose before the ml.worker.js fix).
 
 function yesNo(text) {
   // Same anchor the app uses: a verdict token followed by a number if there is
@@ -187,6 +192,12 @@ function yesNo(text) {
 function median(xs) {
   const s = [...xs].sort((a, b) => a - b);
   return s.length ? s[Math.floor(s.length / 2)] : null;
+}
+
+// Probabilities print as 3-decimal figures; anything else (null, "-") passes
+// through so absent evidence stays visibly absent.
+function fmt(x) {
+  return Number.isFinite(x) ? Number(x).toFixed(3) : "-";
 }
 
 async function main() {
@@ -256,48 +267,64 @@ async function main() {
   // samples and called them two observations.
   let cursor = 0;
   const rows = [];
-  for (const mission of MISSIONS) {
-    console.log(`\n=== mission: "${mission}" ===`);
-    await setMission(mission);
-    if (String((await client.tryEval(toggleText)) || "").startsWith("Arm")) {
-      await client.tryEval(`document.getElementById('toggle').click()`);
-      await sleep(6_000); // let the worker come up before the first scan
-    }
-    const scans = [];
-    const deadline = Date.now() + MISSION_BUDGET_MS;
-    let lastLog = 0;
-    while (Date.now() < deadline && scans.length < SAMPLES) {
-      await sleep(5_000);
-      let all = [];
-      try {
-        const v = await client.tryEval(`JSON.stringify((window.__v || []).slice(${cursor}))`);
-        all = JSON.parse(v || "[]");
-      } catch {
-        continue;
+  const byMission = new Map(MISSIONS.map((m) => [m, []]));
+  // Interleave missions (A,B,A,B…) instead of collecting all of one then all
+  // of the other: the camera watches a live scene, and a minutes-long A block
+  // followed by a B block confounds mission with scene drift.
+  for (let round = 0; round < SAMPLES; round++) {
+    for (const mission of MISSIONS) {
+      console.log(`\n=== mission: "${mission}" (round ${round + 1}/${SAMPLES}) ===`);
+      await setMission(mission);
+      if (String((await client.tryEval(toggleText)) || "").startsWith("Arm")) {
+        await client.tryEval(`document.getElementById('toggle').click()`);
+        await sleep(6_000); // let the worker come up before the first scan
       }
-      cursor += all.length;
-      for (const m of all) {
-        if (m.kind === "ready" && m.runtime) {
-          console.log(
-            `  worker ready: device=${m.device} yes/no ids=${JSON.stringify(m.yesNoIds)} ` +
-              `isolated=${m.runtime.isolated} threads=${m.runtime.numThreads} proxy=${m.runtime.proxy}`,
-          );
-        } else if (m.kind === "error") {
-          console.log(`  worker error: ${m.message}`);
-        } else if (m.kind === "scan") {
-          scans.push(m);
-          console.log(
-            `  [${scans.length}] ${m.ms}ms tok=${m.tokens ?? "-"}${m.truncated ? " truncated" : ""} ` +
-              `logitYES=${m.firstTokenProb ?? "-"} => ${yesNo(m.text) || "?"} | ${m.text.slice(0, 160)}`,
-          );
+      const scans = byMission.get(mission);
+      const deadline = Date.now() + MISSION_BUDGET_MS;
+      let lastLog = 0;
+      while (Date.now() < deadline && scans.length < round + 1) {
+        await sleep(5_000);
+        let all = [];
+        try {
+          const v = await client.tryEval(`JSON.stringify((window.__v || []).slice(${cursor}))`);
+          all = JSON.parse(v || "[]");
+        } catch {
+          continue;
+        }
+        cursor += all.length;
+        for (const m of all) {
+          if (m.kind === "ready" && m.runtime) {
+            console.log(
+              `  worker ready: device=${m.device} yes/no ids=${JSON.stringify(m.yesNoIds)} ` +
+                `isolated=${m.runtime.isolated} threads=${m.runtime.numThreads} proxy=${m.runtime.proxy}`,
+            );
+          } else if (m.kind === "error") {
+            console.log(`  worker error: ${m.message}`);
+          } else if (m.kind === "scan" && m.purpose !== "detect") {
+            // Announce/webhook legs are real generations but not verdicts;
+            // counting them here is how v1 "reached SAMPLES=3" off one frame.
+            console.log(
+              `  [leg ${m.purpose || "unknown"}] ${m.ms}ms tok=${m.tokens ?? "-"} | ${m.text.slice(0, 100)}`,
+            );
+          } else if (m.kind === "scan") {
+            scans.push(m);
+            console.log(
+              `  [${scans.length}] ${m.ms}ms tok=${m.tokens ?? "-"} steps=${m.decodeSteps ?? "-"}` +
+                ` P(yes)=${fmt(m.yesProb)} P(yes|yn)=${fmt(m.verdictProb)} P(emitted)=${fmt(m.firstTokenProb)}` +
+                ` => ${yesNo(m.text) || "?"} | ${m.text.slice(0, 160)}`,
+            );
+          }
+        }
+        if (Date.now() - lastLog > 45_000) {
+          lastLog = Date.now();
+          const st = await client.tryEval(`document.body.innerText.replace(/\\s+/g," ").slice(0,110)`);
+          console.log(`  status: ${String(st || "").slice(0, 100)}`);
         }
       }
-      if (Date.now() - lastLog > 45_000) {
-        lastLog = Date.now();
-        const st = await client.tryEval(`document.body.innerText.replace(/\\s+/g," ").slice(0,110)`);
-        console.log(`  status: ${String(st || "").slice(0, 100)}`);
-      }
     }
+  }
+  for (const mission of MISSIONS) {
+    const scans = byMission.get(mission);
     const yes = scans.filter((s) => yesNo(s.text) === "YES").length;
     rows.push({
       mission,
@@ -306,7 +333,10 @@ async function main() {
       no: scans.filter((s) => yesNo(s.text) === "NO").length,
       medMs: median(scans.map((s) => s.ms).filter(Number.isFinite)),
       medTok: median(scans.map((s) => s.tokens).filter(Number.isFinite)),
-      medLogitYes: median(scans.map((s) => s.firstTokenProb).filter((x) => Number.isFinite(x))),
+      // P(emitted) mixes P(YES) with P(NO) across verdicts and is not a
+      // P(yes|frame); the YES-vs-NO renormalisation is the comparable number.
+      medVerdictProb: median(scans.map((s) => s.verdictProb).filter((x) => Number.isFinite(x))),
+      medPYes: median(scans.map((s) => s.yesProb).filter((x) => Number.isFinite(x))),
       sample: scans[0]?.text?.slice(0, 140) || null,
     });
     console.log(`  => ${yes}/${scans.length} YES, median ${rows.at(-1).medMs}ms`);

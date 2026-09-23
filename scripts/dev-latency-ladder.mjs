@@ -229,12 +229,15 @@ async function runModel(key) {
         `  note: ${raw.length} samples came from a stale hook version — close and reopen the app tab`,
       );
     }
-    // The Settings STATUS line reports the granted device, which is the
-    // execution-provider column this table needs: a WASM fallback stays
-    // invisible in latency numbers until they are already minutes long.
+    // The granted device is the execution-provider column this table needs: a
+    // WASM fallback stays invisible in latency numbers until they are already
+    // minutes long. `aura.runtime` is written by the app itself when the
+    // worker reports in, so it reflects what actually ran — the DOM STATUS
+    // scrape this replaced could survive a model swap and pin the previous
+    // model's device onto the new row.
     const seenEp = await client.tryEval(
-      `(() => { const t = [...document.querySelectorAll('p,div,span,small')].map(e => e.textContent || '');
-        const hit = t.find(x => /WEBGPU|WASM|CUDA|buffers/i.test(x)); return hit ? hit.replace(/\\s+/g,' ').slice(0, 90) : null; })()`,
+      `(() => { try { const r = JSON.parse(localStorage.getItem('aura.runtime') || 'null');
+        return r ? String(r.device || '') : null; } catch { return null; } })()`,
     );
     if (seenEp) ep = seenEp;
     if (seen.length >= SAMPLES) {
