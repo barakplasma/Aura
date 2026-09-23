@@ -165,6 +165,9 @@ const HOOK = `(() => {
           // shows whether a verdict was measured or defaulted to 100.
           conf: d.logits && d.logits.firstTokenProb != null ? Math.round(100 * d.logits.firstTokenProb) : null,
           verdictProb: d.logits && d.logits.verdictProb != null ? Math.round(100 * d.logits.verdictProb) : null,
+          // Decode steps the capture saw: one token is a decisive answer,
+          // forty means the model rambled into the token cap.
+          steps: d.logits?.decodeSteps ?? null,
         });
       };
       const add = this.addEventListener.bind(this);

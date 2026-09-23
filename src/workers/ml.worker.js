@@ -42,12 +42,12 @@ import {
   AutoModelForImageTextToText,
   RawImage,
   StoppingCriteria,
-  env,
 } from "@huggingface/transformers";
 import { fetchModelSizeEstimate } from "../../lib/model-size.js";
 import { createProgressState, recordProgress, aggregateProgress } from "../../lib/download-progress.js";
 import { deviceRequest, limitReport } from "../../lib/webgpu-limits.js";
 import { verdictStats, singleTokenId } from "../../lib/logprob.js";
+import { makeLogitCapture } from "../../lib/logit-capture.js";
 
 // Point ONNX Runtime Web at same-origin WASM files instead of its default CDN,
 // so the browser engine works offline once cached (see scripts/build-react.js,
@@ -343,24 +343,13 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
     repetition_penalty: 1.2,
     stopping_criteria: stopping,
   };
-  // Scores cost one extra vocab-width row per step (~28 MB for 48 steps at a
-  // 150k vocabulary), so they are requested only for scans whose caller reads
-  // them. Not every exported graph supports them: on failure the scan is
-  // retried once without scores and the model is remembered as unable, so a
-  // live monitor never repeats a generation it cannot use.
-  let outputIds = null;
-  let scores = null;
-  if (wantLogits && !current.scoresUnsupported) {
-    try {
-      const gen = await model.generate({ ...base, output_scores: true });
-      [outputIds, scores] = Array.isArray(gen) ? gen : [gen, null];
-    } catch (err) {
-      current.scoresUnsupported = true;
-      console.warn("[aura] output_scores unsupported, falling back:", String(err?.message).slice(0, 120));
-      if (stopping.shouldStop) throw err;
-    }
-  }
-  if (!outputIds) outputIds = await model.generate(base);
+  // Greedy decoding makes the verdict deterministic, and the capture makes it
+  // measurable: P(first token) plus the YES-vs-NO margin over the same row.
+  // Only legs whose caller reads a confidence pay for it (`wantLogits`), which
+  // is the detection leg; the row copy is ~600 KB at a 150k vocabulary.
+  const capture = makeLogitCapture();
+  const options = wantLogits ? { ...base, logits_processor: [capture.process] } : base;
+  const outputIds = await model.generate(options);
 
   const generatedLength = outputIds.dims?.at(-1) ?? promptLength;
   const decoded = processor.batch_decode(
@@ -372,11 +361,15 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
   const emitted = outputIds?.data
     ? Array.from(outputIds.data).slice(promptLength).map(Number)
     : [];
+  // `emitted[0]` is the token the captured row chose, so the alignment
+  // verdictStats needs holds by construction. No row means the model was asked
+  // for logits it never produced, and null says so instead of inventing a 100.
+  const logits = capture.state.row ? verdictStats([capture.state.row], emitted, verdictIds) : null;
   post({
     id,
     type: "result",
     text: (decoded?.[0] || "").trim(),
-    logits: scores ? verdictStats(scores, emitted, verdictIds) : null,
+    logits: logits ? { ...logits, decodeSteps: capture.state.steps } : null,
     usage: {
       prompt_tokens: promptLength,
       completion_tokens: completionTokens,
