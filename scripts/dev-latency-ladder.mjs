@@ -18,6 +18,7 @@
 //   node scripts/dev-latency-ladder.mjs
 //   SAMPLES=8 MODELS=smolvlm2-256m,smolvlm2-500m node scripts/dev-latency-ladder.mjs
 
+import WebSocket from "ws";
 import { percentile } from "../lib/stats.js";
 import { BROWSER_MODELS } from "../lib/browser-models.js";
 
@@ -39,27 +40,62 @@ const NO_GPU = process.env.NO_GPU === "1";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function pageTarget() {
-  const list = await (await fetch(`${CDP}/json`)).json();
-  const pages = list.filter((x) => x.type === "page");
-  const t =
-    pages.find((x) => x.url.startsWith(APP.replace(/\/$/, ""))) ||
-    // Android kills a renderer under memory pressure — which a WASM-fallback
-    // row does on every scan — and Chrome keeps the tab, its title, and its
-    // debugger socket while blanking the URL. Refusing to use that tab turned
-    // a recoverable kill into "no Aura tab" for every row of a run.
-    pages.find((x) => (x.title || "").includes("Aura"));
-  if (!t) throw new Error(`no Aura tab at ${APP} — open it on the phone (is CDP forwarded?)`);
-  const matched = pages.filter((x) => x.url.startsWith(APP.replace(/\/$/, "")));
-  if (matched.length > 1) {
-    // Two tabs both hold the camera and both spawn a worker, so every sample
-    // becomes a race between two monitors on two models. Refusing costs one
-    // line; a table of numbers that describe neither model cost 80 minutes.
-    throw new Error(`${matched.length} Aura tabs open — close all but one`);
+  // Verify the candidate is actually alive before handing it to runModel: a
+  // tab the operator closed still lingers in /json long enough for a connect
+  // to "succeed" and every subsequent evaluate to fail forever — which is
+  // exactly how the qwen row stalled silently for 25 minutes.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const list = await (await fetch(`${CDP}/json`)).json();
+    const pages = list.filter((x) => x.type === "page");
+    const t =
+      pages.find((x) => x.url.startsWith(APP.replace(/\/$/, ""))) ||
+      // Android kills a renderer under memory pressure — which a WASM-fallback
+      // row does on every scan — and Chrome keeps the tab, its title, and its
+      // debugger socket while blanking the URL. Refusing to use that tab turned
+      // a recoverable kill into "no Aura tab" for every row of a run.
+      pages.find((x) => (x.title || "").includes("Aura"));
+    if (!t)
+      throw new Error(`no Aura tab at ${APP} — open it on the phone (is CDP forwarded?)`);
+    const matched = pages.filter((x) => x.url.startsWith(APP.replace(/\/$/, "")));
+    if (matched.length > 1) {
+      // Two tabs both hold the camera and both spawn a worker, so every sample
+      // becomes a race between two monitors on two models. Refusing costs one
+      // line; a table of numbers that describe neither model cost 80 minutes.
+      throw new Error(`${matched.length} Aura tabs open — close all but one`);
+    }
+    if (!t.url.startsWith(APP.replace(/\/$/, ""))) {
+      process.stderr.write(`  (reusing Aura tab ${t.id} with blank url — reviving it)\n`);
+    }
+    // Liveness probe: a real evaluate through the real socket. On failure,
+    // re-list and try the next candidate — the list refreshes as Chrome
+    // destroys the dead target.
+    try {
+      const probe = new WebSocket(t.webSocketDebuggerUrl);
+      await new Promise((r, j) => ((probe.onopen = r), (probe.onerror = j)));
+      const ok = await new Promise((resolve) => {
+        const tm = setTimeout(() => resolve(false), 8_000);
+        probe.onmessage = (e) => {
+          const m = JSON.parse(e.data);
+          if (m.id === 1) {
+            clearTimeout(tm);
+            // `returnByValue` gives the number 1 — comparing it to the string
+            // "1" reported every live tab as dead.
+            resolve(String(m.result?.result?.value) === "1");
+          }
+        };
+        probe.send(
+          JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1", returnByValue: true } }),
+        );
+      });
+      probe.close();
+      if (ok) return t;
+      process.stderr.write(`  (tab ${t.id} did not answer an evaluate — re-listing)\n`);
+    } catch (e) {
+      process.stderr.write(`  (tab ${t.id} socket failed: ${e.message} — re-listing)\n`);
+    }
+    await sleep(2_000);
   }
-  if (!t.url.startsWith(APP.replace(/\/$/, ""))) {
-    process.stderr.write(`  (reusing Aura tab ${t.id} with blank url — reviving it)\n`);
-  }
-  return t;
+  throw new Error("no live Aura tab answered an evaluate in 3 attempts");
 }
 
 function connect(url) {
@@ -212,7 +248,15 @@ async function runModel(key) {
   let armed = "no-toggle";
   for (let i = 0; i < 8 && armed === "no-toggle"; i++) {
     armed = await armTab(client);
-    if (armed === "no-toggle") await sleep(5_000);
+    if (armed === "no-toggle") {
+      // Silent arming failure cost a whole qwen session: the loop spun 8
+      // times, the budget loop polled `window.__lat` into nothing, and the
+      // only symptom was a model row that never appeared. Say what happened.
+      process.stderr.write(
+        `  (arm try ${i + 1}/8 failed${client.lastError ? `: ${client.lastError}` : ""})\n`,
+      );
+      await sleep(5_000);
+    }
   }
 
   const deadline = Date.now() + MODEL_BUDGET_MS;

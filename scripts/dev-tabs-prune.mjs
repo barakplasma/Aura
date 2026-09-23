@@ -30,10 +30,17 @@ console.log(`${pages.length} page tab(s); ${mine.length} match "${MATCH}"; ${oth
 for (const t of mine) console.log(`  candidate ${t.id}  ${t.url}  | ${(t.title || "").slice(0, 40)}`);
 if (others.length)
   console.log(
-    `  left alone: ${others
-      .slice(0, 6)
-      .map((t) => new URL(t.url).host)
-      .join(", ")}${others.length > 6 ? ` +${others.length - 6} more` : ""}`,
+    `  left alone: ${
+      others
+        .slice(0, 6)
+        .map((t) => {
+          try {
+            return new URL(t.url).host || t.url.slice(0, 30);
+          } catch {
+            return (t.url || "(no url)").slice(0, 30);
+          }
+        })
+        .join(", ")}${others.length > 6 ? ` +${others.length - 6} more` : ""}`,
   );
 
 if (mine.length <= 1) {
