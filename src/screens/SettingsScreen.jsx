@@ -7,6 +7,7 @@ import {
   DEFAULT_BROWSER_MODEL,
   FALLBACK_BROWSER_MODEL,
   browserModelKeys,
+  modelUnsupportedReason,
   pickBrowserModel,
   probeBrowserEnv,
   probeChromeAI,
@@ -81,8 +82,13 @@ export default function SettingsScreen({
   }
 
   // BROWSER MODEL — see lib/browser-models.js for the table and the picker.
+  // A stale selection (or a row greyed since it was chosen) falls back to the
+  // default, so a <select> whose every option is enabled never shows a value
+  // that is not one of them.
   const browserModelKey =
-    browserModel && BROWSER_MODELS[browserModel] ? browserModel : DEFAULT_BROWSER_MODEL;
+    browserModel && BROWSER_MODELS[browserModel] && !BROWSER_MODELS[browserModel].unsupportedReason
+      ? browserModel
+      : DEFAULT_BROWSER_MODEL;
   const browserModelCfg = BROWSER_MODELS[browserModelKey];
   const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
   // The adapter's buffer limits need an async requestAdapter(), so the probe
@@ -445,12 +451,12 @@ export default function SettingsScreen({
               >
                 {browserModelKeys().map((key) => {
                   const cfg = BROWSER_MODELS[key];
-                  const unsupported = Boolean(gpuEnv && cfg.requiresWebGpu && !gpuEnv.hasShaderF16);
+                  const unsupportedReason = modelUnsupportedReason(key, gpuEnv ? { hasWebGpu: true, hasShaderF16: gpuEnv.hasShaderF16 } : {});
                   return (
-                  <option key={key} value={key} disabled={unsupported}>
+                  <option key={key} value={key} disabled={Boolean(unsupportedReason)}>
                     {cfg.label} · {cfg.sizeLabel}
                     {cfg.promptProfile === 'compact' ? ' · basic' : ''}
-                    {unsupported ? ' · requires WebGPU fp16' : ''}
+                    {unsupportedReason ? ` · ${unsupportedReason}` : ''}
                   </option>
                   );
                 })}
