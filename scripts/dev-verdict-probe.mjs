@@ -219,23 +219,30 @@ async function main() {
     await sleep(2_500);
   };
 
-  // The mission field is an Ionic custom element on the Missions tab: its real
-  // textarea sits in shadow DOM, React state updates only from `ionInput`
-  // (which the inner textarea emits for a composed `input` event), and the
-  // field is not in the document at all while another tab is mounted. An
-  // earlier revision looked for `#mission` and reported "MISSING".
+  // The mission field is an `ion-textarea` on the Mission tab and the app binds
+  // `onIonInput`, reading `e.detail.value`. Probing this build showed the inner
+  // textarea is *not* in shadow DOM (`shadowTextarea=false`) and the value
+  // lives on the custom element, so a plain `input` event never reaches React:
+  // an earlier revision wrote `host.value`, read it back, and called that a
+  // successful state change when it was only a DOM write. Dispatch the event the
+  // app actually listens for, then verify the state itself — `mission` comes
+  // from useLocalStorage, so a real update lands in localStorage immediately.
   const setMission = async (mission) => {
     await goTab("mission");
     const got = await client.tryEval(
       `(() => { const host = document.querySelector('ion-textarea[label="Watch for"]') || document.querySelector('ion-textarea');
         if (!host) return 'FIELD MISSING';
-        const ta = host.shadowRoot?.querySelector('textarea') || host.querySelector('textarea') || host;
-        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, ${JSON.stringify(mission)});
-        ta.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-        return String(ta.value); })()`,
+        host.value = ${JSON.stringify(mission)};
+        host.dispatchEvent(new CustomEvent('ionInput', { bubbles: true, detail: { value: host.value } }));
+        return String(host.value); })()`,
     );
-    if (String(got) !== mission) throw new Error(`mission did not stick (read back: ${got})`);
-    await goTab("home");
+    if (String(got) !== mission) throw new Error(`mission field rejected the value: ${got}`);
+    const stored = await client.tryEval(
+      `(() => { try { return JSON.parse(localStorage.getItem('aura.mission') || 'null'); } catch { return null; } })()`,
+    );
+    if (String(stored) !== mission)
+      throw new Error(`mission state did not update — localStorage says ${JSON.stringify(stored)}`);
+    await goTab("monitor");
   };
 
   // Arm idempotently by reading the button: the app restores `armed` from

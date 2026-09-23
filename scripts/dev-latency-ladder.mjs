@@ -129,7 +129,7 @@ function connect(url) {
 // the `__latPatched` race forever, and a later run would quietly sample the
 // older hook's payload shape. Records carry this number so the collector can
 // refuse samples it did not produce.
-const HOOK_V = 3;
+const HOOK_V = 4;
 const HOOK = `(() => {
   if (window.__latV === ${HOOK_V}) return;
   window.__latV = ${HOOK_V};
@@ -143,7 +143,7 @@ const HOOK = `(() => {
       const post = this.postMessage.bind(this);
       this.postMessage = (msg, ...rest) => {
         if (msg && msg.type === 'scan') {
-          pending.set(msg.id, { t0: Date.now(), maxNewTokens: msg.maxNewTokens ?? null });
+          pending.set(msg.id, { t0: Date.now(), maxNewTokens: msg.maxNewTokens ?? null, purpose: msg.purpose ?? null });
         }
         return post(msg, ...rest);
       };
@@ -160,6 +160,7 @@ const HOOK = `(() => {
           tokens: d.usage ? d.usage.completion_tokens : null,
           promptTokens: d.usage ? d.usage.prompt_tokens : null,
           maxNewTokens: p.maxNewTokens,
+          purpose: p.purpose,
           // Confidence the worker derived from its own logits, so the table
           // shows whether a verdict was measured or defaulted to 100.
           conf: d.logits && d.logits.firstTokenProb != null ? Math.round(100 * d.logits.firstTokenProb) : null,
@@ -251,6 +252,29 @@ function summarise({ key, armed, ep, rows, err }) {
     (r) => row && r.maxNewTokens === (row.promptProfile === "json" ? 160 : 48),
   );
   const picked = detect.length >= 3 ? detect : rows;
+  // Per-leg numbers: one alert costs three generations, so a single p90 column
+  // is not actionable — and before `purpose` was put on the wire, a
+  // "detection p90" quietly included announcement and webhook calls whenever
+  // fewer than three detection samples arrived (`role: all-calls`). A leg with
+  // no samples reports null instead of pretending.
+  const leg = (want) => {
+    const xs = rows
+      .filter((r) => r.purpose === want)
+      .map((r) => r.latencyMs)
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    if (!xs.length) return null;
+    return {
+      n: xs.length,
+      p50: +(percentile(xs, 50) / 1000).toFixed(1),
+      p90: +(percentile(xs, 90) / 1000).toFixed(1),
+    };
+  };
+  const legs = { detect: leg("detect"), announce: leg("announce"), webhook: leg("webhook") };
+  const alertP90 =
+    legs.detect && legs.announce && legs.webhook
+      ? +(legs.detect.p90 + legs.announce.p90 + legs.webhook.p90).toFixed(1)
+      : null;
   const use = picked.map((r) => r.latencyMs).filter((n) => Number.isFinite(n));
   // Median logit-derived confidence. A column of 100s means the model is
   // still asserting certainty; a spread means the slider has signal to act on.
@@ -267,6 +291,8 @@ function summarise({ key, armed, ep, rows, err }) {
     max: +(sorted.at(-1) / 1000).toFixed(1),
     tok: +(rows.reduce((s, r) => s + (r.tokens || 0), 0) / rows.length).toFixed(1),
     conf: confs.length ? Math.round(percentile(confs, 50)) : null,
+    legs,
+    alertP90,
     role: detect.length >= 3 ? "detect-only" : "all-calls",
     ep,
     armed,
@@ -300,3 +326,18 @@ for (const r of out) {
     r.note || "",
   );
 }
+
+// The row that matters for "how long until I hear about it" is the sum of the
+// three legs.
+console.log("\nper-leg p90 (seconds)");
+console.table(
+  out.map((r) => ({
+    model: r.label,
+    detect_n: r.legs?.detect?.n ?? 0,
+    detect_p50: r.legs?.detect?.p50 ?? "-",
+    detect_p90: r.legs?.detect?.p90 ?? "-",
+    announce_p90: r.legs?.announce?.p90 ?? "-",
+    webhook_p90: r.legs?.webhook?.p90 ?? "-",
+    alert_p90: r.alertP90 ?? "-",
+  })),
+);

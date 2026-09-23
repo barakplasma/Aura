@@ -19,8 +19,12 @@
 //        far against the model's overall expected download size (see
 //        lib/model-size.js + lib/download-progress.js) — not that one file's
 //        own numbers — so pct only goes up as the load progresses.
-//   <- { id, type: 'ready',  device: 'webgpu' | 'wasm' }
-//   -> { id, type: 'scan',   prompt, imageDataUrls, maxNewTokens }
+//   <- { id, type: 'ready',  device: 'webgpu' | 'wasm', runtime, yesNoIds }
+//   -> { id, type: 'scan',   prompt, imageDataUrls, maxNewTokens, wantLogits, purpose }
+//        `purpose` ('detect' | 'announce' | 'webhook') is unused here; the dev
+//        latency harness reads it because the three generation legs are
+//        otherwise inseparable on the wire — announce and webhook share one
+//        token budget, so `maxNewTokens` cannot tell them apart.
 //        `imageDataUrls` is a frame list — normally exactly one entry; a
 //        temporal model receives a short sequence. (The older single
 //        `imageDataUrl` field is still accepted.)
