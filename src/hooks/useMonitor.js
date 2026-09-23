@@ -10,7 +10,11 @@ import {
 import { recordLatency, percentile, tunedTimeoutMs } from "../../lib/stats.js";
 import { computeGapMs, emaUpdate } from "../../lib/scheduler.js";
 import { costForUsage } from "../../lib/pricing.js";
-import { shouldCatchUp, nextReconnectDelayMs } from "../../lib/keepalive.js";
+import {
+  shouldCatchUp,
+  nextReconnectDelayMs,
+  RECONNECT_ATTEMPTS,
+} from "../../lib/keepalive.js";
 import { createAlertStore } from "../../lib/alert-store.js";
 import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
 import { useWakeLock } from "./useWakeLock.js";
@@ -52,8 +56,6 @@ const PROGRESS_INTERVAL_MS = 250;
 // "ended" — some Android builds mute the track instead of ending it when the
 // OS reclaims the camera.
 const VISIBLE_MUTE_TIMEOUT_MS = 10000;
-// Reconnect attempts before giving up and stopping (see nextReconnectDelayMs).
-const MAX_RECONNECT_ATTEMPTS = 3;
 
 const IDLE_PROGRESS = {
   phase: "idle",
@@ -747,6 +749,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     clearTimeout(internalRef.current.loopTimer);
     clearInterval(internalRef.current.progressTimer);
     if (internalRef.current.abort) internalRef.current.abort.abort();
+    clearTimeout(internalRef.current.reconnectTimer);
     releaseStream(internalRef, videoRef);
     resetFeedback();
     setRunning(false);
@@ -824,9 +827,22 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     async (attempt = 1) => {
       const st = internalRef.current;
       if (!st.running) return;
+      // Each entry invalidates any earlier reconnect attempt: a stale loop's
+      // late acquireStream success or scheduled retry must not fight the
+      // fresh one (the visibility handler starts attempt 1 while a hidden
+      // retry may still be pending).
+      const seq = (st.reconnectSeq || 0) + 1;
+      st.reconnectSeq = seq;
+      clearTimeout(st.reconnectTimer);
       st.reconnecting = true;
+      const hidden = document.visibilityState !== "visible";
+      // A hidden tab cannot get the camera back no matter how we ask (Android
+      // refuses background getUserMedia), so the honest message there is
+      // "paused", not "lost" — the session resumes on return to visible.
       setStatus(
-        `Camera lost — reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})…`,
+        hidden
+          ? "Camera paused in background — resumes on return."
+          : `Camera lost — reconnecting (${attempt}/${RECONNECT_ATTEMPTS})…`,
       );
       if (st.stream) {
         st.stream.getTracks().forEach((t) => t.stop());
@@ -834,7 +850,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       }
       try {
         const stream = await acquireStream();
-        if (!internalRef.current.running) {
+        if (st.reconnectSeq !== seq || !internalRef.current.running) {
+          // Superseded or disarmed while acquiring — drop what we got.
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
@@ -849,14 +866,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         st.reconnecting = false;
         setStatus("Monitoring…");
       } catch (err) {
-        const delay = nextReconnectDelayMs(attempt);
+        if (st.reconnectSeq !== seq || !internalRef.current.running) return;
+        const delay = nextReconnectDelayMs(attempt, hidden);
         if (delay == null) {
+          // Visible, ladder exhausted — the operator is looking at the tab
+          // and can act on this; giving up silently here is the failure mode.
           st.reconnecting = false;
           stop();
           setStatus(`Camera lost — tap ARM to retry. (${err.message})`);
           return;
         }
-        setTimeout(() => reconnectRef.current?.(attempt + 1), delay);
+        st.reconnectTimer = setTimeout(
+          () => reconnectRef.current?.(attempt + 1),
+          delay,
+        );
       }
     },
     [acquireStream, stop, videoRef],
@@ -990,6 +1013,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       const st = internalRef.current;
       if (!st.running) return;
       if (document.visibilityState === "visible") {
+        // Returning to a visible tab is the one moment Android will grant the
+        // camera again, so a reconnect in flight restarts from attempt 1
+        // immediately instead of waiting out the hidden-cadence 30s timer.
+        // reconnect() invalidates the superseded attempt by sequence.
+        if (st.reconnecting) {
+          reconnectRef.current?.(1);
+          return;
+        }
         if (shouldCatchUp(st.lastScanAt, st.lastGapMs, performance.now())) {
           clearTimeout(st.loopTimer);
           tick();
