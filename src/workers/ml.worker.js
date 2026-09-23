@@ -276,6 +276,10 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
   // repos via AutoTokenizer — so fall back to an explicit load.
   const verdictTokenizer =
     processor.tokenizer ?? (await AutoTokenizer.from_pretrained(model));
+  const yesNoIds = {
+    yes: singleTokenId(verdictTokenizer, "YES"),
+    no: singleTokenId(verdictTokenizer, "NO"),
+  };
   current = {
     task,
     modelId: model,
@@ -285,12 +289,13 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     processor,
     recipe: recipe || {},
     stopping: new InterruptableStoppingCriteria(),
-    verdictIds: {
-      yes: singleTokenId(verdictTokenizer, "YES"),
-      no: singleTokenId(verdictTokenizer, "NO"),
-    },
+    verdictIds: yesNoIds,
   };
-  post({ id, type: "ready", device: resolvedDevice, limits, runtime: runtimeInfo() });
+  // yesNoIds is for the harnesses: the probe's ready line prints it, and a
+  // null here is the difference between "the margin is off" and "the margin
+  // says the model is 98.8% NO" — which was a wrong-id artefact, not a
+  // verdict.
+  post({ id, type: "ready", device: resolvedDevice, limits, runtime: runtimeInfo(), yesNoIds });
 }
 
 async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens, wantLogits, purpose }) {

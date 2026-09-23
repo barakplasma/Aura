@@ -64,6 +64,19 @@ test("singleTokenId takes only single-token encodings", () => {
   assert.equal(singleTokenId(one("nothing"), "YES"), null);
 });
 
+test("singleTokenId resolves title case — the casing SmolVLM2 actually answers in", () => {
+  // Measured on the reference phone: the model answered "Yes" while the
+  // upper/lower lookups found ids it never emits, so the margin read 98.8% NO
+  // against a literal "Yes" in the text. "YES" itself is not single-token
+  // here; only "Yes" is — and the lookup must find it.
+  const vocab = { YES: [91, 37], yes: [91, 37], Yes: [10407] };
+  const tok = (s, o) => {
+    assert.deepEqual(o, { add_special_tokens: false });
+    return { input_ids: vocab[s] || [9137, 310] };
+  };
+  assert.equal(singleTokenId(tok, "YES"), 10407);
+});
+
 test("singleTokenId survives a tokenizer that throws", () => {
   assert.equal(singleTokenId(() => { throw new Error("no tokenizer here"); }, "NO"), null);
 });
