@@ -103,7 +103,25 @@ if (!problems.length) {
 // --- 3. app in the foreground ----------------------------------------------
 section("chrome");
 if (!problems.length) {
-  adb("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", APP, PKG);
+  // Foreground without navigating when a tab already exists. `am start -d <url>`
+  // opens a NEW tab on every run — that is how three identical app tabs stacked
+  // up, and two workers taking turns at one camera turns every latency sample
+  // into a mixture of two processes (see scripts/dev-tabs-prune.mjs).
+  const match = new URL(APP).host;
+  let haveTab = false;
+  try {
+    const r = await fetch(`${CDP}/json/list`, { signal: AbortSignal.timeout(8_000) });
+    haveTab = (await r.json()).some((t) => t.type === "page" && (t.url || "").includes(match));
+  } catch {
+    haveTab = false;
+  }
+  if (haveTab) {
+    console.log(`app tab on ${match} exists: raising Chrome without opening another`);
+    adb("shell", "monkey", "-p", PKG, "1");
+  } else {
+    console.log(`no app tab: opening ${APP}`);
+    adb("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", APP, PKG);
+  }
   await new Promise((r) => setTimeout(r, 6_000));
   const win = adb("shell", "dumpsys", "window");
   const focus = (win.match(/mCurrentFocus=Window\{[^}]*\}/g) || []).join(" | ");
