@@ -39,6 +39,13 @@ export function useServiceWorkerUpdate() {
     // Fires once the accepted update actually takes control — reload then,
     // not before, so the new worker (and its fresh cache) is what serves the
     // reloaded page.
+    //
+    // It also fires on the very first visit, when the fresh worker's
+    // clients.claim() takes over an uncontrolled page — and that reload is
+    // load-bearing: COOP/COEP (cross-origin isolation, hence threaded WASM and
+    // the WebGPU-capable ORT build) are stamped on by the service worker (see
+    // scripts/sw-template.js), so a page it didn't serve is never isolated.
+    // Don't narrow this to "accepted updates only" without replacing that.
     let reloaded = false;
     function onControllerChange() {
       if (reloaded) return;

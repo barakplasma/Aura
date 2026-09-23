@@ -6,6 +6,7 @@ import {
   FALLBACK_BROWSER_MODEL,
   browserModelKeys,
   getBrowserModel,
+  modelKnownIssue,
   modelUnsupportedReason,
   pickBrowserModel,
   probeBrowserEnv,
@@ -176,16 +177,18 @@ test("SmolVLM2 500M is an opt-in row sharing the 256M's calling convention", () 
   assert.equal(cfg.requiresWebGpu, true);
 });
 
-test("the auto-pick on a Pixel 10-class device skips the greyed qwen row", () => {
+test("a measured failure on one phone warns and blocks auto-pick, but does not disable the row", () => {
   const pixel10 = { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
-  // qwen3.5-0.8b held both titles until the reference phone measured it:
-  // a scan never finished and the device crashed (VK_ERROR_DEVICE_LOST in
-  // surfaceflinger). The recommendation must track what actually runs.
-  assert.equal(modelUnsupportedReason("qwen3.5-0.8b"), "scan never finished on the reference phone — hung WebGPU inference, tab wedged");
+  // qwen3.5-0.8b hung and took a Pixel 7a down (VK_ERROR_DEVICE_LOST). That
+  // is a verdict about one device: the recommendation must avoid it, but a
+  // capable device can still choose it deliberately.
+  assert.match(modelKnownIssue("qwen3.5-0.8b"), /Pixel 7a/);
+  assert.equal(modelUnsupportedReason("qwen3.5-0.8b", { hasWebGpu: true, hasShaderF16: true }), null);
   assert.notEqual(pickBrowserModel(pixel10), "qwen3.5-0.8b");
   assert.equal(DEFAULT_BROWSER_MODEL, "smolvlm2-500m");
-  // The default itself must always be a selectable row.
+  assert.equal(modelKnownIssue(DEFAULT_BROWSER_MODEL), null, "the default must have no known issue");
   assert.equal(modelUnsupportedReason(DEFAULT_BROWSER_MODEL, { hasWebGpu: true, hasShaderF16: true }), null);
+  assert.equal(modelKnownIssue("no-such-row"), null);
 });
 
 test("modelUnsupportedReason names the device gate separately from the catalogue gate", () => {

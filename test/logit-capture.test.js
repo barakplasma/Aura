@@ -77,3 +77,14 @@ test("no capture means no invented confidence", () => {
   // number that happens to read as certainty.
   assert.equal(verdictStats(state.row ? [state.row] : null, [2], { yes: 2, no: 3 }), null);
 });
+
+test("records when the first step arrived, and can skip the row copy", () => {
+  let t = 100;
+  const { state, process: onLogits } = makeLogitCapture({ copyRow: false, now: () => t });
+  onLogits([], { data: Float32Array.from([1, 2]), dims: [1, 2] });
+  t = 250;
+  onLogits([], { data: Float32Array.from([3, 4]), dims: [1, 2] });
+  assert.equal(state.firstStepAt, 100, "prefill ends at the first logits, not the last");
+  assert.equal(state.row, null, "prose legs do not pay for a vocabulary copy");
+  assert.equal(state.steps, 2);
+});

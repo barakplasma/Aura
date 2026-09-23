@@ -20,7 +20,10 @@
 //        lib/model-size.js + lib/download-progress.js) — not that one file's
 //        own numbers — so pct only goes up as the load progresses.
 //   <- { id, type: 'ready',  device: 'webgpu' | 'wasm', runtime, yesNoIds }
-//   -> { id, type: 'scan',   prompt, imageDataUrls, maxNewTokens, wantLogits, purpose }
+//   <- { type: 'fatal', message }   the GPU device was lost; the page must
+//        terminate this worker and spawn a fresh one (nothing here recovers)
+//   -> { id, type: 'scan',   prompt, imageDataUrls, maxNewTokens, wantLogits,
+//        repetitionPenalty, purpose }
 //        `purpose` ('detect' | 'announce' | 'webhook') is unused here; the dev
 //        latency harness reads it because the three generation legs are
 //        otherwise inseparable on the wire — announce and webhook share one
@@ -48,8 +51,9 @@ import {
 import { fetchModelSizeEstimate } from "../../lib/model-size.js";
 import { createProgressState, recordProgress, aggregateProgress } from "../../lib/download-progress.js";
 import { deviceRequest, limitReport } from "../../lib/webgpu-limits.js";
-import { verdictStats, singleTokenId } from "../../lib/logprob.js";
+import { verdictStats, verdictTokenIds } from "../../lib/logprob.js";
 import { makeLogitCapture } from "../../lib/logit-capture.js";
+import { generatedRepetitionPenalty } from "../../lib/repetition-penalty.js";
 
 // Point ONNX Runtime Web at same-origin WASM files instead of its default CDN,
 // so the browser engine works offline once cached (see scripts/build-react.js,
@@ -106,8 +110,15 @@ class InterruptableStoppingCriteria extends StoppingCriteria {
 // reason to abandon a load that would otherwise have worked on WASM.
 const DEVICE_REQUEST_TIMEOUT_MS = 20000;
 
+// One device per worker. ORT's WebGPU backend initialises once, on the first
+// session, and keeps whatever device it found; assigning a new one on a later
+// model swap would be ignored (and leaked) while the report described a device
+// nothing uses.
+let gpu = null; // { device, report } once a raised-limit device exists
+
 async function useAdapterLimits(device) {
   if (device !== "webgpu" || typeof navigator?.gpu?.requestAdapter !== "function") return null;
+  if (gpu) return gpu.report;
   try {
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) return null;
@@ -115,19 +126,30 @@ async function useAdapterLimits(device) {
     // Nothing to ask for (no reported buffer limits) means asking would create
     // a device for no gain — leave ONNX Runtime to make its own.
     if (!request) return null;
+    const pending = adapter.requestDevice(request);
+    let timer;
     const gpuDevice = await Promise.race([
-      adapter.requestDevice(request),
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`requestDevice() stalled past ${DEVICE_REQUEST_TIMEOUT_MS}ms`)),
-          DEVICE_REQUEST_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+      pending,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          // The request keeps running after we stop waiting; a device it
+          // delivers late would sit beside ORT's own, holding GPU memory.
+          pending.then((late) => late?.destroy?.(), () => {});
+          reject(new Error(`requestDevice() stalled past ${DEVICE_REQUEST_TIMEOUT_MS}ms`));
+        }, DEVICE_REQUEST_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    // A lost device does not come back, and every later session call on it
+    // fails or hangs. Say so once; the page tears this worker down.
+    gpuDevice.lost?.then((info) => {
+      if (info?.reason === "destroyed") return;
+      post({ type: "fatal", message: `WebGPU device lost: ${info?.message || info?.reason || "unknown"}` });
+    });
     env.backends.onnx.webgpu.device = gpuDevice;
     // The adapter travels along so the UI can show granted-vs-asked-for: a
     // Worker may be handed a lower-limit adapter than the page that spawned it.
-    return limitReport(gpuDevice, adapter);
+    gpu = { device: gpuDevice, report: limitReport(gpuDevice, adapter) };
+    return gpu.report;
   } catch (err) {
     post({ type: "warn", message: `WebGPU adapter limits unavailable (${err?.message || err}); falling back to default device limits.` });
     return null;
@@ -266,9 +288,10 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     progress_callback,
   });
 
-  // Verdict vocabulary ids, resolved once per model. Some families encode
-  // "YES"/"NO" as several tokens, in which case singleTokenId() returns null
-  // and the margin column is simply absent; the per-token probability of the
+  // Verdict vocabulary ids, resolved once per model — every casing that is a
+  // single token, since the model may answer "Yes" to a prompt that says
+  // "YES". Some families encode the words as several tokens, in which case
+  // the lists are empty and the margin column is simply absent; the per-token probability of the
   // emitted token still works without it. The tokenizer itself may also be
   // absent: transformers.js 4.3 processors do not always attach one, and the
   // reference phone's ready line reported `yes/no ids=null` for every model
@@ -277,8 +300,8 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
   const verdictTokenizer =
     processor.tokenizer ?? (await AutoTokenizer.from_pretrained(model));
   const yesNoIds = {
-    yes: singleTokenId(verdictTokenizer, "YES"),
-    no: singleTokenId(verdictTokenizer, "NO"),
+    yes: verdictTokenIds(verdictTokenizer, "YES"),
+    no: verdictTokenIds(verdictTokenizer, "NO"),
   };
   current = {
     task,
@@ -298,7 +321,10 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
   post({ id, type: "ready", device: resolvedDevice, limits, runtime: runtimeInfo(), yesNoIds });
 }
 
-async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewTokens, wantLogits, purpose }) {
+async function handleScan(
+  id,
+  { prompt, imageDataUrls, imageDataUrl, maxNewTokens, wantLogits, repetitionPenalty, purpose },
+) {
   if (!current) throw new Error("No model loaded — send a 'load' message first.");
   const { model, processor, recipe, stopping, verdictIds } = current;
   stopping.reset();
@@ -346,22 +372,25 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
     // Greedy. A monitor that returns a different verdict for the same frame
     // is unusable, and it makes the eval screen's numbers mean something.
     do_sample: false,
-    // Greedy decoding on a small model repeats itself: measured on the
-    // reference phone, the compact action prompt produced "they're talking to
-    // each other." eight times in a row until the token cap, and that is what
-    // got spoken aloud. A repetition penalty discourages the loop without
-    // sampling, so verdicts stay deterministic for the same frame. Deliberately
-    // not `no_repeat_ngram_size`, which would forbid the repeated key
-    // punctuation the JSON profile legitimately emits.
-    repetition_penalty: 1.2,
     stopping_criteria: stopping,
   };
-  // Greedy decoding makes the verdict deterministic, and the capture makes it
-  // measurable: P(first token) plus the YES-vs-NO margin over the same row.
-  // Only legs whose caller reads a confidence pay for it (`wantLogits`), which
-  // is the detection leg; the row copy is ~600 KB at a 150k vocabulary.
-  const capture = makeLogitCapture();
-  const options = wantLogits ? { ...base, logits_processor: [capture.process] } : base;
+  // Greedy decoding on a small model repeats itself (the compact action prompt
+  // produced "they're talking to each other." eight times), so the prose legs
+  // ask for a repetition penalty. It is applied to generated tokens only — the
+  // library's `repetition_penalty` also penalises the prompt, which on the
+  // detection leg pushed down YES/NO themselves (see lib/repetition-penalty.js).
+  // Deliberately not `no_repeat_ngram_size`, which would forbid the repeated
+  // key punctuation the JSON profile legitimately emits.
+  //
+  // The capture always runs for its first-step timestamp; it copies the
+  // vocabulary row (~600 KB at a 150k vocabulary) only for legs that read a
+  // confidence (`wantLogits`, i.e. detection).
+  const capture = makeLogitCapture({ copyRow: Boolean(wantLogits) });
+  const processors = [];
+  if (repetitionPenalty > 1) processors.push(generatedRepetitionPenalty(promptLength, repetitionPenalty));
+  processors.push(capture.process);
+  const options = { ...base, logits_processor: processors };
+  const genStart = performance.now();
   const outputIds = await model.generate(options);
 
   const generatedLength = outputIds.dims?.at(-1) ?? promptLength;
@@ -369,7 +398,17 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
     outputIds.slice(null, [promptLength, null]),
     { skip_special_tokens: true },
   );
-  const latencyMs = Math.round(performance.now() - start);
+  const end = performance.now();
+  const latencyMs = Math.round(end - start);
+  // Where the scan's time went. prefillMs covers the vision encoder and the
+  // prompt forward pass (up to the first logits); decodeMs is everything
+  // after. Null when no step ran (an abort before the first forward).
+  const first = capture.state.firstStepAt;
+  const timing = {
+    preprocessMs: Math.round(genStart - start),
+    prefillMs: first != null ? Math.round(first - genStart) : null,
+    decodeMs: first != null ? Math.round(end - first) : null,
+  };
   const completionTokens = Math.max(0, generatedLength - promptLength);
   const emitted = outputIds?.data
     ? Array.from(outputIds.data).slice(promptLength).map(Number)
@@ -387,6 +426,7 @@ async function handleScan(id, { prompt, imageDataUrls, imageDataUrl, maxNewToken
     purpose: purpose ?? null,
     text: (decoded?.[0] || "").trim(),
     logits: logits ? { ...logits, decodeSteps: capture.state.steps } : null,
+    timing,
     usage: {
       prompt_tokens: promptLength,
       completion_tokens: completionTokens,

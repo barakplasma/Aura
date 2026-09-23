@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { logSumExp, verdictStats, singleTokenId } from "../lib/logprob.js";
+import { logSumExp, verdictStats, singleTokenId, verdictTokenIds, logitConfidence } from "../lib/logprob.js";
 
 // Measured on the reference phone (Pixel 7a, SmolVLM2 500M): the model answered
 // a bare "YES" for a mission whose object was not in frame, and the alert stored
@@ -79,4 +79,40 @@ test("singleTokenId resolves title case — the casing SmolVLM2 actually answers
 
 test("singleTokenId survives a tokenizer that throws", () => {
   assert.equal(singleTokenId(() => { throw new Error("no tokenizer here"); }, "NO"), null);
+});
+
+test("verdictTokenIds collects every single-token casing, not just the first", () => {
+  // A vocabulary where both "YES" and "Yes" are single tokens: singleTokenId
+  // would stop at "YES" and the margin would ignore the "Yes" the model emits.
+  const vocab = { YES: [10], Yes: [11], " Yes": [12], yes: [11, 3] };
+  const tok = (s) => ({ input_ids: vocab[s] || [1, 2] });
+  assert.deepEqual(verdictTokenIds(tok, "YES").sort((a, b) => a - b), [10, 11, 12]);
+  assert.deepEqual(verdictTokenIds(() => { throw new Error("x"); }, "NO"), []);
+});
+
+test("verdictProb sums the verdict mass over every casing", () => {
+  // ids: 0 = "YES", 1 = "Yes", 2 = "NO", 3 = other. The model puts its mass on
+  // "Yes"; scoring "YES" alone would read this as a NO.
+  const row = [0, 3, 1, 0];
+  const stats = verdictStats([row], [1], { yes: [0, 1], no: [2] });
+  const e = row.map(Math.exp);
+  const z = e.reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(stats.yesProb - (e[0] + e[1]) / z) < 1e-9);
+  assert.ok(Math.abs(stats.verdictProb - (e[0] + e[1]) / (e[0] + e[1] + e[2])) < 1e-9);
+  assert.equal(stats.verdictAtFirstStep, true);
+});
+
+test("the margin is not a confidence when the first token was not a verdict", () => {
+  // A JSON answer opens with "{" (id 3): the YES/NO row at that step measured
+  // nothing about the verdict.
+  const stats = verdictStats([[0, 3, 1, 5]], [3], { yes: [0, 1], no: [2] });
+  assert.equal(stats.verdictAtFirstStep, false);
+  assert.equal(logitConfidence(stats), null);
+});
+
+test("logitConfidence reads P(condition met) off the YES-vs-NO margin", () => {
+  assert.equal(logitConfidence({ verdictAtFirstStep: true, verdictProb: 0.304 }), 30);
+  assert.equal(logitConfidence({ verdictAtFirstStep: true, verdictProb: 0.02 }), 2);
+  assert.equal(logitConfidence({ verdictAtFirstStep: true }), null);
+  assert.equal(logitConfidence(null), null);
 });

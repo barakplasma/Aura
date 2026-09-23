@@ -12,7 +12,7 @@
   models against the same frame.
 
   Query params (all optional):
-    model=<key>      a BROWSER_MODELS key (default qwen3.5-0.8b)
+    model=<key>      a BROWSER_MODELS key (default smolvlm2-500m, the app's default)
     mission=<text>   detection target (default: a person sitting on a bench)
     auto=1          load and scan without a click
     frame=<url>     use an image instead of the camera
@@ -64,7 +64,7 @@
           recipe: { processorArgs: 'images-first', chatStyle: 'inline-image', processorOptions: {}, imageProcessorConfig: null },
         },
         'smolvlm2-500m': {
-          label: 'SmolVLM2 500M',
+          label: 'SmolVLM2 500M (default)',
           modelId: 'HuggingFaceTB/SmolVLM2-500M-Video-Instruct',
           dtype: { embed_tokens: 'q4', vision_encoder: 'fp16', decoder: 'q4' },
           recipe: { processorArgs: 'text-first', chatStyle: 'content-parts', processorOptions: {}, imageProcessorConfig: null },
@@ -76,7 +76,7 @@
           recipe: { processorArgs: 'text-first', chatStyle: 'content-parts', processorOptions: {}, imageProcessorConfig: null },
         },
         'qwen3.5-0.8b': {
-          label: 'Qwen3.5 0.8B (default)',
+          label: 'Qwen3.5 0.8B (known issue: hung on a Pixel 7a)',
           modelId: 'onnx-community/Qwen3.5-0.8B-ONNX',
           dtype: { embed_tokens: 'q4', vision_encoder: 'fp16', decoder_model_merged: 'q4' },
           recipe: { processorArgs: 'text-first', chatStyle: 'content-parts', processorOptions: {}, imageProcessorConfig: { min_pixels: 65536, max_pixels: 307200 } },
@@ -95,7 +95,7 @@
         o.textContent = m.label;
         $('model').appendChild(o);
       }
-      if (q.get('model')) $('model').value = q.get('model');
+      $('model').value = q.get('model') || 'smolvlm2-500m';
 
       // Same JSON schema the app sends for promptProfile:'json' models.
       const SCHEMA = {

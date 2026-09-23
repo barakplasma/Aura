@@ -7,6 +7,7 @@ import {
   DEFAULT_BROWSER_MODEL,
   FALLBACK_BROWSER_MODEL,
   browserModelKeys,
+  modelKnownIssue,
   modelUnsupportedReason,
   pickBrowserModel,
   probeBrowserEnv,
@@ -82,13 +83,10 @@ export default function SettingsScreen({
   }
 
   // BROWSER MODEL — see lib/browser-models.js for the table and the picker.
-  // A stale selection (or a row greyed since it was chosen) falls back to the
-  // default, so a <select> whose every option is enabled never shows a value
-  // that is not one of them.
+  // A stale selection (a row removed from the table) falls back to the
+  // default. A row with a knownIssue stays selected — it warns, it isn't gated.
   const browserModelKey =
-    browserModel && BROWSER_MODELS[browserModel] && !BROWSER_MODELS[browserModel].unsupportedReason
-      ? browserModel
-      : DEFAULT_BROWSER_MODEL;
+    browserModel && BROWSER_MODELS[browserModel] ? browserModel : DEFAULT_BROWSER_MODEL;
   const browserModelCfg = BROWSER_MODELS[browserModelKey];
   const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
   // The adapter's buffer limits need an async requestAdapter(), so the probe
@@ -452,11 +450,13 @@ export default function SettingsScreen({
                 {browserModelKeys().map((key) => {
                   const cfg = BROWSER_MODELS[key];
                   const unsupportedReason = modelUnsupportedReason(key, gpuEnv ? { hasWebGpu: true, hasShaderF16: gpuEnv.hasShaderF16 } : {});
+                  const knownIssue = modelKnownIssue(key);
                   return (
                   <option key={key} value={key} disabled={Boolean(unsupportedReason)}>
                     {cfg.label} · {cfg.sizeLabel}
                     {cfg.promptProfile === 'compact' ? ' · basic' : ''}
                     {unsupportedReason ? ` · ${unsupportedReason}` : ''}
+                    {!unsupportedReason && knownIssue ? ` · warning: ${knownIssue}` : ''}
                   </option>
                   );
                 })}
@@ -466,6 +466,9 @@ export default function SettingsScreen({
                 {browserModelCfg.promptProfile === 'compact'
                   ? 'Coarse yes/no detector — too small to follow a written instruction, so announcements fall back to what it saw.'
                   : 'Follows the same detection and announcement prompts as the PROVIDER engine.'}
+                {modelKnownIssue(browserModelKey) && (
+                  <> Known issue: {modelKnownIssue(browserModelKey)} — it may never finish a scan on similar hardware.</>
+                )}
               </div>
               {recommendedKey && recommendedKey !== browserModelKey && (
                 <div className="field-hint">
