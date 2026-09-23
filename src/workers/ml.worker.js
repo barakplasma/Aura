@@ -42,6 +42,7 @@ import {
   AutoModelForImageTextToText,
   RawImage,
   StoppingCriteria,
+  env,
 } from "@huggingface/transformers";
 import { fetchModelSizeEstimate } from "../../lib/model-size.js";
 import { createProgressState, recordProgress, aggregateProgress } from "../../lib/download-progress.js";
