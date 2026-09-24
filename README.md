@@ -86,7 +86,14 @@ switchable in Settings, all feeding the exact same loop:
 |------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
 | **Any OpenAI-compatible provider** | Cerebras, OpenAI, Groq, Together, Fireworks, OpenRouter, your own gateway — anything that speaks `POST /v1/chat/completions` with vision | the strongest models, at a per-scan cost you can cap                     |
 | **A local server**                 | Ollama, llama.cpp, LM Studio, vLLM on your own machine or homelab — same API, no key needed                                              | free, private, works on your LAN                                         |
-| **In-browser**                     | a small vision-language model running inside the page itself on WebGPU                                                                   | no key, no server, no network at all — the frame never leaves the device |
+| **In-browser**                     | a small vision-language model on WebGPU in the page (Transformers.js), or Chrome's built-in Gemini Nano where offered                    | no key, no server, no network at all — the frame never leaves the device |
+
+The in-browser source picks its own brain: **Qwen3.5 0.8B** by default — an ONNX
+conversion downloaded once (~875 MB, then cached), with smaller models as
+fallbacks for modest devices. On desktop Chrome 148+ there is a second runtime,
+Chrome's built-in Gemini Nano, which Settings can prefer explicitly; AUTO only
+chooses it when it is already downloaded and image-capable, and it doesn't exist
+on Chrome for Android — phones always get the Transformers.js model.
 
 **It has to be a *vision* model.** Aura sends a picture on every scan, so a
 text-only LLM — however clever, however new — cannot do this job at all: it has
@@ -118,19 +125,24 @@ your prompt against your own examples.
 
 ## What your phone actually needs
 
-Cloud or local-server engines need nothing but a browser and a network: all the
-work happens elsewhere, so a five-year-old phone is fine. The requirements below
-are for running the model **on the device**, and they are per model — every one
-of these is built in and picked in Settings.
+Cloud and local-server engines need nothing but a browser and a network — all
+the work happens elsewhere, so a five-year-old phone is fine. The requirements
+below are for running a model **on the device**, and they are per model. Every
+one of these is built in and picked in Settings; Aura probes the GPU adapter's
+real buffer limits and the reported memory on arrival and selects the largest
+one the device can actually run, falling back rather than failing.
 
-| Model                          | Download (cached once) | Needs                                           | Runs comfortably on                                     |
-|--------------------------------|------------------------|-------------------------------------------------|---------------------------------------------------------|
-| **Object gate** (YOLO26n)      | 3–5 MB                 | any modern browser; WebGPU optional             | anything, including the phone you stopped using in 2019 |
-| **SmolVLM2 256M**              | 208 MB                 | no WebGPU required — falls back to WASM         | any phone, but 10–30 s per scan without WebGPU          |
-| **LFM2.5-VL 450M** *(default)* | 810 MB                 | WebGPU, ~4 GB RAM, a GPU buffer limit ≥ ~490 MB | a mid-range or better phone from the last ~3 years      |
-| **FastVLM 0.5B**               | 1.1 GB                 | WebGPU, ~6 GB RAM, a GPU buffer limit ≥ ~670 MB | a current flagship phone, or any laptop                 |
+| Model                         | Download (cached once) | Needs                                   | Notes                                                        |
+|-------------------------------|------------------------|-----------------------------------------|--------------------------------------------------------------|
+| **Object gate** (YOLO26n)     | 3–5 MB                 | any modern browser; WebGPU optional     | not a VLM — it only spots objects, to save the one below     |
+| **SmolVLM2 256M**             | 208 MB                 | no WebGPU required — falls back to WASM | the floor; 10–30 s per scan without WebGPU, and coarse       |
+| **SmolVLM2 500M** *(default)* | 395 MB                 | WebGPU, ~4 GB RAM                       | the current default pick on a capable device                 |
+| **LFM2.5-VL 450M**            | 810 MB                 | WebGPU, ~4 GB RAM                       | follows an instruction more closely than SmolVLM             |
+| **Qwen3.5 0.8B**              | 875 MB                 | WebGPU, ~4 GB RAM                       | strongest of the small rows, but hung on a Pixel 7a — opt-in |
+| **nanoLLaVA 1.5**             | 875 MB                 | WebGPU, ~4 GB RAM                       | opt-in alternative                                           |
+| **FastVLM 0.5B**              | 1.1 GB                 | WebGPU, ~6 GB RAM                       | built for time-to-first-token on live video; opt-in          |
 
-Plus the browser itself, for the WebGPU rows:
+Plus the browser itself, for every row above the first two:
 
 | Browser                  | WebGPU from   |
 |--------------------------|---------------|
@@ -139,18 +151,16 @@ Plus the browser itself, for the WebGPU rows:
 | Safari (macOS and iOS)   | 26            |
 | Firefox                  | 141 (partial) |
 
-Aura checks all of this for you: it probes the GPU adapter's real buffer limits
-and the reported memory on arrival and picks the largest model the device can
-actually run, falling back rather than failing. You can always override the
-choice by hand. Storage is the quiet one — the weights live in the browser's
-cache, so a 1.1 GB model wants that much free space, once.
+Storage is the quiet requirement: weights live in the browser's cache, so a
+1.1 GB model wants that much free space, once. RAM figures are what the browser
+reports (`navigator.deviceMemory`, which caps at 8), not what the phone has.
 
-Two things worth knowing before you pick the biggest model your phone will take:
+Two things worth knowing before picking the biggest model your phone will take:
 sustained in-browser inference makes a phone hot, and a hot phone throttles. The
-**object gate** exists for exactly this: a 3 MB detector watches for changes and
-only wakes the big model when the set of objects in frame actually changes,
-which takes the GPU from most of the time to almost never. Turn it on in
-Settings → OBJECT GATE.
+**object gate** exists for exactly this — a 3 MB detector watches for changes
+and only wakes the big model when the set of objects in frame actually changes,
+which takes the GPU from busy most of the time to busy almost never. Turn it on
+in Settings → OBJECT GATE.
 
 ## Being honest about it
 
@@ -175,6 +185,28 @@ allowed to record, tell people they're being watched, and remember that a
 best-effort judgement from a single frame is not evidence of anything.
 
 ## More
+
+## Preview URLs
+
+Aura can be previewed without changing the GitHub Pages deployment.
+
+- **On the development machine:** run `npm run preview:local`, then open
+  `http://localhost:8787`. For a phone on the same Wi-Fi network, run
+  `npm run dev -- --listen tcp://0.0.0.0:3000` and open
+  `http://<development-machine-lan-ip>:3000`.
+- **Shareable Cloudflare preview:** first run `npx wrangler login`, optionally
+  change the globally-unique `name` in `wrangler.jsonc`, then run
+  `npm run preview:deploy`. Wrangler prints the resulting
+  `https://<worker-name>.<account-subdomain>.workers.dev` URL. This deploys only
+  the static `public/` folder; Aura still sends API keys and camera frames only
+  from the browser directly to the provider configured by the operator.
+
+Wrangler runs Aura's build automatically before both preview commands, so it
+never uploads a stale `public/` directory. The `workers.dev` worker is deliberately an opt-in preview target. It adds no
+backend, stores no monitoring data, and does not proxy provider or webhook calls.
+After a preview deploy, close any existing Aura tabs before reopening the URL so
+the new service worker can activate; the app will otherwise deliberately keep a
+running monitor on its already-cached version.
 
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** — running it yourself, pointing it at a
   local model, hacking on it, deploying it.

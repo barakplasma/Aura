@@ -1,8 +1,10 @@
 import { useState, useRef, lazy, Suspense } from 'react';
+import { IonApp, IonToast } from '@ionic/react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
 import { DEFAULT_BROWSER_MODEL, DEFAULT_DETECTOR_MODEL } from '../lib/browser-engine.js';
+import { pricingKey, resolvePricing } from '../lib/pricing.js';
 import { resumeWindowOpen } from '../lib/keepalive.js';
 import TopBar from './components/TopBar.jsx';
 import NavRail from './components/NavRail.jsx';
@@ -44,6 +46,9 @@ export default function App() {
   const [model, setModel] = useLocalStorage('aura.model', '');
   const [engine, setEngine] = useLocalStorage('aura.engine', 'provider');
   const [browserModel, setBrowserModel] = useLocalStorage('aura.browserModel', DEFAULT_BROWSER_MODEL);
+  // Which in-browser runtime answers BROWSER-engine scans: 'auto' |
+  // 'transformers' | 'chrome-ai' (resolved in lib/browser-engine.js).
+  const [browserRuntime, setBrowserRuntime] = useLocalStorage('aura.browserRuntime', 'auto');
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
@@ -51,7 +56,7 @@ export default function App() {
   const [scanEveryUnit, setScanEveryUnit] = useLocalStorage('aura.scanEveryUnit', 's');
   const [budgetPerHour, setBudgetPerHour] = useLocalStorage('aura.budgetPerHour', '0.10');
   const [networkMbPerHour, setNetworkMbPerHour] = useLocalStorage('aura.networkMbPerHour', '');
-  const [rate, setRate] = useLocalStorage('aura.rate', '0.10');
+  const [pricingOverrides, setPricingOverrides] = useLocalStorage('aura.pricingOverrides', {});
   const [cameraFacing, setCameraFacing] = useLocalStorage('aura.cameraFacing', 'environment');
   const [cameraDeviceId, setCameraDeviceId] = useLocalStorage('aura.cameraDeviceId', '');
   const [videoSource, setVideoSource] = useLocalStorage('aura.videoSource', 'camera');
@@ -65,6 +70,7 @@ export default function App() {
   const [webhookHeaders, setWebhookHeaders] = useLocalStorage('aura.webhookHeaders', '');
   const [webhookAction, setWebhookAction] = useLocalStorage('aura.webhookAction', '');
   const [webhookSchema, setWebhookSchema] = useLocalStorage('aura.webhookSchema', '');
+  const [webhookIncludeImage, setWebhookIncludeImage] = useLocalStorage('aura.webhookIncludeImage', false);
   const [keepScreenOn, setKeepScreenOn] = useLocalStorage('aura.keepScreenOn', true);
   // Object gate (docs/PRD-object-gate.md) — a local detector decides whether
   // the vision model runs at all. Off by default: it changes when scans happen.
@@ -96,21 +102,21 @@ export default function App() {
   // prompts against a provider the operator isn't using. Hide it, and don't
   // apply an artifact trained elsewhere to local scans (see useMonitor).
   const axAvailable = engine !== 'browser';
-  // The BROWSER engine never spends a cent — force the telemetry rate to 0
-  // rather than have it silently invent cost from a stale cloud rate (same
-  // effect as picking a local preset in SettingsScreen).
-  const effectiveRate = engine === 'browser' ? '0' : rate;
+  // BROWSER and local engines resolve to free pricing, while remote providers
+  // use the catalogued model rate or a scoped operator override.
+  const pricingOverride = pricingOverrides[pricingKey(baseUrl, model)];
+  const pricing = resolvePricing({ baseUrl, model, engine, override: pricingOverride });
 
   // Live settings ref — updated every render so tick() sees current values without stale closures
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
-    engine, browserModel,
-    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, rate: effectiveRate,
+    engine, browserModel, browserRuntime,
+    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, pricing,
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
     speech, haptics, demo: demoMode,
-    webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema,
+    webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema, webhookIncludeImage,
     objectGate, objectModel, objectGateEveryS, objectClasses, objectWakeOn,
     objectMoveFrac, objectSens, heartbeatMin, objectPromptContext, vlmIdleEvictMin,
   };
@@ -143,6 +149,11 @@ export default function App() {
   function handleToggle() {
     if (running) handleStop();
     else handleStart();
+  }
+
+  async function handleDeployAndArm() {
+    setScreen('monitor');
+    if (!running) await handleStart();
   }
 
   function handleResume() {
@@ -212,34 +223,12 @@ export default function App() {
   const showUpdateBanner = updateAvailable && !updateDismissed;
 
   return (
-    <div className="app">
-      <TopBar dotClass={dotClass} telemetry={telemetry} model={model} />
-      {demoMode && (
-        <div className="demo-banner" role="status">
-          <span>▲ DEMO MODE — simulated alerts · no API calls · webhooks disabled</span>
-          <button className="demo-exit-btn" onClick={handleExitDemo}>EXIT DEMO</button>
-        </div>
-      )}
-      {showResumeBanner && (
-        <div className="demo-banner resume-banner" role="status">
-          <span>⟳ RESUME MONITORING — an armed session was interrupted by a reload</span>
-          <div className="btn-row resume-banner-actions">
-            <button className="demo-exit-btn" onClick={handleResume}>RESUME</button>
-            <button className="demo-exit-btn" onClick={handleDismissResume}>DISMISS</button>
-          </div>
-        </div>
-      )}
-      {showUpdateBanner && (
-        <div className="demo-banner update-banner" role="status">
-          <span>⬆ UPDATE AVAILABLE — a new version is ready to install</span>
-          <div className="btn-row resume-banner-actions">
-            <button className="demo-exit-btn" onClick={reloadToUpdate}>UPDATE NOW</button>
-            <button className="demo-exit-btn" onClick={handleDismissUpdate}>LATER</button>
-          </div>
-        </div>
-      )}
+    <IonApp>
+      <TopBar dotClass={dotClass} />
+      <IonToast isOpen={demoMode} message="Demo mode — simulated alerts, no API calls." color="warning" buttons={[{ text: 'Exit', handler: handleExitDemo }]} />
+      <IonToast isOpen={showResumeBanner} message="Monitoring was interrupted by a reload." buttons={[{ text: 'Resume', handler: handleResume }, { text: 'Dismiss', role: 'cancel', handler: handleDismissResume }]} />
+      <IonToast isOpen={showUpdateBanner} message="A new version is ready." buttons={[{ text: 'Update', handler: reloadToUpdate }, { text: 'Later', role: 'cancel', handler: handleDismissUpdate }]} />
       <div className="app-body">
-        <NavRail screen={screen} setScreen={setScreen} hidden={axAvailable ? undefined : ['optimize']} />
         <main className={`main-content ${screen === 'monitor' ? 'monitor-layout' : ''}`}>
           <MonitorStage
             videoRef={videoRef} canvasRef={canvasRef}
@@ -259,7 +248,7 @@ export default function App() {
               action={action} setAction={setAction}
               speech={speech} setSpeech={setSpeech}
               haptics={haptics} setHaptics={setHaptics}
-              onNavigateMonitor={() => setScreen('monitor')}
+              onDeployAndArm={handleDeployAndArm}
               onNavigateOptimize={() => setScreen('optimize')}
             />
           )}
@@ -267,8 +256,6 @@ export default function App() {
             <MonitorScreen
               running={running}
               telemetry={telemetry}
-              progress={progress}
-              stats={stats}
               onToggle={handleToggle}
               providerReady={providerReady}
               engine={engine}
@@ -300,7 +287,7 @@ export default function App() {
               <EvalScreen
                 baseUrl={baseUrl}
                 apiKey={apiKey}
-                rate={rate}
+                pricingOverrides={pricingOverrides}
                 configuredModel={model}
                 mission={mission}
                 captureFrame={handleCaptureEvalFrame}
@@ -312,6 +299,7 @@ export default function App() {
             <SettingsScreen
               engine={engine} setEngine={setEngine}
               browserModel={browserModel} setBrowserModel={setBrowserModel}
+              browserRuntime={browserRuntime} setBrowserRuntime={setBrowserRuntime}
               baseUrl={baseUrl} setBaseUrl={setBaseUrl}
               apiKey={apiKey} setApiKey={setApiKey}
               model={model} setModel={setModel}
@@ -320,7 +308,14 @@ export default function App() {
               scanEveryUnit={scanEveryUnit} setScanEveryUnit={setScanEveryUnit}
               budgetPerHour={budgetPerHour} setBudgetPerHour={setBudgetPerHour}
               networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
-              rate={rate} setRate={setRate}
+              pricing={pricing}
+              pricingOverride={pricingOverride}
+              onSetPricingOverride={(override) => setPricingOverrides((current) => ({ ...current, [pricingKey(baseUrl, model)]: override }))}
+              onResetPricingOverride={() => setPricingOverrides((current) => {
+                const next = { ...current };
+                delete next[pricingKey(baseUrl, model)];
+                return next;
+              })}
               videoSource={videoSource} setVideoSource={setVideoSource}
               captureSize={captureSize} setCaptureSize={setCaptureSize}
               customCaptureWidth={customCaptureWidth} setCustomCaptureWidth={setCustomCaptureWidth}
@@ -344,13 +339,15 @@ export default function App() {
               webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}
               webhookAction={webhookAction} setWebhookAction={setWebhookAction}
               webhookSchema={webhookSchema} setWebhookSchema={setWebhookSchema}
+              webhookIncludeImage={webhookIncludeImage} setWebhookIncludeImage={setWebhookIncludeImage}
               statusMsg={statusMsg}
               onStatusMsg={handleStatusMsg}
               captureFrame={handleCaptureEvalFrame}
             />
           )}
         </main>
+        <NavRail screen={screen} setScreen={setScreen} hidden={axAvailable ? undefined : ['optimize']} />
       </div>
-    </div>
+    </IonApp>
   );
 }

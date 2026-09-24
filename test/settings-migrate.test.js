@@ -4,6 +4,7 @@ import {
   migrateLegacySettings,
   migrateScanEveryKey,
   migrateBrowserModelKey,
+  migrateLegacyRate,
 } from "../lib/settings-migrate.js";
 
 // Minimal Storage-like stub over a plain object.
@@ -151,4 +152,17 @@ test("the browserModel migration is a no-op when nothing is stored", () => {
   const st = makeStorage({});
   assert.equal(migrateBrowserModelKey(st), false);
   assert.equal(migrateBrowserModelKey(st), false);
+});
+
+test("migrates a legacy blended rate into a per-model override", () => {
+  const st = makeStorage({
+    "aura.rate": '"0.25"',
+    "aura.baseUrl": '"https://api.openai.com/v1"',
+    "aura.model": '"gpt-4o-mini"',
+  });
+  assert.equal(migrateLegacyRate(st), true);
+  assert.deepEqual(JSON.parse(st.getItem("aura.pricingOverrides")), {
+    "https://api.openai.com/v1\u0000gpt-4o-mini": { inputRate: 0.25, outputRate: 0.25 },
+  });
+  assert.equal(migrateLegacyRate(st), false);
 });

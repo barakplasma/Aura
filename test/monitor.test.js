@@ -6,6 +6,7 @@ import {
   buildWebhookActionPrompt,
   buildCompactDetectionPrompt,
   buildCompactActionPrompt,
+  buildCompactWebhookActionPrompt,
   parseCompactAction,
   parseDetection,
   parseLooseDetection,
@@ -17,6 +18,8 @@ import {
   sameOrigin,
 } from "../lib/monitor.js";
 import { scanClient, fetchModels, _resetJsonModeCache } from "../lib/aura.js";
+import { reportUnexpectedError } from "../lib/handled-errors.js";
+import { encodeNtfyHeader, isHostedNtfyTopicUrl } from "../lib/ntfy.js";
 
 // A minimal successful detection response, as the provider would return it.
 function okCompletion() {
@@ -45,6 +48,32 @@ function stubFetchCapturingHeaders(seenHeaders, reply = okCompletion) {
   };
   return realFetch;
 }
+
+test("handled provider failures are reported, while Stop aborts stay quiet", () => {
+  const calls = [];
+  const providerError = new Error("Provider API 400: unsupported temperature");
+  assert.equal(
+    reportUnexpectedError(providerError, (...args) => calls.push(args), { area: "live-monitor" }),
+    true,
+  );
+  assert.deepEqual(calls, [[providerError, { area: "live-monitor" }]]);
+
+  const abort = new DOMException("Stopped", "AbortError");
+  assert.equal(reportUnexpectedError(abort, (...args) => calls.push(args)), false);
+  assert.equal(calls.length, 1);
+});
+
+test("ntfy image attachments are restricted to hosted ntfy topic URLs", () => {
+  assert.equal(isHostedNtfyTopicUrl("https://ntfy.sh/aura-alerts"), true);
+  assert.equal(isHostedNtfyTopicUrl("https://ntfy.sh"), false);
+  assert.equal(isHostedNtfyTopicUrl("https://example.com/hooks/ntfy"), false);
+});
+
+test("ntfy header encoding supports Unicode alerts without raw newlines", () => {
+  const encoded = encodeNtfyHeader("\u05d0\u05d6\u05e2\u05e7\u05d4 \ud83d\udea8\ncheck camera");
+  assert.match(encoded, /^=\?UTF-8\?B\?.+\?=$/);
+  assert.equal(encoded.includes("\n"), false);
+});
 
 test("buildDetectionPrompt embeds the mission and schema", () => {
   const p = buildDetectionPrompt("alert if a person is near the pool");
@@ -132,6 +161,33 @@ test("parseLooseDetection parses a loose YES/NO line", () => {
   assert.equal(r2.reason, "nothing happening here");
 });
 
+// The observation-first compact prompt puts the verdict at the END of the
+// answer, and sometimes on a second line. Measured on the reference phone:
+// with the verdict-at-the-front prompt the 500M model answered the single
+// token "YES" to every mission, including "a bicycle with a front basket"
+// pointed at a shelf of books.
+test("parseLooseDetection reads a verdict at the end of an observation", () => {
+  const r = parseLooseDetection("books and papers on a desk, no person NO 10");
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "books and papers on a desk, no person");
+});
+
+test("parseLooseDetection reads a verdict on a later line than the observation", () => {
+  const r = parseLooseDetection("a dark binder standing on the shelf\nYES 70 book visible");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 70);
+});
+
+// The number is what tells the two apart: a trailing "no" inside the reason
+// must not be mistaken for the verdict.
+test("parseLooseDetection keeps the numbered verdict over a later no", () => {
+  const r = parseLooseDetection("YES 90 no one else in frame");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 90);
+  assert.equal(r.reason, "no one else in frame");
+});
+
 test("parseLooseDetection tolerates extra whitespace/punctuation and missing parts", () => {
   const r = parseLooseDetection("  YES.\n");
   assert.equal(r.triggered, true);
@@ -150,6 +206,146 @@ test("parseLooseDetection degrades to sensible defaults on garbage input, never 
     assert.ok(Number.isFinite(r.confidence));
     assert.equal(typeof r.reason, "string");
   }
+});
+
+// --- Small-model failure modes (BROWSER engine: Qwen3.5, SmolVLM2) --------
+
+test("normalizeDetection reads string booleans instead of coercing them to true", () => {
+  // Boolean("false") is true — a small model answering {"triggered":"false"}
+  // must not fire the alert.
+  assert.equal(normalizeDetection({ triggered: "false", confidence: 80 }).triggered, false);
+  assert.equal(normalizeDetection({ triggered: "no", confidence: 80 }).triggered, false);
+  assert.equal(normalizeDetection({ triggered: "true", confidence: 80 }).triggered, true);
+  assert.equal(normalizeDetection({ triggered: "yes", confidence: 80 }).triggered, true);
+});
+
+test("normalizeDetection scales a strictly-fractional 0-1 confidence up to percent", () => {
+  // The schema asks for 0-100, but small models sometimes answer on a 0-1
+  // scale. Strictly between 0 and 1 can only be a fraction; exactly 0 or 1
+  // keeps its percent meaning.
+  assert.equal(normalizeDetection({ triggered: true, confidence: 0.91 }).confidence, 91);
+  assert.equal(normalizeDetection({ triggered: true, confidence: "0.4" }).confidence, 40);
+  assert.equal(normalizeDetection({ triggered: true, confidence: 1 }).confidence, 1);
+  assert.equal(normalizeDetection({ triggered: true, confidence: 100 }).confidence, 100);
+  assert.equal(normalizeDetection({ triggered: true }).confidence, 100); // missing → default
+});
+
+test("normalizeDetection clamps out-of-range confidence", () => {
+  assert.equal(normalizeDetection({ triggered: true, confidence: 130 }).confidence, 100);
+  assert.equal(normalizeDetection({ triggered: true, confidence: -5 }).confidence, 0);
+});
+
+test("parseLooseDetection ignores a <think> block before the answer", () => {
+  // The block's own braces must not feed the JSON slice.
+  const r = parseLooseDetection(
+    '<think>\nLet me check: {"score": 3, "why": "door"}\n</think>\n{"triggered":true,"confidence":85,"reason":"a person at the door"}',
+  );
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 85);
+  assert.equal(r.reason, "a person at the door");
+
+  // Braces-free thinking is already sliceable, but strip it all the same.
+  const r2 = parseLooseDetection(
+    '<think>Reasoning about the scene.</think>\n{"triggered":false,"confidence":5,"reason":"empty room"}',
+  );
+  assert.equal(r2.triggered, false);
+  assert.equal(r2.confidence, 5);
+});
+
+test("parseLooseDetection treats an unterminated <think> as no answer", () => {
+  // Generation truncated mid-think: nothing after it is an answer.
+  const r = parseLooseDetection('<think>The scene shows');
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 0);
+});
+
+test("parseLooseDetection parses fenced JSON wrapped in prose (regression)", () => {
+  const r = parseLooseDetection(
+    'Sure! Here is the result:\n```json\n{"triggered":false,"confidence":10,"reason":"empty room"}\n```\nHope that helps.',
+  );
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "empty room");
+});
+
+test("parseLooseDetection reads a YES line buried under thinking output (regression)", () => {
+  const r = parseLooseDetection("<think>hmm {oops</think>\n\nYES 70 package on the doorstep");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 70);
+  assert.equal(r.reason, "package on the doorstep");
+});
+
+test("buildCompactDetectionPrompt asks for the format SmolVLM is post-trained on", () => {
+  const p = buildCompactDetectionPrompt("a stack of books");
+  assert.match(p, /does this image satisfy the mission/);
+  assert.match(p, /Answer with YES or NO first/);
+  assert.match(p, /Confidence: 0-100/);
+  // The example answers NO: a YES example is what fed the always-YES bias.
+  assert.match(p, /Example: NO, Confidence: 10, Explanation: books/);
+});
+
+test("parseLooseDetection reads the Answer/Confidence/Explanation format", () => {
+  const r = parseLooseDetection(
+    "Answer: YES, Confidence: 82, Explanation: a stack of books on the shelf",
+  );
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 82);
+  assert.equal(r.reason, "a stack of books on the shelf");
+
+  const multi = parseLooseDetection(
+    "Answer: NO\nConfidence: 8\nExplanation: papers and a laptop, no bicycle",
+  );
+  assert.equal(multi.triggered, false);
+  assert.equal(multi.confidence, 8);
+  assert.equal(multi.reason, "papers and a laptop, no bicycle");
+});
+
+test("parseLooseDetection reads the verdict-first form the prompt asks for", () => {
+  const r = parseLooseDetection(
+    "NO, Confidence: 10, Explanation: books and papers on a desk",
+  );
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 10);
+  assert.equal(r.reason, "books and papers on a desk");
+
+  const yes = parseLooseDetection("YES, Confidence: 95, Explanation: a stack of books");
+  assert.equal(yes.triggered, true);
+  assert.equal(yes.confidence, 95);
+  assert.equal(yes.reason, "a stack of books");
+});
+
+test("parseLooseDetection prefers a named Confidence over position guessing", () => {
+  // The loose scan alone cannot use this number: no digit sits next to YES,
+  // so confidence would default to 100 and the labels would be spoken.
+  const r = parseLooseDetection("Answer: YES, Confidence: 20, Explanation: maybe");
+  assert.equal(r.confidence, 20);
+  assert.equal(r.reason, "maybe");
+  assert.ok(!/confidence/i.test(r.reason));
+});
+
+test("parseLooseDetection does not read the echoed format line as an answer", () => {
+  const r = parseLooseDetection("Answer: YES or NO, Confidence: 0-100");
+  assert.equal(r.triggered, false);
+});
+
+test("parseLooseDetection defaults confidence when the model omits it", () => {
+  const r = parseLooseDetection("Answer: YES, Explanation: person at the door");
+  assert.equal(r.triggered, true);
+  assert.equal(r.confidence, 100);
+  assert.equal(r.reason, "person at the door");
+
+  const no = parseLooseDetection("Answer: NO.");
+  assert.equal(no.triggered, false);
+  assert.equal(no.confidence, 0);
+});
+
+test("parseLooseDetection stays conservative on a caption that ignores the question", () => {
+  // Verbatim output from the 500M on the reference phone when asked about a
+  // bicycle while looking at a shelf of books.
+  const r = parseLooseDetection("Mark down the information visible in the image.");
+  assert.equal(r.triggered, false);
+  assert.equal(r.confidence, 0);
+  assert.ok(r.reason.length > 0);
 });
 
 test("buildWebhookActionPrompt embeds action, reason, and optional schema", () => {
@@ -245,6 +441,27 @@ test("scanClient runs keyless against a local server and sends no Authorization"
   }
 });
 
+test("scanClient leaves temperature to the provider default", async () => {
+  const realFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    return okCompletion();
+  };
+  try {
+    await scanClient({
+      baseUrl: "https://api.openai.com/v1",
+      model: "luna",
+      mission: "watch the door",
+      image: "x".repeat(64),
+      requestTimeout: 30,
+    });
+    assert.equal(Object.hasOwn(bodies[0], "temperature"), false);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("fetchModels omits Authorization when no key is configured", async () => {
   const seenHeaders = [];
   const realFetch = stubFetchCapturingHeaders(seenHeaders, () => ({
@@ -261,6 +478,28 @@ test("fetchModels omits Authorization when no key is configured", async () => {
 
     await fetchModels("https://api.cerebras.ai/v1", "csk-secret");
     assert.equal(seenHeaders[1].Authorization, "Bearer csk-secret");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("fetchModels asks OpenRouter for image-input models and keeps only declared VLMs", async () => {
+  const realFetch = globalThis.fetch;
+  let requestedUrl;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return {
+      ok: true,
+      json: async () => ({ data: [
+        { id: "vision", architecture: { input_modalities: ["text", "image"] } },
+        { id: "text-only", architecture: { input_modalities: ["text"] } },
+      ] }),
+    };
+  };
+  try {
+    const list = await fetchModels("https://openrouter.ai/api/v1", "key", { visionOnly: true });
+    assert.equal(requestedUrl, "https://openrouter.ai/api/v1/models?input_modalities=image");
+    assert.deepEqual(list, ["vision"]);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -597,6 +836,19 @@ test("buildCompactActionPrompt is short, schema-free and carries the instruction
   assert.match(p, /Tell them to move back/);
   assert.match(p, /a person at the door/);
   assert.doesNotMatch(p, /Schema:|minified JSON/i);
+  assert.ok(p.split("\n").length <= 6);
+});
+
+// Measured on the reference phone: asked for strict JSON, the 500M compact
+// model obliged with a lone `{`, so the sink received `{"message":"{"}`.
+// The compact webhook prompt must ask for prose; only the prohibition may
+// mention JSON.
+test("buildCompactWebhookActionPrompt asks for a sentence, never an object", () => {
+  const p = buildCompactWebhookActionPrompt("Say what you saw", "a person on the bench");
+  assert.match(p, /Say what you saw/);
+  assert.match(p, /a person on the bench/);
+  assert.doesNotMatch(p, /Schema:|minified JSON/i);
+  assert.equal((p.match(/JSON/g) || []).length, 1, "JSON appears only in the prohibition");
   assert.ok(p.split("\n").length <= 6);
 });
 

@@ -1,15 +1,23 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { IonContent } from '@ionic/react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
+import { PROVIDER_PRESETS, providerForUrl } from '../../lib/providers.js';
 import {
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
+  FALLBACK_BROWSER_MODEL,
   browserModelKeys,
+  modelKnownIssue,
+  modelUnsupportedReason,
   pickBrowserModel,
   probeBrowserEnv,
+  probeChromeAI,
+  resolveBrowserRuntime,
   loadBrowserModel,
   clearBrowserModelCache,
   isBrowserModelLoaded,
   browserModelDevice,
+  browserDeviceLimits,
   scanBrowser,
   DETECTOR_MODELS,
   DEFAULT_DETECTOR_MODEL,
@@ -19,15 +27,7 @@ import { suggestClasses } from '../../lib/detector-models.js';
 import { parseWakeOn } from '../../lib/object-gate.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 import ProgressBar from '../components/ProgressBar.jsx';
-
-// One-click base URLs. The local ones need no API key, and cost nothing —
-// picking one zeroes the cost rate so the telemetry doesn't invent dollars.
-const PROVIDER_PRESETS = [
-  { id: 'ollama', label: 'OLLAMA', url: 'http://localhost:11434/v1', local: true },
-  { id: 'lmstudio', label: 'LM STUDIO', url: 'http://localhost:1234/v1', local: true },
-  { id: 'llamacpp', label: 'LLAMA.CPP', url: 'http://localhost:8080/v1', local: true },
-  { id: 'cerebras', label: 'CEREBRAS', url: 'https://api.cerebras.ai/v1', local: false },
-];
+import { reportHandledError } from '../monitoring.js';
 
 const SCAN_MODES = [
   { id: 'interval', label: 'INTERVAL' },
@@ -44,6 +44,7 @@ const SCAN_EVERY_UNITS = [
 export default function SettingsScreen({
   engine, setEngine,
   browserModel, setBrowserModel,
+  browserRuntime, setBrowserRuntime,
   baseUrl, setBaseUrl,
   apiKey, setApiKey,
   model, setModel,
@@ -53,7 +54,7 @@ export default function SettingsScreen({
   scanEveryUnit, setScanEveryUnit,
   budgetPerHour, setBudgetPerHour,
   networkMbPerHour, setNetworkMbPerHour,
-  rate, setRate,
+  pricing, pricingOverride, onSetPricingOverride, onResetPricingOverride,
   videoSource, setVideoSource,
   captureSize, setCaptureSize,
   customCaptureWidth, setCustomCaptureWidth,
@@ -77,12 +78,15 @@ export default function SettingsScreen({
   webhookHeaders, setWebhookHeaders,
   webhookAction, setWebhookAction,
   webhookSchema, setWebhookSchema,
+  webhookIncludeImage, setWebhookIncludeImage,
   statusMsg,
   onStatusMsg,
 }) {
   const [models, setModels] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [providerQuery, setProviderQuery] = useState(() => providerForUrl(baseUrl)?.label || '');
+  const [showProviderDropdown, setShowProviderDropdown] = useState(false);
   const [vibeStatus, setVibeStatus] = useState('');
   const [webhookStatus, setWebhookStatus] = useState('');
   const [cameras, setCameras] = useState([]);
@@ -96,7 +100,15 @@ export default function SettingsScreen({
   const wakeSet = parseWakeOn(objectWakeOn);
   const suggested = useMemo(() => suggestClasses(mission), [mission]);
 
+  function setManualRate(field, value) {
+    const other = field === 'inputRate' ? 'outputRate' : 'inputRate';
+    const fallback = pricingOverride?.[other] ?? pricing?.[other] ?? '';
+    onSetPricingOverride({ ...pricingOverride, [field]: value, [other]: fallback });
+  }
+
   // BROWSER MODEL — see lib/browser-models.js for the table and the picker.
+  // A stale selection (a row removed from the table) falls back to the
+  // default. A row with a knownIssue stays selected — it warns, it isn't gated.
   const browserModelKey =
     browserModel && BROWSER_MODELS[browserModel] ? browserModel : DEFAULT_BROWSER_MODEL;
   const browserModelCfg = BROWSER_MODELS[browserModelKey];
@@ -110,12 +122,45 @@ export default function SettingsScreen({
     probeBrowserEnv().then((env) => { if (live) setGpuEnv(env); }).catch(() => {});
     return () => { live = false; };
   }, []);
+  useEffect(() => {
+    setProviderQuery(providerForUrl(baseUrl)?.label || '');
+  }, [baseUrl]);
   const recommendedKey = gpuEnv ? pickBrowserModel(gpuEnv) : null;
   const [downloading, setDownloading] = useState(false);
   const [downloadPct, setDownloadPct] = useState(null);
   const [browserModelStatus, setBrowserModelStatus] = useState('');
   const [testingBrowser, setTestingBrowser] = useState(false);
   const [browserTestResult, setBrowserTestResult] = useState(null);
+  const browserModelUnavailable = Boolean(
+    gpuEnv && browserModelCfg.requiresWebGpu && !gpuEnv.hasShaderF16,
+  );
+
+  // The stored default can be a WebGPU-only model from a different device.
+  // Once the real adapter probe completes, replace an impossible selection
+  // with the one verified WASM-capable row instead of leaving a broken model
+  // selected and waiting for the user to hit Download.
+  useEffect(() => {
+    if (browserModelUnavailable && setBrowserModel) {
+      setBrowserModel(FALLBACK_BROWSER_MODEL);
+      setBrowserModelStatus(
+        `${browserModelCfg.label} needs WebGPU fp16 here. Switched to SmolVLM2 256M (WASM; slower and more basic).`,
+      );
+    }
+  }, [browserModelUnavailable, browserModelCfg.label, setBrowserModel]);
+
+  // Chrome built-in AI (Gemini Nano) — what can this browser do right now,
+  // and which runtime does the current selection resolve to? Same async-probe
+  // pattern as gpuEnv above: null until resolved, nothing flashed early.
+  const [chromeEnv, setChromeEnv] = useState(null);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const probe = await probeChromeAI();
+      const resolved = await resolveBrowserRuntime(browserRuntime || 'auto');
+      if (live) setChromeEnv({ ...probe, resolved });
+    })().catch(() => {});
+    return () => { live = false; };
+  }, [browserRuntime]);
 
   async function handleLoadBrowserModel() {
     setDownloading(true);
@@ -130,6 +175,10 @@ export default function SettingsScreen({
         device === 'webgpu' ? 'Model ready (WebGPU).' : 'Model ready — running on WASM (no WebGPU, expect it to be slow).',
       );
     } catch (err) {
+      reportHandledError(err, {
+        area: 'browser-model-load', inference: 'in-browser', model: browserModelKey,
+        phase: 'model-load', ...(err.browserContext || {}),
+      });
       setBrowserModelStatus(`Load failed: ${err.message}`);
     } finally {
       setDownloading(false);
@@ -148,6 +197,7 @@ export default function SettingsScreen({
     try {
       const result = await scanBrowser({
         model: browserModelKey,
+        runtime: browserRuntime || 'auto',
         mission: 'anything unusual, unsafe, or noteworthy',
         image: frame,
         threshold: 0,
@@ -155,6 +205,10 @@ export default function SettingsScreen({
       });
       setBrowserTestResult(result);
     } catch (err) {
+      reportHandledError(err, {
+        area: 'browser-model-test', inference: 'in-browser', model: browserModelKey,
+        phase: 'inference', ...(err.browserContext || {}),
+      });
       setBrowserModelStatus(`Test failed: ${err.message}`);
     } finally {
       setTestingBrowser(false);
@@ -177,12 +231,13 @@ export default function SettingsScreen({
     if (!baseUrl) { onStatusMsg('Enter a Base URL first.'); return; }
     setFetchingModels(true);
     try {
-      const list = await fetchModels(baseUrl, apiKey);
+      const list = await fetchModels(baseUrl, apiKey, { visionOnly: true });
       setModels(list);
       setShowDropdown(list.length > 0);
       if (list.length > 0 && !model) setModel(list[0]);
-      onStatusMsg(`Found ${list.length} models.`);
+      onStatusMsg(`Found ${list.length} image-capable models.`);
     } catch (err) {
+      reportHandledError(err, { area: 'fetch-models', inference: isLocal ? 'local-provider' : 'cloud-provider' });
       onStatusMsg(`Fetch failed: ${err.message}. You can type a model name manually.`);
     } finally {
       setFetchingModels(false);
@@ -204,14 +259,19 @@ export default function SettingsScreen({
       onStatusMsg(`Switched provider — API key cleared. Enter ${preset.label}'s key if it needs one.`);
     }
     setBaseUrl(preset.url);
-    setModels([]);
-    if (preset.local) setRate('0');
+    setProviderQuery(preset.label);
+    setShowProviderDropdown(false);
+    setModels(preset.models || []);
+    if (!model && preset.models?.[0]) setModel(preset.models[0]);
   }
 
   const isLocal = isLocalBaseUrl(baseUrl);
   const wakeLockSupported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 
   const filteredModels = models.filter(m => m.toLowerCase().includes((model || '').toLowerCase()));
+  const filteredProviders = PROVIDER_PRESETS.filter((provider) =>
+    provider.label.toLowerCase().includes(providerQuery.toLowerCase()),
+  );
 
   function handleVibeTest() {
     testVibration();
@@ -250,7 +310,7 @@ export default function SettingsScreen({
   }
 
   return (
-    <div className="screen screen-settings">
+    <IonContent className="aura-page screen screen-settings">
       <div className="screen-header">
         <span className="screen-title">SYSTEM SETTINGS</span>
       </div>
@@ -285,18 +345,47 @@ export default function SettingsScreen({
         {engine !== 'browser' && (
           <>
             <div className="form-group">
-              <label className="field-label">PRESET</label>
-              <div className="mode-segments" role="group" aria-label="Provider preset">
-                {PROVIDER_PRESETS.map(p => (
-                  <button
-                    key={p.id}
-                    className={`mode-segment ${baseUrl === p.url ? 'active' : ''}`}
-                    onClick={() => selectPreset(p)}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+              <label className="field-label" htmlFor="provider-preset">PROVIDER PRESET</label>
+              <div className="provider-picker">
+                <input
+                  id="provider-preset"
+                  className="dc-input"
+                  value={providerQuery}
+                  onFocus={() => setShowProviderDropdown(true)}
+                  onChange={(e) => { setProviderQuery(e.target.value); setShowProviderDropdown(true); }}
+                  onBlur={() => setTimeout(() => setShowProviderDropdown(false), 150)}
+                  placeholder="Search local and remote providers"
+                  role="combobox"
+                  aria-expanded={showProviderDropdown}
+                  aria-controls="provider-dropdown"
+                  aria-autocomplete="list"
+                />
+                {showProviderDropdown && filteredProviders.length > 0 && (
+                  <div id="provider-dropdown" className="provider-dropdown" role="listbox">
+                    {['Local', 'Remote'].map((group) => {
+                      const choices = filteredProviders.filter((provider) => provider.group === group);
+                      if (!choices.length) return null;
+                      return (
+                        <div key={group} className="provider-dropdown-group">
+                          <div className="provider-dropdown-label">{group}</div>
+                          {choices.map((provider) => (
+                            <div
+                              key={provider.id}
+                              className="provider-dropdown-item"
+                              role="option"
+                              aria-selected={baseUrl === provider.url}
+                              onMouseDown={() => selectPreset(provider)}
+                            >
+                              {provider.label}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+              <div className="field-hint">10 local and 10 remote OpenAI-compatible providers. Presets include only vision-ready model suggestions where known.</div>
             </div>
             <div className="form-group">
               <label className="field-label">BASE URL</label>
@@ -323,7 +412,7 @@ export default function SettingsScreen({
                   value={model}
                   onChange={e => { setModel(e.target.value); setShowDropdown(models.length > 0); }}
                   onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
-                  placeholder="gemma-4-31b"
+                  placeholder="Search or enter a vision model"
                 />
                 {showDropdown && filteredModels.length > 0 && (
                   <div id="model-dropdown" className="model-dropdown">
@@ -334,7 +423,7 @@ export default function SettingsScreen({
                 )}
               </div>
               <button id="fetch-models-btn" className="dc-btn" disabled={fetchingModels} onClick={handleFetchModels}>
-                {fetchingModels ? 'FETCHING…' : 'FETCH MODELS'}
+                {fetchingModels ? 'FETCHING…' : 'FETCH VISION MODELS'}
               </button>
             </div>
             {statusMsg && <p id="provider-status" className="status-msg" role="status">{statusMsg}</p>}
@@ -344,6 +433,37 @@ export default function SettingsScreen({
         {engine === 'browser' && (
           <>
             <div className="form-group">
+              <label className="field-label" htmlFor="browser-runtime-select">RUNTIME</label>
+              <select
+                id="browser-runtime-select"
+                className="dc-input"
+                value={browserRuntime || 'auto'}
+                onChange={(e) => setBrowserRuntime?.(e.target.value)}
+              >
+                <option value="auto">AUTO — best available</option>
+                <option value="transformers">TRANSFORMERS.JS — WebGPU model</option>
+                <option value="chrome-ai">CHROME BUILT-IN AI — Gemini Nano</option>
+              </select>
+              <div className="field-hint">
+                {!chromeEnv
+                  ? 'Probing this browser…'
+                  : (browserRuntime || 'auto') === 'chrome-ai'
+                    ? (chromeEnv.imageCapable && chromeEnv.availability === 'available'
+                        ? 'CHROME BUILT-IN AI selected. Gemini Nano runs every scan on-device with JSON-constrained output.'
+                        : `CHROME BUILT-IN AI selected, but this browser reports "${chromeEnv.availability}"${chromeEnv.imageCapable ? '' : ' without image input'} — scans will fail until Gemini Nano is downloaded and multimodal here. Transformers.js stays available above.`)
+                    : (browserRuntime || 'auto') === 'transformers'
+                      ? 'TRANSFORMERS.JS selected — the model below answers every scan.'
+                      : chromeEnv.resolved === 'chrome-ai'
+                        ? 'AUTO → CHROME BUILT-IN AI. Gemini Nano runs every scan on-device with JSON-constrained output — no model download here.'
+                        : chromeEnv.availability === 'downloadable' || chromeEnv.availability === 'downloading'
+                          ? `AUTO → TRANSFORMERS.JS. Chrome built-in AI exists here but its model is ${chromeEnv.availability} — selecting it above triggers the ~2 GB Gemini Nano download. Not available on Chrome for Android.`
+                          : 'AUTO → TRANSFORMERS.JS. No usable Chrome built-in AI on this browser (absent, not yet downloaded, or text-only).'}
+              </div>
+              {chromeEnv?.resolved === 'chrome-ai' && (
+                <div className="field-hint">The TRANSFORMERS.JS model below stays downloaded but idle while Chrome built-in AI is active.</div>
+              )}
+            </div>
+            <div className="form-group">
               <label className="field-label" htmlFor="browser-model-select">BROWSER MODEL</label>
               <select
                 id="browser-model-select"
@@ -351,18 +471,28 @@ export default function SettingsScreen({
                 value={browserModelKey}
                 onChange={(e) => setBrowserModel?.(e.target.value)}
               >
-                {browserModelKeys().map((key) => (
-                  <option key={key} value={key}>
-                    {BROWSER_MODELS[key].label} · {BROWSER_MODELS[key].sizeLabel}
-                    {BROWSER_MODELS[key].promptProfile === 'compact' ? ' · basic' : ''}
+                {browserModelKeys().map((key) => {
+                  const cfg = BROWSER_MODELS[key];
+                  const unsupportedReason = modelUnsupportedReason(key, gpuEnv ? { hasWebGpu: true, hasShaderF16: gpuEnv.hasShaderF16 } : {});
+                  const knownIssue = modelKnownIssue(key);
+                  return (
+                  <option key={key} value={key} disabled={Boolean(unsupportedReason)}>
+                    {cfg.label} · {cfg.sizeLabel}
+                    {cfg.promptProfile === 'compact' ? ' · basic' : ''}
+                    {unsupportedReason ? ` · ${unsupportedReason}` : ''}
+                    {!unsupportedReason && knownIssue ? ` · warning: ${knownIssue}` : ''}
                   </option>
-                ))}
+                  );
+                })}
               </select>
               <div className="field-hint">
                 {browserModelCfg.sizeLabel} download, cached after the first load.{' '}
                 {browserModelCfg.promptProfile === 'compact'
                   ? 'Coarse yes/no detector — too small to follow a written instruction, so announcements fall back to what it saw.'
                   : 'Follows the same detection and announcement prompts as the PROVIDER engine.'}
+                {modelKnownIssue(browserModelKey) && (
+                  <> Known issue: {modelKnownIssue(browserModelKey)} — it may never finish a scan on similar hardware.</>
+                )}
               </div>
               {recommendedKey && recommendedKey !== browserModelKey && (
                 <div className="field-hint">
@@ -384,7 +514,22 @@ export default function SettingsScreen({
                 {downloading
                   ? `DOWNLOADING ${downloadPct != null ? `${downloadPct}%` : '…'}`
                   : isBrowserModelLoaded(browserModelKey)
-                    ? `READY${browserModelDevice() === 'wasm' ? ' (WASM — no WebGPU, expect it to be slow)' : ' (WebGPU)'}`
+                    ? `READY${(() => {
+                        const l = browserDeviceLimits();
+                        // WebGPU with spec-minimum buffers silently runs WASM,
+                        // so name the buffer ceiling rather than trusting the
+                        // device label alone — and name the ceiling that was
+                        // asked for too, because a clamped grant is a
+                        // different problem from never having asked.
+                        if (browserModelDevice() === 'wasm')
+                          return ' (WASM — no WebGPU, expect it to be slow)';
+                        const got = l?.maxStorageBufferMB;
+                        if (got == null) return ' (WebGPU)';
+                        const asked = l.adapterMaxStorageBufferMB;
+                        return asked != null && asked > got
+                          ? ` (WebGPU · ${got} MB of ${asked} MB buffers — larger models fall back to WASM)`
+                          : ` (WebGPU · ${got} MB buffers)`;
+                      })()}`
                     : 'NOT DOWNLOADED'}
               </p>
               {downloading && (
@@ -393,15 +538,18 @@ export default function SettingsScreen({
               {!hasWebGpu && !downloading && (
                 <div className="field-hint">No WebGPU detected on this browser/device — falls back to WASM, which is much slower (roughly 10-30s per scan).</div>
               )}
+              {gpuEnv?.hasWebGpu && !gpuEnv.hasShaderF16 && !downloading && (
+                <div className="field-hint">WebGPU is available, but not fp16. Larger models are unavailable; SmolVLM2 256M can run on WASM.</div>
+              )}
             </div>
             <div className="btn-row">
-              <button id="browser-load-btn" className="dc-btn" disabled={downloading} onClick={handleLoadBrowserModel}>
+              <button id="browser-load-btn" className="dc-btn" disabled={downloading || browserModelUnavailable} onClick={handleLoadBrowserModel}>
                 {downloading ? 'LOADING…' : 'DOWNLOAD / LOAD'}
               </button>
               <button
                 id="browser-test-btn"
                 className="dc-btn outline"
-                disabled={testingBrowser}
+                disabled={testingBrowser || browserModelUnavailable}
                 onClick={handleTestBrowserModel}
                 title={captureFrame ? '' : 'Start monitoring to capture from the camera'}
               >
@@ -412,6 +560,15 @@ export default function SettingsScreen({
             {browserTestResult && (
               <p className="status-msg">
                 {browserTestResult.triggered ? 'TRIGGERED' : 'clear'} {Math.round(browserTestResult.confidence)}% — "{browserTestResult.reason}" ({browserTestResult.latencyMs}ms)
+                {/* The unprocessed model output. "Nothing notable in view." is
+                    also parseLooseDetection()'s fallback, so without this the
+                    model saw-nothing and parser-choke cases look identical. */}
+                {browserTestResult.rawText && browserTestResult.rawText !== browserTestResult.reason && (
+                  <>
+                    <br />
+                    <span className="muted">model said: {String(browserTestResult.rawText).slice(0, 400)}</span>
+                  </>
+                )}
               </p>
             )}
             {browserModelStatus && <p id="browser-model-status" className="status-msg" role="status">{browserModelStatus}</p>}
@@ -493,8 +650,23 @@ export default function SettingsScreen({
         )}
         {(scanMode === 'interval' || scanMode === 'budget') && (
           <div className="form-group">
-            <label className="field-label">COST RATE ($/1M tokens)</label>
-            <input id="rate" type="number" className="dc-input narrow" min="0" step="0.01" value={rate} onChange={e => setRate(e.target.value)} />
+            <label className="field-label">MODEL PRICING ($/1M TOKENS)</label>
+            {pricing?.source === 'unavailable' ? (
+              <div className="field-hint">No catalogue price found. Enter both rates to enable the dollar budget cap.</div>
+            ) : (
+              <div className="field-hint">
+                {pricing?.source === 'manual'
+                  ? 'Manual override for this provider and model.'
+                  : `${pricing?.estimated ? 'Upstream estimate' : 'Automatic'} price from ${pricing?.source === 'openrouter' ? 'OpenRouter' : pricing?.source === 'free' ? 'the local engine' : 'llm-prices'}${pricing?.updatedAt ? ` (${pricing.updatedAt})` : ''}.`}
+              </div>
+            )}
+            {pricing?.source !== 'free' && (
+              <div className="inline-row">
+                <input id="input-rate" aria-label="Input cost per million tokens" type="number" className="dc-input narrow" min="0" step="0.0001" placeholder={`input ${pricing?.inputRate ?? '—'}`} value={pricingOverride?.inputRate ?? ''} onChange={e => setManualRate('inputRate', e.target.value)} />
+                <input id="output-rate" aria-label="Output cost per million tokens" type="number" className="dc-input narrow" min="0" step="0.0001" placeholder={`output ${pricing?.outputRate ?? '—'}`} value={pricingOverride?.outputRate ?? ''} onChange={e => setManualRate('outputRate', e.target.value)} />
+                {pricingOverride && <button type="button" className="dc-btn outline" onClick={onResetPricingOverride}>USE AUTO</button>}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -828,7 +1000,18 @@ export default function SettingsScreen({
           <label className="field-label">BODY JSON SCHEMA (optional)</label>
           <textarea id="webhook-schema" className="dc-textarea" rows={3} value={webhookSchema} onChange={e => setWebhookSchema(e.target.value)} placeholder='{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}' />
         </div>
+        <label className="toggle-label">
+          <input
+            id="webhook-include-image"
+            type="checkbox"
+            className="dc-checkbox"
+            checked={webhookIncludeImage}
+            onChange={e => setWebhookIncludeImage(e.target.checked)}
+          />
+          <span>ATTACH LATEST FRAME TO NTFY ALERTS</span>
+        </label>
+        <p className="field-hint">For hosted ntfy topic URLs (https://ntfy.sh/topic). Aura uploads the alert JPEG with the generated alert text.</p>
       </div>
-    </div>
+    </IonContent>
   );
 }

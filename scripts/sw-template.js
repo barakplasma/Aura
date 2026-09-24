@@ -48,6 +48,31 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Chrome treats a dedicated-worker script like a nested browsing context: when
+// the document is COEP-isolated, the *response* for `assets/ml.worker.js` must
+// itself declare `Cross-Origin-Embedder-Policy` (CORP alone is not enough), or
+// the fetch dies with `ERR_BLOCKED_BY_RESPONSE` /
+// `coep-frame-resource-needs-coep-header`. A worker-script load failure
+// surfaces as an ErrorEvent with an empty message, so all the app can report is
+// "Browser engine worker crashed: no message" — which is how this hid.
+//
+// Stamp both headers on every same-origin response we hand back, not just
+// navigations: cache-first hits are constructed Responses, which is exactly
+// where the proof otherwise goes missing.
+function isolate(resp) {
+  // Call sites pass either a Response or the Promise that resolves to one.
+  if (resp && typeof resp.then === "function") return resp.then(isolate);
+  if (!resp || !resp.body) return resp;
+  const headers = new Headers(resp.headers);
+  headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+  return new Response(resp.body, {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers,
+  });
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
@@ -59,12 +84,42 @@ self.addEventListener("fetch", (event) => {
   // back to the cached shell when offline.
   if (req.mode === "navigate") {
     event.respondWith(
-      fetch(req).catch(
-        async () =>
-          (await caches.match(
+      (async () => {
+        let resp;
+        try {
+          resp = await fetch(req);
+        } catch {
+          resp = await caches.match(
             new URL("index.html", self.registration.scope).href,
-          )) || Response.error(),
-      ),
+          );
+        }
+        if (!resp) return Response.error();
+        // Cross-origin isolation, injected here because most places this app
+        // is hosted cannot send it: GitHub Pages has no header configuration,
+        // and `serve` (the dev loop) sends none either. Without isolation the
+        // browser withholds SharedArrayBuffer, and ONNX Runtime then loads
+        // `ort-wasm-simd-threaded.asyncify.wasm` — the single-threaded CPU
+        // build — instead of the `jsep` build that can hold a WebGPU session.
+        // That is why the BROWSER engine ran on one core with a GPU attached.
+        // A synthetic response's headers count for isolation, so a service
+        // worker is the only portable way to get GPU inference on Pages.
+        //
+        // COEP `require-corp` makes every cross-origin subresource prove it is
+        // CORS-readable. Model weights come from the Hugging Face CDN, which
+        // sends `Access-Control-Allow-Origin: *`; nothing else is loaded
+        // cross-origin (see public/index.html: local CSS, icons, manifest).
+        return isolate(
+          new Response(resp.body, {
+            status: resp.status,
+            statusText: resp.statusText,
+            headers: {
+              ...Object.fromEntries(resp.headers.entries()),
+              "Cross-Origin-Opener-Policy": "same-origin",
+              "Cross-Origin-Embedder-Policy": "require-corp",
+            },
+          }),
+        );
+      })(),
     );
     return;
   }
@@ -73,7 +128,12 @@ self.addEventListener("fetch", (event) => {
   // because every build regenerates this file with a new VERSION, which
   // triggers a fresh install and a fresh copy of everything.
   if (precached.has(url.href)) {
-    event.respondWith(caches.match(url.href).then((hit) => hit || fetch(req)));
+    event.respondWith(
+      caches
+        .match(url.href)
+        .then((hit) => (hit ? isolate(hit) : isolate(fetch(req))))
+        .catch(() => isolate(fetch(req))),
+    );
     return;
   }
 
@@ -85,18 +145,23 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       caches.match(req).then(
         (hit) =>
-          hit ||
-          fetch(req).then((resp) => {
-            if (resp.ok) caches.open(CACHE).then((cache) => cache.put(req, resp.clone()));
-            return resp;
-          }),
+          isolate(
+            hit ||
+              fetch(req).then((resp) => {
+                if (resp.ok) caches.open(CACHE).then((cache) => cache.put(req, resp.clone()));
+                return resp;
+              }),
+          ),
       ),
     );
     return;
   }
 
-  // Everything else same-origin (e.g. sourcemaps): network, cache as fallback.
+  // Everything else same-origin (e.g. sourcemaps, and the ORT loader bundles
+  // the worker imports by relative URL): network, cache as fallback. Stamped
+  // too — a script fetched by the worker needs the same COEP proof, and this
+  // branch is where a newly added asset lands before it is precached.
   event.respondWith(
-    fetch(req).catch(async () => (await caches.match(req)) || Response.error()),
+    isolate(fetch(req)).catch(async () => (await caches.match(req)) || Response.error()),
   );
 });

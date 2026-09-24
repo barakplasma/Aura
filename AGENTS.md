@@ -67,6 +67,12 @@ npm run deploy
 ```
 Then enable Pages in repo settings → Source: `gh-pages` branch.
 
+### Browser-model hosting constraint
+
+Hugging Face model downloads do not work from a `workers.dev` deployment of
+Aura. Deploy browser-model builds to GitHub Pages (`github.io`) instead, where
+the downloads work.
+
 ## Guardrails
 - No backend code — everything must work as a static site.
 - User's API key must never be sent anywhere except directly to their chosen provider.

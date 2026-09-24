@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
-import { fetchModels, scanClient } from '../../lib/aura.js';
+import { fetchModels, scanClient, isLocalBaseUrl } from '../../lib/aura.js';
 import { expandMatrix, comboKey, runEvalMatrix, summarizeResults } from '../../lib/eval.js';
+import { pricingKey, resolvePricing } from '../../lib/pricing.js';
 import { createEvalStore, makeId } from '../../lib/eval-store.js';
-import { scanBrowser, BROWSER_MODELS } from '../../lib/browser-engine.js';
+import { scanBrowser, probeChromeAI, DEFAULT_BROWSER_MODEL, BROWSER_MODELS } from '../../lib/browser-engine.js';
+import { reportUnexpectedError } from '../../lib/handled-errors.js';
 import ProgressBar from '../components/ProgressBar.jsx';
+import { reportHandledError } from '../monitoring.js';
 
 const store = createEvalStore();
 
@@ -14,20 +17,41 @@ const store = createEvalStore();
 // "is the on-device model good enough for my mission" without ever running it
 // on a phone with no GPU.
 const BROWSER_MODEL_PREFIX = 'browser:';
+// "chrome-ai:builtin" — the same comparison for the other in-browser runtime,
+// Chrome's built-in Prompt API (Gemini Nano). Gated on its own feature probe,
+// not on WebGPU: it uses neither transformers.js nor the GPU pipeline.
+const CHROME_AI_MODEL_ID = 'chrome-ai:builtin';
 const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
-const browserEvalModelIds = hasWebGpu
-  ? Object.keys(BROWSER_MODELS).map((k) => `${BROWSER_MODEL_PREFIX}${k}`)
-  : [];
 
-// Routes a cell's scan to the BROWSER engine or the configured provider,
-// depending on which kind of model id it carries — everything else about the
-// call (mission, image, threshold, signal) is the same either way.
+// Friendly label + provenance sub-line for the models column.
+function evalModelLabel(m) {
+  if (m.startsWith(BROWSER_MODEL_PREFIX)) {
+    const cfg = BROWSER_MODELS[m.slice(BROWSER_MODEL_PREFIX.length)];
+    return { name: cfg?.label || m, sub: `transformers.js · ${cfg?.sizeLabel || ''}` };
+  }
+  if (m === CHROME_AI_MODEL_ID) {
+    return { name: 'Chrome built-in AI', sub: 'Gemini Nano · JSON-constrained' };
+  }
+  return { name: m, sub: null };
+}
+
+// Routes a cell's scan to the BROWSER engine (either runtime) or the
+// configured provider, depending on which kind of model id it carries —
+// everything else about the call (mission, image, threshold, signal) is the
+// same either way.
 async function scanForEval(params) {
   if (params.model.startsWith(BROWSER_MODEL_PREFIX)) {
     return scanBrowser({
       ...params,
+      // Pinned: a `browser:<key>` row must run ITS model through
+      // Transformers.js. Left to auto-resolve, a Chrome-AI-capable browser
+      // would run every row on Gemini Nano and corrupt the whole matrix.
+      runtime: 'transformers',
       model: params.model.slice(BROWSER_MODEL_PREFIX.length),
     });
+  }
+  if (params.model === CHROME_AI_MODEL_ID) {
+    return scanBrowser({ ...params, model: DEFAULT_BROWSER_MODEL, runtime: 'chrome-ai' });
   }
   return scanClient(params);
 }
@@ -78,7 +102,7 @@ function downloadJson(obj, filename) {
 }
 
 export default function EvalScreen({
-  baseUrl, apiKey, rate, configuredModel, mission, captureFrame, monitorRunning,
+  baseUrl, apiKey, pricingOverrides, configuredModel, mission, captureFrame, monitorRunning,
 }) {
   const [images, setImages] = useState([]);
   const [variants, setVariants] = useLocalStorage('aura.eval.variants', []);
@@ -91,6 +115,28 @@ export default function EvalScreen({
   const [runView, setRunView] = useState(null);   // displayed run record
   const [progress, setProgress] = useState(null); // { done, total } while running
   const fileInputRef = useRef(null);
+
+  // In-browser model rows offered in the matrix. Transformers.js rows need
+  // WebGPU; the Chrome built-in AI row appears only when the feature probe
+  // says this browser can actually take image input through it.
+  const [chromeAICapable, setChromeAICapable] = useState(false);
+  useEffect(() => {
+    let live = true;
+    probeChromeAI().then((probe) => {
+      if (live) setChromeAICapable(probe.imageCapable && probe.availability === 'available');
+    }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const browserEvalModelIds = [
+    // Rows with a knownIssue (measured "does not finish") would just burn an eval slot
+    // on a run that never completes.
+    ...(hasWebGpu
+      ? Object.keys(BROWSER_MODELS)
+          .filter((k) => !BROWSER_MODELS[k].knownIssue)
+          .map((k) => `${BROWSER_MODEL_PREFIX}${k}`)
+      : []),
+    ...(chromeAICapable ? [CHROME_AI_MODEL_ID] : []),
+  ];
 
   // Pull the current state of the module-level run (or the persisted last
   // run) into React state. Registered as the active run's listener.
@@ -219,8 +265,9 @@ export default function EvalScreen({
   const usableVariants = variants.filter((v) => (v.mission || '').trim());
   const totalCalls = images.length * selectedModels.length * usableVariants.length;
   const running = Boolean(activeRun);
-  // A run made up entirely of "browser:*" models needs no provider at all.
-  const needsProvider = selectedModels.some((m) => !m.startsWith(BROWSER_MODEL_PREFIX));
+  // A run made up entirely of in-browser models needs no provider at all.
+  const isLocalModelId = (m) => m.startsWith(BROWSER_MODEL_PREFIX) || m === CHROME_AI_MODEL_ID;
+  const needsProvider = selectedModels.some((m) => !isLocalModelId(m));
   const blockers = [];
   // No API key blocker — a local provider needs none.
   if (needsProvider && !baseUrl) blockers.push('provider Base URL (Settings)');
@@ -266,6 +313,15 @@ export default function EvalScreen({
       signal: controller.signal,
       scanFn: scanForEval,
       onResult: (result, done) => {
+        if (result.status === 'error') {
+          reportUnexpectedError(new Error(result.error), reportHandledError, {
+            area: 'prompt-evaluation',
+            model: result.model,
+            inference: result.model.startsWith(BROWSER_MODEL_PREFIX)
+              ? 'in-browser'
+              : isLocalBaseUrl(baseUrl) ? 'local-provider' : 'cloud-provider',
+          });
+        }
         if (!activeRun) return;
         activeRun.run.results.push(result);
         activeRun.done = done;
@@ -305,7 +361,11 @@ export default function EvalScreen({
     }
   }
   const summary = runView
-    ? summarizeResults(runView.results, runView.expectedByImage, rate)
+    ? summarizeResults(runView.results, runView.expectedByImage, (evalModel) => resolvePricing({
+        baseUrl,
+        model: evalModel,
+        override: pricingOverrides?.[pricingKey(baseUrl, evalModel)],
+      }))
     : null;
   const imageById = Object.fromEntries(images.map((i) => [i.id, i]));
 
@@ -342,8 +402,16 @@ export default function EvalScreen({
     const labeled = expected === true || expected === false;
     const match = labeled ? Boolean(r.triggered) === expected : null;
     const cls = match === null ? '' : match ? ' eval-cell-match' : ' eval-cell-mismatch';
+    // Provenance in the hover: which runtime answered, on what device, and
+    // what the one-time model load cost (browser cells only).
+    const provenance = [
+      r.reason,
+      r.runtime && `runtime: ${r.runtime}`,
+      r.device && `device: ${r.device}`,
+      r.modelLoadMs != null && `model load: ${(r.modelLoadMs / 1000).toFixed(1)}s`,
+    ].filter(Boolean).join(' · ');
     return (
-      <td key={combo.key} className={`eval-cell${cls}`} title={r.reason || ''}>
+      <td key={combo.key} className={`eval-cell${cls}`} title={provenance || undefined}>
         <span className={r.triggered ? 'eval-trig' : 'eval-clear'}>
           {r.triggered ? 'TRIG' : 'clear'} {Math.round(r.confidence)}
         </span>
@@ -423,21 +491,23 @@ export default function EvalScreen({
           </button>
         </div>
         <div className="eval-model-list">
-          {visibleModels.map((m) => (
-            <label key={m} className="toggle-label eval-model-item">
-              <input
-                type="checkbox"
-                className="dc-checkbox"
-                checked={selectedModels.includes(m)}
-                onChange={() => toggleModel(m)}
-              />
-              <span>
-                {m.startsWith(BROWSER_MODEL_PREFIX)
-                  ? `${BROWSER_MODELS[m.slice(BROWSER_MODEL_PREFIX.length)]?.label || m} (browser)`
-                  : m}
-              </span>
-            </label>
-          ))}
+          {visibleModels.map((m) => {
+            const { name, sub } = evalModelLabel(m);
+            return (
+              <label key={m} className="toggle-label eval-model-item">
+                <input
+                  type="checkbox"
+                  className="dc-checkbox"
+                  checked={selectedModels.includes(m)}
+                  onChange={() => toggleModel(m)}
+                />
+                <span>
+                  {name}
+                  {sub && <span className="eval-model-sub"> — {sub}</span>}
+                </span>
+              </label>
+            );
+          })}
         </div>
         <div className="inline-row">
           <input
@@ -494,9 +564,15 @@ export default function EvalScreen({
               <thead>
                 <tr>
                   <th rowSpan={2}>IMAGE</th>
-                  {runView.models.map((m) => (
-                    <th key={m} colSpan={runView.variants.length} className="eval-model-head">{m}</th>
-                  ))}
+                  {runView.models.map((m) => {
+                    const { name, sub } = evalModelLabel(m);
+                    return (
+                      <th key={m} colSpan={runView.variants.length} className="eval-model-head">
+                        {name}
+                        {sub && <span className="eval-model-sub"> · {sub}</span>}
+                      </th>
+                    );
+                  })}
                 </tr>
                 <tr>
                   {runCombos.map((c) => (

@@ -4,6 +4,7 @@ import {
   shouldCatchUp,
   resumeWindowOpen,
   nextReconnectDelayMs,
+  RECONNECT_ATTEMPTS,
 } from "../lib/keepalive.js";
 
 test("shouldCatchUp is false while within double the scheduled gap", () => {
@@ -47,10 +48,31 @@ test("resumeWindowOpen rejects a future armedAt (clock skew)", () => {
   assert.equal(resumeWindowOpen(2000, 1000, 12 * 3600 * 1000), false);
 });
 
-test("nextReconnectDelayMs follows the 1s/3s/8s backoff then gives up", () => {
+test("nextReconnectDelayMs follows the visible ladder then gives up", () => {
   assert.equal(nextReconnectDelayMs(1), 1000);
   assert.equal(nextReconnectDelayMs(2), 3000);
   assert.equal(nextReconnectDelayMs(3), 8000);
-  assert.equal(nextReconnectDelayMs(4), null);
-  assert.equal(nextReconnectDelayMs(5), null);
+  assert.equal(nextReconnectDelayMs(4), 15000);
+  assert.equal(nextReconnectDelayMs(5), 30000);
+  assert.equal(nextReconnectDelayMs(6), 60000);
+  // Visible operator, ladder exhausted: stop() and tell them to re-arm.
+  assert.equal(nextReconnectDelayMs(7), null);
+  assert.equal(nextReconnectDelayMs(50), null);
+});
+
+test("nextReconnectDelayMs never gives up while hidden", () => {
+  // Android refuses background getUserMedia outright, so while hidden every
+  // failure is the OS declining, not a dead camera — hold the slow cadence
+  // and let the visibility handler restart the ladder on return.
+  assert.equal(nextReconnectDelayMs(1, true), 30000);
+  assert.equal(nextReconnectDelayMs(7, true), 30000);
+  assert.equal(nextReconnectDelayMs(50, true), 30000);
+});
+
+test("RECONNECT_ATTEMPTS matches the visible ladder length", () => {
+  // The hook prints "(n/N)" from this constant; it must agree with where
+  // nextReconnectDelayMs starts returning null.
+  assert.equal(RECONNECT_ATTEMPTS, 6);
+  assert.equal(nextReconnectDelayMs(RECONNECT_ATTEMPTS), 60000);
+  assert.equal(nextReconnectDelayMs(RECONNECT_ATTEMPTS + 1), null);
 });

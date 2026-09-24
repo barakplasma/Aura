@@ -81,6 +81,19 @@ test("budget cost cap derives the gap from spend", () => {
   assert.equal(gap3, 0);
 });
 
+test("budget cost cap uses separate input and output prices", () => {
+  // (1000 × $1 + 100 × $10) / 1M = $0.002 per scan, so $2/hour
+  // permits one scan/second before its duration is subtracted.
+  assert.equal(
+    computeGapMs(
+      "budget",
+      { scanEvery: 5, budgetPerHour: 2, inputRate: 1, outputRate: 10 },
+      { promptTokens: 1000, completionTokens: 100, durationMs: 0 },
+    ),
+    3600,
+  );
+});
+
 test("budget network cap derives the gap from payload bytes", () => {
   // 100000 bytes, 1 MB/hour: 3.6e6 × 1e5 / 1e6 = 360000ms.
   const gap = computeGapMs(

@@ -104,13 +104,32 @@ afterwards, so it happens once, and works offline after that. **TEST ON CURRENT
 FRAME** runs a single scan before you arm; **CLEAR MODEL CACHE** frees the weights.
 
 The model is picked from a table (`lib/browser-models.js`) based on what the device
-can actually run — the default is LFM2.5-VL 450M, with FastVLM 0.5B as an opt-in
-upgrade and SmolVLM2 256M as the no-WebGPU floor. Cost is always `$0`; there's no
+can actually run — currently SmolVLM2 500M by default, with LFM2.5-VL 450M,
+Qwen3.5 0.8B, nanoLLaVA 1.5 and FastVLM 0.5B as opt-in rows and SmolVLM2 256M as
+the no-WebGPU floor. Chrome's built-in AI (Gemini Nano) is a second transport
+for the same engine where the browser offers it. Cost is always `$0`; there's no
 provider to bill. Nothing about the scan leaves the device — the only network
 traffic is the one-time model download from Hugging Face.
 
 Use the **Evaluate** screen to compare it against your hosted provider on your own
 sample frames before trusting it for a given camera.
+
+### Turning on the object gate
+
+Settings → OBJECT GATE puts a small YOLO26 detector (3–5 MB) in front of the
+vision model: it looks every couple of seconds and only wakes the expensive
+model when the *set of objects* in frame changes. Worth it on any scene that
+mostly sits still, and the main lever against a phone that gets hot while armed.
+
+Knobs that matter: **WATCH CLASSES** (restrict to the COCO classes your mission
+cares about — most of the saving lives here), **WAKE ON** (added / removed /
+moved, with moved off by default), and **HEARTBEAT EVERY**, which forces a full
+scan on a timer no matter what the gate says. The detector knows 80 object
+classes and nothing about smoke, a left-on stove or a wilting plant, so the
+heartbeat is what keeps those visible — setting it to 0 makes them invisible.
+
+The gate's rules are pure functions in `lib/object-gate.js` and `lib/motion.js`,
+so behaviour changes belong there (with a test), not in the hook.
 
 ## Running fully offline
 

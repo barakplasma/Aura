@@ -1,12 +1,9 @@
-import { memo } from 'react';
-
+import { IonIcon, IonLabel, IonTabBar, IonTabButton } from '@ionic/react';
+import { flask, home, list, notifications, settings, speedometer } from 'ionicons/icons';
 const SCREENS = [
-  { id: 'mission', label: 'MISSION', num: '01' },
-  { id: 'monitor', label: 'MONITOR', num: '02' },
-  { id: 'history', label: 'HISTORY', num: '03' },
-  { id: 'optimize', label: 'OPTIMIZE', num: '04' },
-  { id: 'eval', label: 'EVAL', num: '05' },
-  { id: 'settings', label: 'SETTINGS', num: '06' },
+  { id: 'monitor', label: 'Monitor', icon: home }, { id: 'mission', label: 'Mission', icon: list },
+  { id: 'history', label: 'Alerts', icon: notifications }, { id: 'settings', label: 'Settings', icon: settings },
+  { id: 'optimize', label: 'Tune', icon: flask }, { id: 'eval', label: 'Eval', icon: speedometer },
 ];
 
 // Memoized — per-scan telemetry updates re-render App, but the rail only
@@ -17,21 +14,6 @@ const SCREENS = [
 // OPTIMIZE disappearing doesn't renumber EVAL and SETTINGS under the
 // operator's fingers.
 function NavRail({ screen, setScreen, hidden }) {
-  const visible = hidden?.length ? SCREENS.filter(s => !hidden.includes(s.id)) : SCREENS;
-  return (
-    <nav className="nav-rail">
-      {visible.map(s => (
-        <button
-          key={s.id}
-          className={`nav-item ${screen === s.id ? 'active' : ''}`}
-          onClick={() => setScreen(s.id)}
-        >
-          <span className="nav-num">{s.num}</span>
-          <span className="nav-label">{s.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
+  return <IonTabBar slot="bottom" selectedTab={screen}>{SCREENS.map(s => <IonTabButton key={s.id} tab={s.id} selected={screen === s.id} onClick={() => setScreen(s.id)}><IonIcon icon={s.icon} /><IonLabel>{s.label}</IonLabel></IonTabButton>)}</IonTabBar>;
 }
-
-export default memo(NavRail);
+export default NavRail;

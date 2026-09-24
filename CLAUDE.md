@@ -27,29 +27,36 @@ React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → mini
 code-split ESM bundles in `public/assets/` (with linked sourcemaps). `src/aura.css`
 is copied to `public/aura.css` by the build — edit the `src/` copy only.
 
-| Path                              | Role                                                                                                                       |
-|-----------------------------------|----------------------------------------------------------------------------------------------------------------------------|
-| `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                                |
-| `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches        |
-| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen    |
-| `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                                    |
-| `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                                 |
-| `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                       |
-| `public/index.html`               | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                          |
-| `public/feedback.js`              | Web Speech + Web Vibration                                                                                                 |
-| `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models                       |
-| `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)           |
-| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, owns `src/workers/ml.worker.js`'s lifecycle; re-exports the model table            |
-| `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                |
+| Path                              | Role                                                                                                                                  |
+|-----------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                                           |
+| `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches                   |
+| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen               |
+| `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                                               |
+| `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                                            |
+| `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                  |
+| `public/index.html`               | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                     |
+| `public/feedback.js`              | Web Speech + Web Vibration                                                                                                            |
+| `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models                                  |
+| `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)                      |
+| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                                 |
+| `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                           |
+| `lib/chrome-ai.js`                | Chrome built-in AI (Gemini Nano) transport parallel to the worker's — see below                                                       |
 | `src/workers/ml.worker.js`        | Runs the selected VLM **and** the gate's detector via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers` |
-| `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                      |
-| `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                    |
-| `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                            |
-| `lib/eval.js`                     | Prompt-evaluation engine: expands the image × model × prompt matrix, runs detection-only scans, scores results             |
-| `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                          |
-| `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                    |
-| `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                             |
-| `test/`                           | Unit tests for the lib/ pure helpers, demo.js, browser-engine protocol, and scanClient validation                          |
+| `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                                 |
+| `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                               |
+| `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                                       |
+| `lib/eval.js`                     | Prompt-evaluation engine: expands the image × model × prompt matrix, runs detection-only scans, scores results                        |
+| `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                                     |
+| `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                               |
+| `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                                        |
+| `test/`                           | Unit tests for the lib/ pure helpers, demo.js, browser-engine protocol, and scanClient validation                                     |
+
+The BROWSER engine's runtime choice — `aura.browserRuntime`: 'auto' | 'transformers' | 'chrome-ai' —
+is resolved by `resolveBrowserRuntime()` in lib/browser-engine.js. Auto picks Chrome built-in AI only when
+`LanguageModel` is already 'available' AND image-capable: it never triggers Gemini Nano's ~2 GB download and
+never routes vision through a text-only build. lib/chrome-ai.js is main-thread-only (the Prompt API has no
+worker surface) and fully feature-detected — Chrome 148+ on web, absent on Chrome for Android.
 
 Two dependencies are kept out of the main bundle by the same pattern — a
 module that's never statically reachable from `App.jsx`, only loaded lazily
@@ -124,6 +131,14 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - A row is only `autoSelectable` if `pickBrowserModel()` may hand it to someone who
   never opened Settings. Anything whose download needs a deliberate yes stays
   `false` and is picked manually.
+- A failure measured on one device is a row's `knownIssue` (warns, never auto-picked,
+  skipped by the eval matrix), not a device gate. `modelUnsupportedReason()` is only for
+  facts about *this* device (WebGPU fp16), and only it disables a picker option.
+- BROWSER confidence comes from the YES-vs-NO logit margin at the first decode step
+  (`logitConfidence()` in `lib/logprob.js`) whenever that step emitted a verdict; a number
+  the model wrote is the fallback. Nothing may penalise or reshape the detection leg's
+  first-step logits — the prose legs' repetition penalty is `lib/repetition-penalty.js`,
+  which only sees generated tokens (the library's `repetition_penalty` also hits the prompt).
 - There is no silent mock: a misconfigured or unreachable provider throws. A blank
   API key is *not* misconfiguration — it's the normal local-server setup, and the
   request goes out for real. Demo mode is the only simulated path: explicit opt-in
@@ -159,6 +174,12 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - BROWSER engine: needs WebGPU for a usable cadence (falls back to WASM, which is
   10-30s/scan). Even the best row in the table is not a substitute for a strong
   cloud model — the eval screen exists to measure that trade-off.
+- Chrome built-in AI runtime (Gemini Nano): desktop Chrome 148+ / Chromebook Plus
+  only — **not Chrome for Android**, so Aura's reference phone never sees it; Auto
+  resolves to Transformers.js there. It runs on the main thread only (no worker),
+  and Auto never triggers its ~2 GB model download: only a state of exactly
+  'available' + image-capable qualifies. Its `responseConstraint` is the one truly
+  structured output path; everything else still goes through the parsers.
 - ORT's default WebGPU device uses the spec *minimum* limits (128 MB
   `maxStorageBufferBindingSize`), and transformers.js doesn't raise them.
   `ml.worker.js`'s `useAdapterLimits()` requests a device with the adapter's own

@@ -1075,6 +1075,13 @@ textarea {
   gap: 10px;
 }
 
+.provider-picker {
+  position: relative;
+}
+
+/* Shared floating-panel shape for both dropdowns (jscpd: one rule, not two
+   copies); only the scroll ceiling differs per dropdown. */
+.provider-dropdown,
 .model-dropdown {
   position: absolute;
   top: 100%;
@@ -1084,9 +1091,42 @@ textarea {
   border: 1px solid var(--c-amber-bdr);
   border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
-  max-height: 200px;
   overflow-y: auto;
   z-index: 100;
+}
+
+.provider-dropdown {
+  max-height: 260px;
+}
+
+.provider-dropdown-group + .provider-dropdown-group {
+  border-top: 1px solid var(--c-bdr);
+}
+
+.provider-dropdown-label {
+  padding: 7px 10px 3px;
+  color: var(--c-dim);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.provider-dropdown-item {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--c-text);
+  font-size: 12px;
+}
+
+.provider-dropdown-item:hover,
+.provider-dropdown-item[aria-selected='true'] {
+  background: var(--c-amber-dim);
+  color: var(--c-amber);
+}
+
+.model-dropdown {
+  max-height: 200px;
 }
 
 .model-dropdown-item {
@@ -1316,6 +1356,14 @@ textarea {
 .eval-table .eval-model-head {
   color: var(--c-amber);
   letter-spacing: 0.06em;
+}
+
+.eval-model-sub {
+  display: block;
+  color: var(--c-dim);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
 }
 
 .eval-table .eval-variant-head {

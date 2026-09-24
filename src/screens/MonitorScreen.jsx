@@ -1,130 +1,34 @@
-import ProgressBar, { progressLabel } from '../components/ProgressBar.jsx';
+import {
+  IonButton, IonCard, IonCardContent, IonContent,
+} from '@ionic/react';
 
-// ms → compact human string ("850ms" / "1.4s"), "OFF" when there's no forced
-// timeout (MAX mode), or "—" when unknown (no samples yet).
-function fmtMs(ms) {
-  if (ms === Infinity) return 'OFF';
-  if (!Number.isFinite(ms)) return '—';
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-}
+export default function MonitorScreen({
+  running, onToggle, providerReady, engine,
+  demoMode, onStartDemo, onOpenSettings, telemetry,
+}) {
+  // Only while the object gate is actually running: without it there is
+  // nothing here the status line doesn't already say.
+  const gateActive = running && telemetry?.gate && telemetry.gate !== '—';
+  return <IonContent className="aura-page monitor-content">
+    {!providerReady && !demoMode && !running && <IonCard className="notice"><IonCardContent>
+      <strong>Finish setup to monitor</strong>
+      <p>{engine === 'browser'
+        ? 'Download a browser model in Settings.'
+        : 'Choose a provider and vision model in Settings, or try the demo.'}</p>
+      <IonButton fill="outline" onClick={onOpenSettings}>Open settings</IonButton>
+      <IonButton fill="clear" onClick={onStartDemo}>Try demo</IonButton>
+    </IonCardContent></IonCard>}
 
-// Controls panel for the monitor tab. The camera preview itself lives in
-// MonitorStage (mounted at app level) so it survives tab switches.
-export default function MonitorScreen({ running, telemetry, progress, stats, onToggle, providerReady, engine, demoMode, onStartDemo, onOpenSettings }) {
-  const showProgress = running && progress && progress.phase !== 'idle';
-  return (
-    <div className="screen-monitor">
-      <div className="monitor-panel">
-        <div className="panel-label">DETECTION</div>
-        <div className="panel-row">
-          <span className="panel-k">CONF</span>
-          <span className="panel-v amber">{telemetry.confidence}%</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">LATENCY</span>
-          <span className="panel-v">{telemetry.latency}ms</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">ENGINE</span>
-          <span className="panel-v">{telemetry.mode}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Input and output tokens used across this frame's provider requests">LAST FRAME TOKENS</span>
-          <span className="panel-v">{telemetry.frameTokens}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">SESSION TOKENS</span>
-          <span className="panel-v">{telemetry.tokens}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">FRAME</span>
-          <span className="panel-v">{telemetry.frameDetails}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Effective throughput from the cycle-period EMA">SCANS/HR</span>
-          <span className="panel-v">{telemetry.scansPerHr}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Projected spend at the current cadence">EST $/HR</span>
-          <span className="panel-v amber">${telemetry.costPerHr}</span>
-        </div>
-        {telemetry.gate && telemetry.gate !== '—' && (
-          <>
-            <div className="panel-row">
-              <span className="panel-k" title="What the local detector currently sees in frame">OBJECTS</span>
-              <span className="panel-v">{telemetry.objects}</span>
-            </div>
-            <div className="panel-row">
-              <span className="panel-k" title="Why the last check did or did not wake the vision model">GATE</span>
-              <span className="panel-v">{telemetry.gate}</span>
-            </div>
-            <div className="panel-row">
-              <span className="panel-k" title="Checks that did not reach the vision model">GATE SKIPS</span>
-              <span className="panel-v">{telemetry.gateSkipped}</span>
-            </div>
-            <div className="panel-row">
-              <span className="panel-k" title="Detector latency (EMA) and the backend running it — the number that says whether the gate itself became the problem">DETECT</span>
-              <span className="panel-v">{telemetry.detect}</span>
-            </div>
-          </>
-        )}
-        {telemetry.skipped > 0 && (
-          <div className="panel-row">
-            <span className="panel-k" title="Scans skipped because the camera track was muted (a paused/frozen frame isn't worth a token spend)">SKIPPED</span>
-            <span className="panel-v">{telemetry.skipped}</span>
-          </div>
-        )}
-      </div>
+    {gateActive && <IonCard className="notice"><IonCardContent>
+      <strong>Object gate</strong>
+      <p>Sees: {telemetry.objects || 'nothing yet'}</p>
+      <p>Last check: {telemetry.gate} · {telemetry.gateSkipped} skipped · detector {telemetry.detect}</p>
+    </IonCardContent></IonCard>}
 
-      {showProgress && (
-        <div className="monitor-panel">
-          <div className="panel-label">SCAN CYCLE</div>
-          <ProgressBar phase={progress.phase} pct={progress.pct} label={progressLabel(progress)} />
-        </div>
-      )}
-
-      <div className="monitor-panel">
-        <div className="panel-label">FRAME TIMING</div>
-        <div className="panel-row">
-          <span className="panel-k">MEDIAN</span>
-          <span className="panel-v">{fmtMs(stats.p50)}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">P90</span>
-          <span className="panel-v">{fmtMs(stats.p90)}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k" title="Auto-tuned to mean + 3 stddev of this session's latencies. Off in MAX mode.">TIMEOUT</span>
-          <span className="panel-v amber">{fmtMs(stats.timeoutMs)}</span>
-        </div>
-        <div className="panel-row">
-          <span className="panel-k">SAMPLES</span>
-          <span className="panel-v">{stats.count}</span>
-        </div>
-      </div>
-
-      {!providerReady && !demoMode && !running && (
-        <div className="setup-callout">
-          <div className="panel-label">PROVIDER NOT CONFIGURED</div>
-          <p className="setup-text">
-            {engine === 'browser'
-              ? 'Download the BROWSER MODEL in Settings to start monitoring — no key, no server, nothing leaves this device.'
-              : 'Set a base URL and model to start monitoring — a local server needs no API key. Or try a simulated demo.'}
-          </p>
-          <div className="btn-row">
-            <button className="dc-btn" onClick={onOpenSettings}>OPEN SETTINGS</button>
-            <button className="dc-btn outline" onClick={onStartDemo}>TRY DEMO</button>
-          </div>
-        </div>
-      )}
-      <button
-        id="toggle"
-        className={`arm-btn ${running ? 'armed' : ''}`}
-        onClick={onToggle}
-        aria-pressed={running}
-      >
-        {running ? '■ DISARM' : '▶ ARM SENTRY'}
-      </button>
+    <div className="wide-action monitor-action">
+      <IonButton id="toggle" expand="block" size="large" color={running ? 'danger' : 'primary'} onClick={onToggle} aria-pressed={running}>
+        {running ? 'Disarm monitoring' : 'Arm monitoring'}
+      </IonButton>
     </div>
-  );
+  </IonContent>;
 }

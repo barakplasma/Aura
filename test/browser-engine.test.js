@@ -5,8 +5,13 @@ import {
   loadBrowserModel,
   isBrowserModelLoaded,
   browserModelDevice,
+  browserDeviceLimits,
+  unloadBrowserModel,
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
+  FALLBACK_BROWSER_MODEL,
+  resolveBrowserRuntime,
+  selectBrowserDevice,
   loadDetector,
   detectObjects,
   isDetectorLoaded,
@@ -14,6 +19,8 @@ import {
   DETECTOR_MODELS,
   DEFAULT_DETECTOR_MODEL,
   _setWorkerFactory,
+  _setChromeAICall,
+  _setChromeAIProbe,
   _resetBrowserEngine,
 } from "../lib/browser-engine.js";
 
@@ -71,17 +78,26 @@ async function waitForPosted(fw, n) {
   }
 }
 
+// Start one scan against an already-loaded fake worker and wait for its
+// 'scan' message to land. Returns the scan promise and that message, so the
+// single-frame tests below can assert on and reply to it without repeating
+// the same start-and-wait dance.
+async function startedScan(fw, params) {
+  const p = scanBrowser({ model: FALLBACK_BROWSER_MODEL, ...params });
+  await waitForPosted(fw, 2); // setup load + this scan
+  return { p, req: fw.posted.at(-1) };
+}
+
 // Shared setup for tests that just need a model already loaded before
 // exercising scanBrowser()/abort/crash behavior — distinct from the "error"
 // reply case below, which tests the load path failing. Returns `getWorker`
 // too, since a test recovering from a crash needs it again to grab the next
 // fake worker the factory produces.
-// Loads DEFAULT_BROWSER_MODEL, because that is what a scanBrowser() call with
-// no explicit `model` asks for — loading anything else here would make every
-// scan below post its own 'load' first and throw the message counts off.
+// Loads the WASM-safe row so these facade tests do not pretend Node's lack of
+// WebGPU can load the default fp16-only VLM.
 async function loadedFakeWorker(device = "wasm") {
   const getWorker = freshWorker();
-  const loadP = loadBrowserModel(DEFAULT_BROWSER_MODEL);
+  const loadP = loadBrowserModel(FALLBACK_BROWSER_MODEL);
   const fw = getWorker();
   fw.reply({ id: fw.posted[0].id, type: "ready", device });
   await loadP;
@@ -107,6 +123,60 @@ test("loadBrowserModel resolves on the worker's 'ready' reply, matched by id", a
   assert.equal(browserModelDevice(), "webgpu");
 });
 
+// The worker reports the WebGPU limits its session actually got, because a
+// spec-minimum 128 MB binding ceiling means the model silently ran on WASM
+// while the UI said WebGPU. The number has to survive the facade to the
+// Settings STATUS line.
+test("loadBrowserModel publishes the worker's device limits", async () => {
+  const getWorker = freshWorker();
+  const p = loadBrowserModel(FALLBACK_BROWSER_MODEL);
+  const fw = getWorker();
+  fw.reply({
+    id: fw.posted[0].id,
+    type: "ready",
+    device: "webgpu",
+    limits: { maxStorageBufferMB: 2047, maxBufferMB: 4095, shaderF16: true },
+  });
+  await p;
+  assert.equal(browserDeviceLimits().maxStorageBufferMB, 2047);
+
+  const unloadP = unloadBrowserModel();
+  await waitForPosted(fw, 2);
+  fw.reply({ id: fw.posted.at(-1).id, type: "ready", device: null });
+  await unloadP;
+  assert.equal(browserDeviceLimits(), null, "unloading must not leave stale limits behind");
+});
+
+test("a worker that reports no limits leaves nothing stale to display", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  assert.equal(browserDeviceLimits(), null);
+});
+
+test("selectBrowserDevice uses WASM when WebGPU lacks shader-f16", async () => {
+  const noFp16 = {
+    gpu: { requestAdapter: async () => ({ features: new Set() }) },
+  };
+  assert.equal(
+    await selectBrowserDevice(BROWSER_MODELS["smolvlm2-256m"], noFp16),
+    "wasm",
+  );
+  await assert.rejects(
+    selectBrowserDevice(BROWSER_MODELS["smolvlm2-500m"], noFp16),
+    /requires WebGPU with fp16 support/,
+  );
+});
+
+test("selectBrowserDevice rejects a WebGPU-only model when WebGPU is absent", async () => {
+  assert.throws(
+    () => selectBrowserDevice(BROWSER_MODELS["qwen3.5-0.8b"], {}),
+    /does not provide WebGPU/,
+  );
+  assert.equal(
+    selectBrowserDevice(BROWSER_MODELS["smolvlm2-256m"], {}),
+    "wasm",
+  );
+});
+
 test("loadBrowserModel de-dupes overlapping calls for the same model into one worker request", async () => {
   const getWorker = freshWorker();
   const p1 = loadBrowserModel("smolvlm2-256m");
@@ -124,8 +194,8 @@ test("scanBrowser correlates concurrent requests by id, not by reply order", asy
   // message each (no interleaved 'load').
   const { fw } = await loadedFakeWorker("webgpu");
 
-  const scanA = scanBrowser({ mission: "a person at the door", image: "x".repeat(64) });
-  const scanB = scanBrowser({ mission: "a package on the porch", image: "y".repeat(64) });
+  const scanA = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a person at the door", image: "x".repeat(64) });
+  const scanB = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a package on the porch", image: "y".repeat(64) });
   await waitForPosted(fw, 3); // 1 load + 2 scan
 
   const [reqA, reqB] = fw.posted.slice(-2);
@@ -156,11 +226,38 @@ test("scanBrowser correlates concurrent requests by id, not by reply order", asy
   assert.equal(resultB.reason, "a package is visible");
 });
 
+test("scanBrowser forwards the single frame as a one-element image list", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  const { p, req } = await startedScan(fw, { mission: "a person at the door", image: "x".repeat(64) });
+  assert.equal(req.type, "scan");
+  assert.deepEqual(req.imageDataUrls, [`data:image/jpeg;base64,${"x".repeat(64)}`]);
+  fw.reply({ id: req.id, type: "result", text: "NO 0 nothing", usage: {} });
+  await p;
+});
+
+test("scanBrowser forwards every frame when temporal analysis passes a sequence", async () => {
+  // The SmolVLM2-Video follow-up: the pipeline must not assume one frame
+  // forever. `images` (a short frame sequence) supersedes `image`.
+  const { fw } = await loadedFakeWorker("webgpu");
+  const { p, req } = await startedScan(fw, {
+    mission: "did someone approach and then leave",
+    image: "a".repeat(64),
+    images: ["b".repeat(64), "c".repeat(64)],
+  });
+  assert.deepEqual(req.imageDataUrls, [
+    `data:image/jpeg;base64,${"b".repeat(64)}`,
+    `data:image/jpeg;base64,${"c".repeat(64)}`,
+  ]);
+  fw.reply({ id: req.id, type: "result", text: "NO 0 nothing", usage: {} });
+  await p;
+});
+
 test("aborting a scan rejects the in-flight promise and tells the worker to stop", async () => {
   const { fw } = await loadedFakeWorker();
 
   const controller = new AbortController();
   const scanPromise = scanBrowser({
+    model: FALLBACK_BROWSER_MODEL,
     mission: "watch the door",
     image: "x".repeat(64),
     signal: controller.signal,
@@ -186,13 +283,14 @@ test("aborting a scan rejects the in-flight promise and tells the worker to stop
 test("a worker crash rejects every in-flight promise with a useful message", async () => {
   const { fw, getWorker } = await loadedFakeWorker();
 
-  const scanA = scanBrowser({ mission: "a", image: "x".repeat(64) });
-  const scanB = scanBrowser({ mission: "b", image: "y".repeat(64) });
+  const scanA = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a", image: "x".repeat(64) });
+  const scanB = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "b", image: "y".repeat(64) });
   await waitForPosted(fw, 3); // 1 load + 2 scan
   fw.crash("out of memory");
 
   await assert.rejects(scanA, /crash/i);
   await assert.rejects(scanB, /crash/i);
+  assert.equal(fw.terminated, true, "a failed worker is terminated before recovery");
   // The dead worker's cached state must not poison the next call — a fresh
   // load should work again with a brand-new fake worker.
   const p = loadBrowserModel("smolvlm2-256m");
@@ -209,6 +307,202 @@ test("a worker 'error' message (not just an error event) also fails the pending 
   const fw = getWorker();
   fw.reply({ id: fw.posted[0].id, type: "error", message: "model repo not found" });
   await assert.rejects(loadP, /model repo not found/);
+});
+
+test("the logit margin overrides a confidence the model wrote", async () => {
+  // A small model's "Confidence: 95" is generated text; P(YES) vs P(NO) at the
+  // verdict step is the evidence. At 30% it must not clear a 60% threshold.
+  const { fw } = await loadedFakeWorker("webgpu");
+  const { p, req } = await startedScan(fw, { mission: "a person", image: "x".repeat(64), threshold: 60 });
+  assert.equal(req.wantLogits, true);
+  assert.equal(req.repetitionPenalty, undefined, "the verdict step must not be penalised");
+  fw.reply({
+    id: req.id,
+    type: "result",
+    text: "YES, Confidence: 95, Explanation: a person",
+    logits: { verdictAtFirstStep: true, verdictProb: 0.3, firstTokenProb: 0.3 },
+    timing: { preprocessMs: 5, prefillMs: 900, decodeMs: 300 },
+    usage: {},
+  });
+  const r = await p;
+  assert.equal(r.confidence, 30);
+  assert.equal(r.triggered, false);
+  assert.equal(r.timing.prefillMs, 900, "the prefill/decode split reaches the caller");
+});
+
+test("a margin read at a non-verdict step leaves the parsed confidence alone", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  const { p, req } = await startedScan(fw, { mission: "a person", image: "x".repeat(64) });
+  fw.reply({
+    id: req.id,
+    type: "result",
+    text: "NO 5 empty room",
+    logits: { verdictAtFirstStep: false, verdictProb: 0.9 },
+    usage: {},
+  });
+  assert.equal((await p).confidence, 5);
+});
+
+test("only the prose legs ask for a repetition penalty", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  const p = scanBrowser({
+    model: FALLBACK_BROWSER_MODEL,
+    mission: "a person",
+    action: "say hello",
+    webhookAction: "summarise",
+    image: "x".repeat(64),
+    threshold: 50,
+  });
+  await waitForPosted(fw, 2);
+  const det = fw.posted.at(-1);
+  fw.reply({ id: det.id, type: "result", text: "YES 90 a person", usage: {} });
+  await waitForPosted(fw, 3);
+  const act = fw.posted.at(-1);
+  assert.equal(act.purpose, "announce");
+  assert.ok(act.repetitionPenalty > 1);
+  assert.notEqual(act.wantLogits, true);
+  fw.reply({ id: act.id, type: "result", text: "Hello there.", usage: {} });
+  await waitForPosted(fw, 4);
+  const wh = fw.posted.at(-1);
+  assert.equal(wh.purpose, "webhook");
+  assert.ok(wh.repetitionPenalty > 1);
+  fw.reply({ id: wh.id, type: "result", text: "A person arrived.", usage: {} });
+  const r = await p;
+  assert.equal(r.triggered, true);
+});
+
+test("a lost GPU device fails in-flight work and replaces the worker", async () => {
+  const { fw, getWorker } = await loadedFakeWorker("webgpu");
+  const scan = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "a", image: "x".repeat(64) });
+  await waitForPosted(fw, 2);
+  fw.reply({ type: "fatal", message: "WebGPU device lost: unknown" });
+  await assert.rejects(scan, /lost its GPU/);
+  assert.equal(fw.terminated, true);
+  assert.equal(isBrowserModelLoaded(FALLBACK_BROWSER_MODEL), false);
+  const p = loadBrowserModel(FALLBACK_BROWSER_MODEL);
+  const fw2 = getWorker();
+  assert.notEqual(fw2, fw, "the next call spawns a fresh worker");
+  fw2.reply({ id: fw2.posted[0].id, type: "ready", device: "webgpu" });
+  await p;
+});
+
+// --- Chrome built-in AI runtime -------------------------------------------
+
+test("resolveBrowserRuntime: Auto picks Chrome built-in AI only when fully capable", async () => {
+  // The whole policy: 'available' AND image-capable, nothing less. A
+  // 'downloadable' Gemini Nano must not be silently triggered into a ~2 GB
+  // download by an automatic choice — that stays an explicit user decision.
+  _setChromeAIProbe(async () => ({ present: true, availability: "available", imageCapable: true }));
+  assert.equal(await resolveBrowserRuntime("auto"), "chrome-ai");
+
+  _setChromeAIProbe(async () => ({ present: true, availability: "available", imageCapable: false }));
+  assert.equal(await resolveBrowserRuntime("auto"), "transformers", "no image input, no vision detection");
+
+  _setChromeAIProbe(async () => ({ present: true, availability: "downloadable", imageCapable: false }));
+  assert.equal(await resolveBrowserRuntime("auto"), "transformers");
+
+  _setChromeAIProbe(async () => ({ present: false, availability: "absent", imageCapable: false }));
+  assert.equal(await resolveBrowserRuntime("auto"), "transformers");
+});
+
+test("resolveBrowserRuntime: explicit choices always win", async () => {
+  _setChromeAIProbe(async () => ({ present: false, availability: "absent", imageCapable: false }));
+  assert.equal(await resolveBrowserRuntime("transformers"), "transformers");
+  // An explicit chrome-ai pick is honored — the scan surfaces an actionable
+  // error when the browser can't honor it (lib/chrome-ai.js).
+  assert.equal(await resolveBrowserRuntime("chrome-ai"), "chrome-ai");
+});
+
+test("scanBrowser routes to the Chrome built-in AI transport without touching the worker", async () => {
+  const getWorker = freshWorker();
+  const chromeCalls = [];
+  _setChromeAICall(async (params) => {
+    chromeCalls.push(params);
+    return {
+      text: '{"triggered":true,"confidence":91,"reason":"a person at the door"}',
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, reported: false },
+    };
+  });
+
+  const result = await scanBrowser({
+    mission: "a person at the door",
+    image: "x".repeat(64),
+    runtime: "chrome-ai",
+  });
+
+  assert.equal(result.mode, "browser");
+  assert.equal(result.runtime, "chrome-ai");
+  assert.equal(result.triggered, true);
+  assert.equal(result.confidence, 91);
+  assert.equal(result.reason, "a person at the door");
+  // No action prompt configured — exactly one detection call went out.
+  assert.equal(chromeCalls.length, 1);
+  assert.ok(chromeCalls[0].schema, "the detection call carries a JSON schema");
+  assert.equal(chromeCalls[0].signal, undefined);
+  // Nothing was posted to a worker — no model download, no load messages.
+  assert.equal(getWorker(), undefined, "the worker was never spawned");
+});
+
+test("scanBrowser on the Transformers runtime still answers through the worker and reports the runtime", async () => {
+  const { fw } = await loadedFakeWorker("webgpu");
+  const { p, req } = await startedScan(fw, { mission: "a person at the door", image: "x".repeat(64) });
+  fw.reply({ id: req.id, type: "result", text: "NO 5 nothing", usage: {} });
+  const result = await p;
+  assert.equal(result.runtime, "transformers");
+  // Eval-screen provenance: which device answered, and what the one-time
+  // model load cost (null when the model was already resident).
+  assert.equal(result.device, "webgpu");
+  assert.equal(result.modelLoadMs, null);
+});
+
+test("scanBrowser reports the fresh model load time on the first scan only", async () => {
+  const getWorker = freshWorker();
+  const first = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "m", image: "x".repeat(64) });
+  // The worker spawns after runtime resolution (an async probe deep) — spin
+  // microtasks until the factory has actually run.
+  for (let i = 0; i < 50 && !getWorker(); i++) await Promise.resolve();
+  const fw = getWorker();
+  await waitForPosted(fw, 1); // the 'load' posts first…
+  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
+  // …and only once the load resolves does the scan itself get posted.
+  await waitForPosted(fw, 2);
+  const scanReq = fw.posted.at(-1);
+  fw.reply({ id: scanReq.id, type: "result", text: "NO 0 nothing", usage: {} });
+  const r1 = await first;
+  assert.ok(Number.isFinite(r1.modelLoadMs) && r1.modelLoadMs >= 0, "first scan pays the load");
+  assert.equal(r1.device, "wasm");
+
+  const second = scanBrowser({ model: FALLBACK_BROWSER_MODEL, mission: "m", image: "x".repeat(64) });
+  // Warm model: no 'load' this time — the scan message is the next post.
+  await waitForPosted(fw, 3);
+  const req2 = fw.posted.at(-1);
+  fw.reply({ id: req2.id, type: "result", text: "NO 0 nothing", usage: {} });
+  const r2 = await second;
+  assert.equal(r2.modelLoadMs, null, "warm model — no load time reported");
+});
+
+test("a stored runtime of 'auto' resolves before transport selection", async () => {
+  // useMonitor passes the persisted aura.browserRuntime straight through, and
+  // its default is the literal string "auto" — which is truthy, so it must be
+  // RESOLVED, not treated as an explicit transport choice. (Pre-fix, the scan
+  // misroutes into the worker path and never settles, hence the race.)
+  // NOTE: freshWorker() resets the runtime seams — set them after it.
+  const getWorker = freshWorker();
+  _setChromeAIProbe(async () => ({ present: true, availability: "available", imageCapable: true }));
+  let chromeCalls = 0;
+  _setChromeAICall(async () => {
+    chromeCalls += 1;
+    return { text: "NO 0 nothing", usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, reported: false } };
+  });
+
+  const result = await Promise.race([
+    scanBrowser({ mission: "m", image: "x".repeat(64), runtime: "auto" }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error("scan never settled — misrouted")), 500)),
+  ]);
+
+  assert.equal(result.runtime, "chrome-ai", "'auto' must resolve, not pass through");
+  assert.equal(chromeCalls, 1);
+  assert.equal(getWorker(), undefined, "no worker spawned on the auto-resolved chrome path");
 });
 
 // --- Object gate ----------------------------------------------------------

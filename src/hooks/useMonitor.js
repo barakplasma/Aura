@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { scanClient } from "../../lib/aura.js";
+import { scanClient, isLocalBaseUrl } from "../../lib/aura.js";
 import { demoScan } from "../../lib/demo.js";
 import {
   scanBrowser,
@@ -39,12 +39,21 @@ import {
 } from "../../lib/training-store.js";
 import { recordLatency, percentile, tunedTimeoutMs } from "../../lib/stats.js";
 import { computeGapMs, emaUpdate } from "../../lib/scheduler.js";
-import { shouldCatchUp, nextReconnectDelayMs } from "../../lib/keepalive.js";
+import { costForUsage } from "../../lib/pricing.js";
+import {
+  shouldCatchUp,
+  nextReconnectDelayMs,
+  RECONNECT_ATTEMPTS,
+} from "../../lib/keepalive.js";
 import { createAlertStore } from "../../lib/alert-store.js";
 import { alert as alertOut, resetFeedback } from "../../public/feedback.js";
 import { useWakeLock } from "./useWakeLock.js";
 import { normalizeCaptureSize } from "../../lib/frame.js";
+import { focusConstraint } from "../../lib/camera-focus.js";
 import { processingProgress } from "../../lib/progress.js";
+import { reportUnexpectedError } from "../../lib/handled-errors.js";
+import { encodeNtfyHeader, isHostedNtfyTopicUrl } from "../../lib/ntfy.js";
+import { reportHandledError } from "../monitoring.js";
 
 // One store per page load — its IndexedDB adapter is lazy (never touches the
 // indexedDB global until an operation runs), so creating it here is safe even
@@ -114,6 +123,65 @@ function moveFracOverride(s) {
   return Number.isFinite(v) && v > 0 && v <= 1 ? { moveFrac: v } : {};
 }
 
+function sendJsonWebhook(url, method, headers, body) {
+  fetch(url, {
+    method,
+    headers,
+    body: method === "GET" || method === "HEAD" ? undefined : body,
+    signal: AbortSignal.timeout(5000),
+    mode: "no-cors",
+  }).catch(() => {});
+}
+
+function notificationText(body) {
+  if (typeof body !== "string") return "Aura alert";
+  try {
+    const parsed = JSON.parse(body);
+    return typeof parsed?.message === "string" ? parsed.message : body;
+  } catch {
+    return body;
+  }
+}
+
+async function sendNtfyImage(url, body, headers, frame) {
+  const image = await fetch(frame).then((response) => response.blob());
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      ...headers,
+      "Content-Type": image.type || "image/jpeg",
+      "X-Filename": `aura-alert-${stamp}.jpg`,
+      "X-Message": encodeNtfyHeader(notificationText(body)),
+      "X-Title": "Aura alert",
+      "X-Priority": "4",
+      "X-Tags": "warning,camera",
+    },
+    body: image,
+    signal: AbortSignal.timeout(15000),
+    mode: "cors",
+  });
+  if (!response.ok) throw new Error(`ntfy upload failed: HTTP ${response.status}`);
+}
+
+async function sendNtfyText(url, body, headers) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "Content-Type": "text/plain",
+      "X-Message": encodeNtfyHeader(notificationText(body)),
+      "X-Title": "Aura alert",
+      "X-Priority": "4",
+      "X-Tags": "warning,camera",
+    },
+    body: "",
+    signal: AbortSignal.timeout(10000),
+    mode: "cors",
+  });
+  if (!response.ok) throw new Error(`ntfy publish failed: HTTP ${response.status}`);
+}
+
 // Shared shape for an alert/missed-frame record: a numeric id (insertion
 // order), an ISO timestamp (sortable, used by alert-store), and a locale
 // time string (what the UI displays).
@@ -173,6 +241,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     inFlight: false,
     loopTimer: null,
     totalTokens: 0,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
     running: false,
     abort: null,
     // latency samples + current scan-cycle phase, read by the progress ticker.
@@ -184,9 +254,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     progressTimer: null,
     lastMissedAt: 0,
     switching: false,
-    // Per-session EMAs (α = 0.3) that feed the budget scheduler: tokens/scan,
-    // request payload bytes/scan, and scan duration (ms). null until sampled.
-    emaTokens: null,
+    // Per-session EMAs (α = 0.3) that feed the budget scheduler.
+    emaPromptTokens: null,
+    emaCompletionTokens: null,
     emaBytes: null,
     emaDuration: null,
     budgetWarned: false,
@@ -555,7 +625,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
   }, [settingsRef]);
 
   const sendWebhook = useCallback(
-    (body) => {
+    (body, frame) => {
       const url = (settingsRef.current.webhookUrl || "").trim();
       if (!url) return;
       let headers = { "Content-Type": "application/json" };
@@ -579,13 +649,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       } else if (body && typeof body === "object") {
         formattedBody = JSON.stringify(body);
       }
-      fetch(url, {
-        method,
-        headers,
-        body: method === "GET" || method === "HEAD" ? undefined : formattedBody,
-        signal: AbortSignal.timeout(5000),
-        mode: "no-cors",
-      }).catch(() => {});
+      if (
+        settingsRef.current.webhookIncludeImage &&
+        frame &&
+        isHostedNtfyTopicUrl(url)
+      ) {
+        void sendNtfyImage(url, formattedBody, headers, frame).catch((error) => {
+          reportHandledError(error, { area: "ntfy-upload" });
+          void sendNtfyText(url, formattedBody, headers).catch((fallbackError) => {
+            reportHandledError(fallbackError, { area: "ntfy-fallback" });
+          });
+        });
+        return;
+      }
+      sendJsonWebhook(url, method, headers, formattedBody);
     },
     [settingsRef],
   );
@@ -765,6 +842,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           : isBrowserEngine
             ? await scanBrowser({
                 model: s.browserModel || undefined,
+                runtime: s.browserRuntime || undefined,
                 mission: s.mission,
                 action: s.action,
                 image: frame,
@@ -831,15 +909,15 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               minSamples: TIMEOUT_MIN_SAMPLES,
             });
         setStats({ p50, p90, timeoutMs, count: st.samples.length });
-        // Feed the budget scheduler's EMAs: tokens/scan (provider usage), the
+        // Feed the budget scheduler's EMAs: input/output tokens (provider usage), the
         // request payload size (base64 JPEG is ~¾ its char length, + prompt
         // overhead), and scan duration. Tokens stay null with no usage data.
-        const usageTokens =
-          result.usage?.reported && Number.isFinite(result.usage.total_tokens)
-            ? result.usage.total_tokens
-            : null;
-        if (usageTokens != null)
-          st.emaTokens = emaUpdate(st.emaTokens, usageTokens);
+        const usageTokens = result.usage?.reported && Number.isFinite(result.usage.total_tokens)
+          ? result.usage.total_tokens : null;
+        if (result.usage?.reported) {
+          st.emaPromptTokens = emaUpdate(st.emaPromptTokens, result.usage.prompt_tokens);
+          st.emaCompletionTokens = emaUpdate(st.emaCompletionTokens, result.usage.completion_tokens);
+        }
         const frameBytes = frame
           ? frame.length * 0.75 + PROMPT_OVERHEAD_BYTES
           : 0;
@@ -863,8 +941,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               : 0;
           const totalTokens = internalRef.current.totalTokens + t;
           internalRef.current.totalTokens = totalTokens;
-          const rate = parseFloat(s.rate) || 0;
-          const cost = ((totalTokens / 1e6) * rate).toFixed(4);
+          internalRef.current.totalPromptTokens += result.usage?.reported ? result.usage.prompt_tokens : 0;
+          internalRef.current.totalCompletionTokens += result.usage?.reported ? result.usage.completion_tokens : 0;
+          const cost = costForUsage({
+            prompt_tokens: internalRef.current.totalPromptTokens,
+            completion_tokens: internalRef.current.totalCompletionTokens,
+          }, s.pricing);
           return {
             latency: String(result.latencyMs ?? rtt),
             confidence: Number.isFinite(result.confidence)
@@ -878,7 +960,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
             frameDetails: st.frameDetails
               ? `${st.frameDetails.sourceWidth}×${st.frameDetails.sourceHeight} → ${st.frameDetails.width}×${st.frameDetails.height} · ${Math.round(st.frameDetails.bytes / 1024)} KB`
               : "—",
-            cost,
+            cost: cost == null ? "—" : cost.toFixed(4),
           };
         });
         if (result.triggered) {
@@ -896,8 +978,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           });
           // Demo results never carry a webhookMessage, but guard anyway —
           // simulated alerts must never reach a real webhook.
-          if (!s.demo && result.webhookMessage)
-            sendWebhook(result.webhookMessage);
+          const ntfyImageAlert =
+            s.webhookIncludeImage && isHostedNtfyTopicUrl(s.webhookUrl || "");
+          const webhookBody = result.webhookMessage || (
+            ntfyImageAlert ? result.message || result.reason : ""
+          );
+          if (!s.demo && webhookBody) sendWebhook(webhookBody, frame);
         } else {
           setStatus(`Watching — ${result.reason}`);
           recordMissed(frame, result.reason, result.confidence);
@@ -916,8 +1002,23 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         }
       } catch (err) {
         // A Stop mid-scan aborts the request; that's expected, not an error.
-        if (internalRef.current.running && err.name !== "AbortError")
+        if (internalRef.current.running && reportUnexpectedError(
+          err,
+          reportHandledError,
+          {
+            area: "live-monitor",
+            engine: isBrowserEngine ? "browser" : "provider",
+            inference: isBrowserEngine
+              ? "in-browser"
+              : isLocalBaseUrl(s.baseUrl) ? "local-provider" : "cloud-provider",
+            ...(isBrowserEngine ? {
+              model: s.browserModel || "default",
+              ...(err.browserContext || {}),
+            } : {}),
+          },
+        )) {
           setStatus(`Error: ${err.message}`);
+        }
       } finally {
         internalRef.current.inFlight = false;
         internalRef.current.abort = null;
@@ -934,10 +1035,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           scanEvery: s.scanEvery,
           budgetPerHour: s.budgetPerHour,
           networkMbPerHour: s.networkMbPerHour,
-          rate: s.rate,
+          inputRate: s.pricing?.inputRate,
+          outputRate: s.pricing?.outputRate,
         },
         {
-          tokens: st.emaTokens,
+          promptTokens: st.emaPromptTokens,
+          completionTokens: st.emaCompletionTokens,
           bytes: st.emaBytes,
           durationMs: st.emaDuration,
         },
@@ -949,8 +1052,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       const cyclePeriodMs = (st.emaDuration || 0) + gapMs;
       const scansPerHr =
         cyclePeriodMs > 0 ? Math.round(3600e3 / cyclePeriodMs) : 0;
-      const rate = parseFloat(s.rate) || 0;
-      const costPerHr = (((st.emaTokens || 0) * rate) / 1e6) * scansPerHr;
+      const scanCost = costForUsage({
+        prompt_tokens: st.emaPromptTokens,
+        completion_tokens: st.emaCompletionTokens,
+      }, s.pricing);
+      const costPerHr = (scanCost || 0) * scansPerHr;
       setTelemetry((prev) => {
         const nextScans = String(scansPerHr);
         const nextCost = costPerHr.toFixed(4);
@@ -993,6 +1099,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     clearTimeout(internalRef.current.loopTimer);
     clearInterval(internalRef.current.progressTimer);
     if (internalRef.current.abort) internalRef.current.abort.abort();
+    clearTimeout(internalRef.current.reconnectTimer);
     releaseStream(internalRef, videoRef);
     resetFeedback();
     setRunning(false);
@@ -1045,6 +1152,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       audio: false,
       video,
     });
+    // Ask for continuous autofocus before the first frame reaches the model.
+    // The driver default on the reference phone left a close subject out of
+    // focus, and no prompt or model choice can recover detail the sensor never
+    // resolved. A rejection here means a fixed-focus driver, which is exactly
+    // the case the capability gate above is meant to fall through.
+    const track = stream.getVideoTracks()[0];
+    const want = focusConstraint(track?.getCapabilities?.() || {});
+    if (track && Object.keys(want).length) {
+      try {
+        await track.applyConstraints(want);
+      } catch {
+        // Keep the driver's defaults.
+      }
+    }
     attachTrackHandlers(stream);
     return stream;
   }, [attachTrackHandlers, settingsRef, stop]);
@@ -1056,9 +1177,22 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     async (attempt = 1) => {
       const st = internalRef.current;
       if (!st.running) return;
+      // Each entry invalidates any earlier reconnect attempt: a stale loop's
+      // late acquireStream success or scheduled retry must not fight the
+      // fresh one (the visibility handler starts attempt 1 while a hidden
+      // retry may still be pending).
+      const seq = (st.reconnectSeq || 0) + 1;
+      st.reconnectSeq = seq;
+      clearTimeout(st.reconnectTimer);
       st.reconnecting = true;
+      const hidden = document.visibilityState !== "visible";
+      // A hidden tab cannot get the camera back no matter how we ask (Android
+      // refuses background getUserMedia), so the honest message there is
+      // "paused", not "lost" — the session resumes on return to visible.
       setStatus(
-        `Camera lost — reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})…`,
+        hidden
+          ? "Camera paused in background — resumes on return."
+          : `Camera lost — reconnecting (${attempt}/${RECONNECT_ATTEMPTS})…`,
       );
       if (st.stream) {
         st.stream.getTracks().forEach((t) => t.stop());
@@ -1066,7 +1200,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       }
       try {
         const stream = await acquireStream();
-        if (!internalRef.current.running) {
+        if (st.reconnectSeq !== seq || !internalRef.current.running) {
+          // Superseded or disarmed while acquiring — drop what we got.
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
@@ -1081,14 +1216,20 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         st.reconnecting = false;
         setStatus("Monitoring…");
       } catch (err) {
-        const delay = nextReconnectDelayMs(attempt);
+        if (st.reconnectSeq !== seq || !internalRef.current.running) return;
+        const delay = nextReconnectDelayMs(attempt, hidden);
         if (delay == null) {
+          // Visible, ladder exhausted — the operator is looking at the tab
+          // and can act on this; giving up silently here is the failure mode.
           st.reconnecting = false;
           stop();
           setStatus(`Camera lost — tap ARM to retry. (${err.message})`);
           return;
         }
-        setTimeout(() => reconnectRef.current?.(attempt + 1), delay);
+        st.reconnectTimer = setTimeout(
+          () => reconnectRef.current?.(attempt + 1),
+          delay,
+        );
       }
     },
     [acquireStream, stop, videoRef],
@@ -1145,13 +1286,16 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     }
     internalRef.current.running = true;
     internalRef.current.totalTokens = 0;
+    internalRef.current.totalPromptTokens = 0;
+    internalRef.current.totalCompletionTokens = 0;
     // Fresh latency history each session — a new provider/model has its own
     // performance profile.
     internalRef.current.samples = [];
     internalRef.current.phase = "idle";
     internalRef.current.lastMissedAt = 0;
     // Reset the budget EMAs each session too — cost/size profiles are per-run.
-    internalRef.current.emaTokens = null;
+    internalRef.current.emaPromptTokens = null;
+    internalRef.current.emaCompletionTokens = null;
     internalRef.current.emaBytes = null;
     internalRef.current.emaDuration = null;
     internalRef.current.budgetWarned = false;
@@ -1241,6 +1385,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       const st = internalRef.current;
       if (!st.running) return;
       if (document.visibilityState === "visible") {
+        // Returning to a visible tab is the one moment Android will grant the
+        // camera again, so a reconnect in flight restarts from attempt 1
+        // immediately instead of waiting out the hidden-cadence 30s timer.
+        // reconnect() invalidates the superseded attempt by sequence.
+        if (st.reconnecting) {
+          reconnectRef.current?.(1);
+          return;
+        }
         if (shouldCatchUp(st.lastScanAt, st.lastGapMs, performance.now())) {
           clearTimeout(st.loopTimer);
           tick();
