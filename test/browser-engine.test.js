@@ -507,6 +507,19 @@ test("a stored runtime of 'auto' resolves before transport selection", async () 
 
 // --- Object gate ----------------------------------------------------------
 
+// The detector equivalent of loadedFakeWorker() above: a fake worker with the
+// detector already loaded, so a test that only cares about detect/unload
+// doesn't repeat the load handshake (which jscpd rightly flagged as a clone).
+async function loadedFakeDetector(key = "yolo26n-int8", device = "wasm") {
+  const getWorker = freshWorker();
+  const loadP = loadDetector(key);
+  const fw = getWorker();
+  await waitForPosted(fw, 1);
+  fw.reply({ id: fw.posted[0].id, type: "ready", device });
+  await loadP;
+  return { fw, getWorker };
+}
+
 test("loadDetector posts a 'detect' task load and remembers the device", async () => {
   const getWorker = freshWorker();
   const p = loadDetector("yolo26n-int8");
@@ -544,14 +557,13 @@ test("loadDetector rejects an unknown row without posting anything", async () =>
 });
 
 test("detectObjects transfers the bitmap and returns the raw tensors", async () => {
-  const getWorker = freshWorker();
+  const { fw } = await loadedFakeDetector();
   const bitmap = { close() {} }; // stand-in for an ImageBitmap
   const p = detectObjects(bitmap, { model: "yolo26n-int8" });
-  const fw = getWorker();
-  await waitForPosted(fw, 1);
-  // The detector has to load first — detectObjects() drives that itself.
-  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
   await waitForPosted(fw, 2);
+  // An already-loaded detector must not be re-loaded per frame: the second
+  // message is the detect itself, not another load.
+  assert.equal(fw.posted.length, 2);
   const req = fw.posted[1];
   assert.equal(req.type, "detect");
   assert.equal(req.size, DETECTOR_MODELS["yolo26n-int8"].inputSize);
@@ -577,12 +589,7 @@ test("detectObjects transfers the bitmap and returns the raw tensors", async () 
 });
 
 test("a worker crash rejects an in-flight detect and drops the detector", async () => {
-  const getWorker = freshWorker();
-  const loadP = loadDetector("yolo26n-int8");
-  const fw = getWorker();
-  await waitForPosted(fw, 1);
-  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
-  await loadP;
+  const { fw } = await loadedFakeDetector();
   const p = detectObjects({ close() {} }, { model: "yolo26n-int8" });
   await waitForPosted(fw, 2);
   fw.crash("out of memory");
@@ -591,12 +598,7 @@ test("a worker crash rejects an in-flight detect and drops the detector", async 
 });
 
 test("unloadDetector frees only the detector's slot", async () => {
-  const getWorker = freshWorker();
-  const loadP = loadDetector("yolo26n-int8");
-  const fw = getWorker();
-  await waitForPosted(fw, 1);
-  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
-  await loadP;
+  const { fw } = await loadedFakeDetector();
   const p = unloadDetector();
   await waitForPosted(fw, 2);
   const req = fw.posted[1];
