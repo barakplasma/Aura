@@ -26,15 +26,25 @@
 //   -> { id, type: 'unload', task }
 //   <- { id, type: 'error',  message }
 //
-// Only the 'vlm' task is implemented — a 'clip' task belongs to the separate
-// PRD-local-prefilters.md and is out of scope here, but the `task` field
-// already exists so adding it later doesn't require a protocol change.
+// And the object gate (see docs/PRD-object-gate.md), which shares this worker
+// rather than spawning a second one — one ORT instance, one WebGPU device,
+// one adapter-limits call, one cache bucket:
+//   -> { id, type: 'load',   task: 'detect', model, dtype, device }
+//   -> { id, type: 'detect', bitmap, size }   (bitmap is transferred)
+//   <- { id, type: 'detections', logits, logitsDims, boxes, boxesDims, latencyMs }
+// The two raw tensors go back to the main thread untouched: decoding them is
+// pure arithmetic and lives in lib/object-gate.js, where it is testable.
+//
+// Models are held per task, so the VLM and the detector coexist — a detector
+// is single-digit megabytes next to an 810 MB VLM.
 
 import {
   AutoProcessor,
+  AutoModel,
   AutoModelForImageTextToText,
   RawImage,
   StoppingCriteria,
+  Tensor,
   env,
 } from "@huggingface/transformers";
 import { fetchModelSizeEstimate } from "../../lib/model-size.js";
@@ -114,9 +124,11 @@ async function useAdapterLimits() {
   }
 }
 
-// One model loaded at a time — the app only ever runs one BROWSER-engine
-// model concurrently, and holding two in VRAM/RAM would be wasteful.
-let current = null; // { task, modelId, device, model, processor, recipe, stopping }
+// One model per task. 'vlm' holds the vision-language model the scan loop
+// runs; 'detect' holds the object-gate detector. Only ever one of each — the
+// app never runs two VLMs concurrently, and holding two in VRAM would be
+// wasteful.
+const slots = { vlm: null, detect: null };
 
 self.addEventListener("message", async (event) => {
   const data = event.data || {};
@@ -124,6 +136,7 @@ self.addEventListener("message", async (event) => {
   try {
     if (type === "load") await handleLoad(id, data);
     else if (type === "scan") await handleScan(id, data);
+    else if (type === "detect") await handleDetect(id, data);
     else if (type === "abort") handleAbort(data);
     else if (type === "unload") handleUnload(id, data);
     else post({ id, type: "error", message: `Unknown message type: ${type}` });
@@ -132,21 +145,24 @@ self.addEventListener("message", async (event) => {
   }
 });
 
-function post(msg) {
-  self.postMessage(msg);
+function post(msg, transfer) {
+  if (transfer) self.postMessage(msg, transfer);
+  else self.postMessage(msg);
 }
 
 async function handleLoad(id, { task, model, dtype, device, recipe }) {
-  if (task !== "vlm") throw new Error(`Unsupported task: ${task}`);
+  if (task !== "vlm" && task !== "detect")
+    throw new Error(`Unsupported task: ${task}`);
 
   // Already loaded with the same model + device — nothing to do.
-  if (current && current.modelId === model && current.device === device) {
-    post({ id, type: "ready", device: current.device });
+  const held = slots[task];
+  if (held && held.modelId === model && held.device === device) {
+    post({ id, type: "ready", device: held.device });
     return;
   }
   // Swapping models: drop the old one first so it can be garbage collected
   // before the new one starts allocating.
-  current = null;
+  slots[task] = null;
 
   const resolvedDevice =
     device || (typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm");
@@ -178,6 +194,27 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
   // load below is.
   if (resolvedDevice === "webgpu") await useAdapterLimits();
 
+  if (task === "detect") {
+    // No processor: the detector's preprocessing is a stretch-resize to
+    // 640x640 and a /255 rescale (per the export's own preprocessor_config),
+    // which an OffscreenCanvas does in three lines — see handleDetect(). Going
+    // through AutoProcessor would add a Hub round-trip and a YolosImageProcessor
+    // whose padding/normalization defaults we'd only have to switch back off.
+    const detector = await AutoModel.from_pretrained(model, {
+      dtype,
+      device: resolvedDevice,
+      progress_callback,
+    });
+    slots.detect = {
+      task,
+      modelId: model,
+      device: resolvedDevice,
+      model: detector,
+    };
+    post({ id, type: "ready", device: resolvedDevice });
+    return;
+  }
+
   const processor = await AutoProcessor.from_pretrained(model, { progress_callback });
 
   // Some image processors read their options off their own config rather than
@@ -194,7 +231,7 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
     progress_callback,
   });
 
-  current = {
+  slots.vlm = {
     task,
     modelId: model,
     device: resolvedDevice,
@@ -207,8 +244,8 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
 }
 
 async function handleScan(id, { prompt, imageDataUrl, maxNewTokens }) {
-  if (!current) throw new Error("No model loaded — send a 'load' message first.");
-  const { model, processor, recipe, stopping } = current;
+  if (!slots.vlm) throw new Error("No model loaded — send a 'load' message first.");
+  const { model, processor, recipe, stopping } = slots.vlm;
   stopping.reset();
   const start = performance.now();
 
@@ -262,14 +299,77 @@ async function handleScan(id, { prompt, imageDataUrl, maxNewTokens }) {
   });
 }
 
+// --- Object gate ----------------------------------------------------------
+
+// One reusable canvas for the detector's input. The export's spatial dims are
+// fixed at 640x640, so this never needs resizing, and reallocating it on every
+// tick would hand the GC 1.6 MB of pixels twice a second.
+let detectCanvas = null;
+let detectCtx = null;
+let detectBuffer = null;
+
+async function handleDetect(id, { bitmap, size = 640 }) {
+  const held = slots.detect;
+  if (!held) throw new Error("No detector loaded — send a 'load' message first.");
+  const start = performance.now();
+
+  if (!detectCanvas || detectCanvas.width !== size) {
+    detectCanvas = new OffscreenCanvas(size, size);
+    detectCtx = detectCanvas.getContext("2d", { willReadFrequently: true });
+    detectBuffer = new Float32Array(3 * size * size);
+  }
+  // Stretch, don't letterbox. The gate only ever compares a frame against
+  // other frames from the same camera, so a consistent aspect distortion
+  // cancels out — and skipping the pad removes both an un-letterboxing step
+  // and a class of off-by-a-pad-offset bugs.
+  detectCtx.drawImage(bitmap, 0, 0, size, size);
+  bitmap.close?.();
+  const { data } = detectCtx.getImageData(0, 0, size, size);
+
+  // RGBA bytes → NCHW float32, rescaled by 1/255. That is the whole of this
+  // export's preprocessing: its preprocessor_config.json sets do_normalize
+  // false and do_pad false, so there is no mean/std step to get wrong.
+  const plane = size * size;
+  for (let i = 0, p = 0; i < plane; i++, p += 4) {
+    detectBuffer[i] = data[p] / 255;
+    detectBuffer[plane + i] = data[p + 1] / 255;
+    detectBuffer[2 * plane + i] = data[p + 2] / 255;
+  }
+  const pixel_values = new Tensor("float32", detectBuffer, [1, 3, size, size]);
+  const out = await held.model({ pixel_values });
+
+  // logits [1, 300, 80] raw (pre-sigmoid) and pred_boxes [1, 300, 4] as
+  // normalized cxcywh. Copied out of the session's own buffers before they are
+  // transferred — the arrays ORT hands back are views the next run may reuse.
+  const logits = Float32Array.from(out.logits.data);
+  const boxes = Float32Array.from(out.pred_boxes.data);
+  post(
+    {
+      id,
+      type: "detections",
+      logits,
+      logitsDims: out.logits.dims.slice(1),
+      boxes,
+      boxesDims: out.pred_boxes.dims.slice(1),
+      latencyMs: Math.round(performance.now() - start),
+    },
+    [logits.buffer, boxes.buffer],
+  );
+}
+
 // Flips the interrupt flag so the in-flight generate() loop (if any) stops
 // within one token. There's only ever one model/stopping-criteria pair
 // loaded at a time, so no id matching is needed here.
 function handleAbort() {
-  current?.stopping.interrupt();
+  slots.vlm?.stopping.interrupt();
 }
 
 function handleUnload(id, { task }) {
-  if (current && (!task || current.task === task)) current = null;
+  if (!task) {
+    slots.vlm = null;
+    slots.detect = null;
+  } else if (slots[task]) {
+    slots[task] = null;
+  }
   post({ id, type: "ready", device: null });
 }

@@ -7,6 +7,12 @@ import {
   browserModelDevice,
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
+  loadDetector,
+  detectObjects,
+  isDetectorLoaded,
+  unloadDetector,
+  DETECTOR_MODELS,
+  DEFAULT_DETECTOR_MODEL,
   _setWorkerFactory,
   _resetBrowserEngine,
 } from "../lib/browser-engine.js";
@@ -22,8 +28,9 @@ class FakeWorker {
     this.listeners = { message: [], error: [], messageerror: [] };
     this.terminated = false;
   }
-  postMessage(msg) {
+  postMessage(msg, transfer) {
     this.posted.push(msg);
+    if (transfer) this.transfers = [...(this.transfers || []), transfer];
   }
   addEventListener(type, fn) {
     this.listeners[type]?.push(fn);
@@ -202,4 +209,106 @@ test("a worker 'error' message (not just an error event) also fails the pending 
   const fw = getWorker();
   fw.reply({ id: fw.posted[0].id, type: "error", message: "model repo not found" });
   await assert.rejects(loadP, /model repo not found/);
+});
+
+// --- Object gate ----------------------------------------------------------
+
+test("loadDetector posts a 'detect' task load and remembers the device", async () => {
+  const getWorker = freshWorker();
+  const p = loadDetector("yolo26n-int8");
+  const fw = getWorker();
+  await waitForPosted(fw, 1);
+  const req = fw.posted[0];
+  assert.equal(req.type, "load");
+  assert.equal(req.task, "detect", "the VLM's slot must not be touched");
+  assert.equal(req.model, DETECTOR_MODELS["yolo26n-int8"].modelId);
+  assert.equal(req.dtype, "int8");
+  fw.reply({ id: req.id, type: "ready", device: "wasm" });
+  assert.deepEqual(await p, { device: "wasm" });
+  assert.equal(isDetectorLoaded("yolo26n-int8"), true);
+  assert.equal(isDetectorLoaded("yolo26n-fp16"), false);
+});
+
+test("loadDetector de-duplicates concurrent loads of the same row", async () => {
+  const getWorker = freshWorker();
+  const a = loadDetector(DEFAULT_DETECTOR_MODEL);
+  const b = loadDetector(DEFAULT_DETECTOR_MODEL);
+  const fw = getWorker();
+  await waitForPosted(fw, 1);
+  assert.equal(fw.posted.length, 1, "one load message for two callers");
+  fw.reply({ id: fw.posted[0].id, type: "ready", device: "webgpu" });
+  assert.deepEqual(await Promise.all([a, b]), [
+    { device: "webgpu" },
+    { device: "webgpu" },
+  ]);
+});
+
+test("loadDetector rejects an unknown row without posting anything", async () => {
+  const getWorker = freshWorker();
+  await assert.rejects(loadDetector("yolo99-xl"), /Unknown detector model/);
+  assert.equal(getWorker(), undefined, "no worker is even spawned");
+});
+
+test("detectObjects transfers the bitmap and returns the raw tensors", async () => {
+  const getWorker = freshWorker();
+  const bitmap = { close() {} }; // stand-in for an ImageBitmap
+  const p = detectObjects(bitmap, { model: "yolo26n-int8" });
+  const fw = getWorker();
+  await waitForPosted(fw, 1);
+  // The detector has to load first — detectObjects() drives that itself.
+  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
+  await waitForPosted(fw, 2);
+  const req = fw.posted[1];
+  assert.equal(req.type, "detect");
+  assert.equal(req.size, DETECTOR_MODELS["yolo26n-int8"].inputSize);
+  assert.equal(req.bitmap, bitmap);
+  assert.deepEqual(fw.transfers.at(-1), [bitmap], "bitmap is transferred, not copied");
+
+  const logits = new Float32Array([1, 2, 3]);
+  const boxes = new Float32Array([0.5, 0.5, 0.2, 0.2]);
+  fw.reply({
+    id: req.id,
+    type: "detections",
+    logits,
+    logitsDims: [300, 80],
+    boxes,
+    boxesDims: [300, 4],
+    latencyMs: 31,
+  });
+  const out = await p;
+  assert.equal(out.logits, logits);
+  assert.equal(out.boxes, boxes);
+  assert.deepEqual(out.dims, [300, 80]);
+  assert.equal(out.latencyMs, 31);
+});
+
+test("a worker crash rejects an in-flight detect and drops the detector", async () => {
+  const getWorker = freshWorker();
+  const loadP = loadDetector("yolo26n-int8");
+  const fw = getWorker();
+  await waitForPosted(fw, 1);
+  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
+  await loadP;
+  const p = detectObjects({ close() {} }, { model: "yolo26n-int8" });
+  await waitForPosted(fw, 2);
+  fw.crash("out of memory");
+  await assert.rejects(p, /worker crashed/);
+  assert.equal(isDetectorLoaded("yolo26n-int8"), false, "state is dropped with the worker");
+});
+
+test("unloadDetector frees only the detector's slot", async () => {
+  const getWorker = freshWorker();
+  const loadP = loadDetector("yolo26n-int8");
+  const fw = getWorker();
+  await waitForPosted(fw, 1);
+  fw.reply({ id: fw.posted[0].id, type: "ready", device: "wasm" });
+  await loadP;
+  const p = unloadDetector();
+  await waitForPosted(fw, 2);
+  const req = fw.posted[1];
+  assert.equal(req.type, "unload");
+  assert.equal(req.task, "detect");
+  fw.reply({ id: req.id, type: "ready", device: null });
+  await p;
+  assert.equal(isDetectorLoaded("yolo26n-int8"), false);
 });

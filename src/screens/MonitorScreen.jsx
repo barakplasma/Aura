@@ -48,6 +48,26 @@ export default function MonitorScreen({ running, telemetry, progress, stats, onT
           <span className="panel-k" title="Projected spend at the current cadence">EST $/HR</span>
           <span className="panel-v amber">${telemetry.costPerHr}</span>
         </div>
+        {telemetry.gate && telemetry.gate !== '—' && (
+          <>
+            <div className="panel-row">
+              <span className="panel-k" title="What the local detector currently sees in frame">OBJECTS</span>
+              <span className="panel-v">{telemetry.objects}</span>
+            </div>
+            <div className="panel-row">
+              <span className="panel-k" title="Why the last check did or did not wake the vision model">GATE</span>
+              <span className="panel-v">{telemetry.gate}</span>
+            </div>
+            <div className="panel-row">
+              <span className="panel-k" title="Checks that did not reach the vision model">GATE SKIPS</span>
+              <span className="panel-v">{telemetry.gateSkipped}</span>
+            </div>
+            <div className="panel-row">
+              <span className="panel-k" title="Detector latency (EMA) and the backend running it — the number that says whether the gate itself became the problem">DETECT</span>
+              <span className="panel-v">{telemetry.detect}</span>
+            </div>
+          </>
+        )}
         {telemetry.skipped > 0 && (
           <div className="panel-row">
             <span className="panel-k" title="Scans skipped because the camera track was muted (a paused/frozen frame isn't worth a token spend)">SKIPPED</span>

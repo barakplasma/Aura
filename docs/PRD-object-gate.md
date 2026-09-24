@@ -1,6 +1,6 @@
 # PRD — Object-inventory gate: YOLO26 as the VLM's doorman
 
-Status: draft · Owner: barakplasma · Scope: `lib/` + `src/` + `test/`
+Status: **implemented** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/`
 Category: **in-browser inference**
 Depends on: worker + offline plumbing from `PRD-browser-engine.md`
 Supersedes: the stage-B CLIP gate in `PRD-local-prefilters.md` (stage A, the
@@ -460,6 +460,33 @@ and the detector is local either way):
 - **Purity**: `lib/object-gate.js` and `lib/detector-models.js` import nothing
   from the DOM, ORT, or Transformers.js; `npm test` green.
 - Gate off ⇒ byte-identical behaviour to today.
+
+## Implementation notes
+
+Built as specified, with three deviations worth recording:
+
+- **Association is IoU *then* nearest-centre**, not IoU alone. At a 2 s cadence
+  a walking person clears their own bounding-box width between ticks, and two
+  non-overlapping boxes have IoU 0 — so pure IoU matching turned one person
+  crossing the frame into a stream of `removed` + `added` pairs, each of which
+  would have woken the VLM. Same-class boxes of comparable size (within 4x
+  area) within `matchMoveFrac` of each other now associate by distance.
+- **The decode threshold is `exitScore`, not `enterScore`.** The weaker
+  detections are what keep an already-present track alive; `stepTracks()` is
+  what refuses to open a *new* track below `enterScore`. Two-tier thresholds
+  only work if the lower tier actually reaches the tracker.
+- **Preprocessing is done in the worker with an OffscreenCanvas**, not through
+  `AutoProcessor`. The export's own `preprocessor_config.json` asks for a
+  stretch-resize and a /255 rescale with no normalization or padding — three
+  lines of canvas — and going through the processor would have added a Hub
+  round-trip plus a `YolosImageProcessor` whose defaults we'd only switch back
+  off.
+
+The I/O contract above was verified end to end against the real artifacts
+(`AutoModel.from_pretrained` + `onnx-community/yolo26n-ONNX` int8, Ultralytics'
+own `bus.jpg`): outputs `logits [1,300,80]` and `pred_boxes [1,300,4]`, raw
+logit range −49.20…2.50 (pre-sigmoid, as predicted), decoding via
+`lib/object-gate.js` to `person x4 · bus x1` with no NMS.
 
 ## Risks
 

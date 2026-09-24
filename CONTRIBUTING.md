@@ -167,6 +167,9 @@ lib/
   aura.js                 PROVIDER engine: scanClient(), fetchModels()
   browser-engine.js       BROWSER engine facade: scanBrowser(), worker lifecycle
   browser-models.js       Model table + device-based picker (pure, testable)
+  detector-models.js      Object-gate detector table (YOLO26) + COCO labels
+  object-gate.js          Gate: decode detections, track them, decide to scan
+  motion.js               Stage 0 of the gate: a 64x48 pixel diff
   monitor.js              Prompt builders, JSON parsers, usage normalization
   eval.js / eval-store.js Prompt evaluation matrix + IndexedDB persistence
   training.js             ax/GEPA optimization (only ever dynamically imported)

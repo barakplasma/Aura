@@ -41,7 +41,7 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)           |
 | `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, owns `src/workers/ml.worker.js`'s lifecycle; re-exports the model table            |
 | `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                |
-| `src/workers/ml.worker.js`        | Runs the selected VLM via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers`                  |
+| `src/workers/ml.worker.js`        | Runs the selected VLM **and** the gate's detector via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers` |
 | `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                      |
 | `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                    |
 | `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                            |
@@ -98,6 +98,19 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Match the surrounding comment density and naming.
 - All AI logic must be browser-compatible (uses `fetch`, `AbortController`, no Node APIs).
 - After changing the engine, add/extend a test in `test/`.
+- The **object gate** (docs/PRD-object-gate.md) is a three-stage cascade in
+  `useMonitor`: a 64×48 pixel diff, then YOLO26 over the frame, then — only if
+  the *set of objects* changed — the VLM. Its rules live in pure modules
+  (`lib/motion.js`, `lib/object-gate.js`) and its detector is a row in
+  `lib/detector-models.js`; `ml.worker.js` holds one model **per task**
+  (`slots.vlm`, `slots.detect`) so both share one ORT instance and one WebGPU
+  device. The gate must never be able to silence the monitor: every failure
+  path inside it returns "scan anyway", and the heartbeat is unskippable.
+- The YOLO26 export's `logits` are **raw**, so scores are per-class `sigmoid`,
+  never softmax, and there is no background class — which is why the decode is
+  ours (`decodeDetections`) rather than transformers.js's
+  `post_process_object_detection()`. Verified against the real artifacts; the
+  boxes are normalized cxcywh and never converted back to pixels.
 - A BROWSER model is a **row in `lib/browser-models.js`, not a branch**. transformers.js
   is not consistent across VLM families — processor argument order, chat-template
   shape, which options are per-call vs. read off the image processor's own config —

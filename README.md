@@ -59,6 +59,24 @@ The webhook is where it stops being a toy: any alert can `POST` a JSON body you
 define to any URL, so Aura becomes a sensor for whatever you already run —
 Home Assistant, n8n, ntfy, a Kubernetes job, your own API.
 
+## It runs on the phone in your pocket
+
+No extra hardware. No Raspberry Pi, no NVR box, no hub, no dongle, no second
+device to keep charged. Aura is a web page: open it on the phone, point the
+phone at the thing, press ARM.
+
+No extra accounts either. Nothing to sign up for, no Aura login, no cloud
+tenancy — there is no Aura server to have an account on. Pick the in-browser
+engine and you never enter a key at all; the phone does the thinking.
+
+It uses the **cameras the phone already has** — front or back, switchable while
+armed, at whatever capture size you pick. On a laptop it will equally take a USB
+webcam or a screen share instead. Install it to the home screen and it behaves
+like an app, offline shell included.
+
+That is the whole setup: a device with a camera, a browser, and a sentence
+describing what you care about.
+
 ## Bring your own intelligence
 
 Aura has no model of its own and no opinion about whose you use. Three sources,
@@ -69,6 +87,23 @@ switchable in Settings, all feeding the exact same loop:
 | **Any OpenAI-compatible provider** | Cerebras, OpenAI, Groq, Together, Fireworks, OpenRouter, your own gateway — anything that speaks `POST /v1/chat/completions` with vision | the strongest models, at a per-scan cost you can cap                     |
 | **A local server**                 | Ollama, llama.cpp, LM Studio, vLLM on your own machine or homelab — same API, no key needed                                              | free, private, works on your LAN                                         |
 | **In-browser**                     | a small vision-language model running inside the page itself on WebGPU                                                                   | no key, no server, no network at all — the frame never leaves the device |
+
+**It has to be a *vision* model.** Aura sends a picture on every scan, so a
+text-only LLM — however clever, however new — cannot do this job at all: it has
+nowhere to put the image. Look for *vision*, *VL*, *multimodal* or *image input*
+in the model's name or docs (`qwen3-vl`, `gemma-4-vision`, `llama-4-scout`,
+`gpt-5-mini`, `claude-sonnet-5`…). A model that can't see will fail the first
+scan with an error rather than quietly guessing.
+
+**A stronger model is genuinely better**, and the difference is not subtle. The
+in-browser models are small enough to fit in a phone's memory, and they behave
+like it: they reliably answer "is there a person" and get vaguer the more
+judgement a question needs ("is that person *struggling* with the door?",
+"is the parcel the one that was already there?"). A frontier cloud model reads
+the same frame with far more nuance, and follows a picky mission prompt instead
+of approximating it. Start local to prove the idea costs nothing; move to a
+bigger model when the mission gets subtle — the mission and action prompts carry
+over unchanged, because every engine gets the same two prompts.
 
 The provider is three fields: base URL, model, and an API key that is allowed to be
 blank. Your key lives in your browser's `localStorage` and goes straight to the
@@ -81,15 +116,51 @@ and scores them, so "is the tiny local model good enough for this camera?" is a
 measurement rather than a guess. The **Optimize** screen goes further and rewrites
 your prompt against your own examples.
 
+## What your phone actually needs
+
+Cloud or local-server engines need nothing but a browser and a network: all the
+work happens elsewhere, so a five-year-old phone is fine. The requirements below
+are for running the model **on the device**, and they are per model — every one
+of these is built in and picked in Settings.
+
+| Model                          | Download (cached once) | Needs                                           | Runs comfortably on                                     |
+|--------------------------------|------------------------|-------------------------------------------------|---------------------------------------------------------|
+| **Object gate** (YOLO26n)      | 3–5 MB                 | any modern browser; WebGPU optional             | anything, including the phone you stopped using in 2019 |
+| **SmolVLM2 256M**              | 208 MB                 | no WebGPU required — falls back to WASM         | any phone, but 10–30 s per scan without WebGPU          |
+| **LFM2.5-VL 450M** *(default)* | 810 MB                 | WebGPU, ~4 GB RAM, a GPU buffer limit ≥ ~490 MB | a mid-range or better phone from the last ~3 years      |
+| **FastVLM 0.5B**               | 1.1 GB                 | WebGPU, ~6 GB RAM, a GPU buffer limit ≥ ~670 MB | a current flagship phone, or any laptop                 |
+
+Plus the browser itself, for the WebGPU rows:
+
+| Browser                  | WebGPU from   |
+|--------------------------|---------------|
+| Chrome / Edge on Android | 121           |
+| Chrome / Edge on desktop | 113           |
+| Safari (macOS and iOS)   | 26            |
+| Firefox                  | 141 (partial) |
+
+Aura checks all of this for you: it probes the GPU adapter's real buffer limits
+and the reported memory on arrival and picks the largest model the device can
+actually run, falling back rather than failing. You can always override the
+choice by hand. Storage is the quiet one — the weights live in the browser's
+cache, so a 1.1 GB model wants that much free space, once.
+
+Two things worth knowing before you pick the biggest model your phone will take:
+sustained in-browser inference makes a phone hot, and a hot phone throttles. The
+**object gate** exists for exactly this: a 3 MB detector watches for changes and
+only wakes the big model when the set of objects in frame actually changes,
+which takes the GPU from most of the time to almost never. Turn it on in
+Settings → OBJECT GATE.
+
 ## Being honest about it
 
 - It's an LLM looking at **one frame at a time**. It is excellent at "is there a
   person", good at "is that person carrying something", and unreliable at anything
   requiring memory of what happened ten seconds ago. Don't wire it to anything
   safety-critical.
-- Cost and battery scale with how often it looks. Aura offers scan modes, budget
-  caps, and (see [`docs/`](./docs)) gating work that only wakes the big model when
-  the scene actually changes.
+- Cost and battery scale with how often it looks. Scan modes, budget caps and
+  the object gate all exist to pull that down — the gate especially, since it
+  only wakes the expensive model when the objects in frame change.
 - **iOS Safari cannot background-monitor.** Safari suspends camera access for
   hidden pages, and no workaround exists. An Android phone or a plugged-in laptop
   with the tab in front works fine, and survives backgrounding, lock screens and
