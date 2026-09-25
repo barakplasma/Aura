@@ -482,6 +482,40 @@ Built as specified, with three deviations worth recording:
   round-trip plus a `YolosImageProcessor` whose defaults we'd only switch back
   off.
 
+### Hardening pass
+
+The loop logic was first written inline in `useMonitor`, where nothing could
+test it. Extracting it into `lib/gate-session.js` — pure, clock-injected, so an
+armed session of several hours runs under `node --test` in milliseconds — and
+then driving the built app in headless Chromium (`scripts/dev-gate-e2e.mjs`)
+found six bugs, each now pinned by a test that fails when it is reintroduced:
+
+| Found by                                         | Bug                                                                 | Consequence                                                                                                        |
+|--------------------------------------------------|---------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| reading the extracted logic                      | the stage-0 reference only rebased after a VLM scan                 | any persistent non-object change (a curtain, a lamp) ran the detector on every tick until the heartbeat            |
+| reading the extracted logic                      | a detector that failed to load was retried every tick               | an offline first run re-requested the model from the Hub every 2 s, forever                                        |
+| session tests, against the fix for the first bug | stage 0 could skip the detector while a track was still a candidate | a person who walked in and stood still was **never reported**                                                      |
+| session tests                                    | a tick that decided early rebased onto an *older* stage-0 frame     | a scene returning to how it looked then read as "still"                                                            |
+| real browser                                     | the detector chose `webgpu` whenever `navigator.gpu` existed        | with the API present but no adapter (headless, blocklisted GPUs) every load failed instead of falling back to WASM |
+| real browser                                     | the post-scan telemetry update replaced the whole object            | the gate's rows vanished after every scan, and main's muted-track SKIPPED counter reset with them                  |
+
+The third is the instructive one: the obvious fix for the first bug introduced
+a false negative, the one failure a gate must never have. The rule that closes
+both is that **stage 0 may only skip while every track is settled**.
+
+End to end, on the fake camera (an empty room alternating with Ultralytics'
+`bus.jpg` every 15 s, 1 s gate ticks, a 1 s scan interval, YOLO26n int8 on
+single-threaded WASM at ~1.7 s a pass):
+
+|          | VLM calls in 90 s                                                                  |
+|----------|------------------------------------------------------------------------------------|
+| gate off | 89                                                                                 |
+| gate on  | 6 — the baseline plus one per scene change, each `added bus +4` / `removed bus +4` |
+
+On a phone with WebGPU the detector pass is expected to be tens of
+milliseconds rather than ~1.7 s, which shortens the time from an object
+appearing to the VLM waking; that figure still needs the reference device.
+
 The I/O contract above was verified end to end against the real artifacts
 (`AutoModel.from_pretrained` + `onnx-community/yolo26n-ONNX` int8, Ultralytics'
 own `bus.jpg`): outputs `logits [1,300,80]` and `pred_boxes [1,300,4]`, raw

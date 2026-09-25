@@ -41,6 +41,10 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)                      |
 | `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                                 |
 | `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                           |
+| `lib/detector-models.js`          | Object-gate detector table (YOLO26 rows) + COCO labels, `suggestClasses()` — pure                                                     |
+| `lib/gate-session.js`             | Object gate's per-session state machine: every scan/skip decision, clock-injected — pure                                              |
+| `lib/object-gate.js`              | Object gate tracker: decode YOLO26 output, hysteresis, `gateDecision()` — pure                                                        |
+| `lib/motion.js`                   | Stage 0 of the gate: 64×48 grayscale diff with mean-brightness subtraction — pure                                                     |
 | `lib/chrome-ai.js`                | Chrome built-in AI (Gemini Nano) transport parallel to the worker's — see below                                                       |
 | `src/workers/ml.worker.js`        | Runs the selected VLM **and** the gate's detector via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers` |
 | `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                                 |
@@ -105,14 +109,22 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Match the surrounding comment density and naming.
 - All AI logic must be browser-compatible (uses `fetch`, `AbortController`, no Node APIs).
 - After changing the engine, add/extend a test in `test/`.
-- The **object gate** (docs/PRD-object-gate.md) is a three-stage cascade in
-  `useMonitor`: a 64×48 pixel diff, then YOLO26 over the frame, then — only if
-  the *set of objects* changed — the VLM. Its rules live in pure modules
-  (`lib/motion.js`, `lib/object-gate.js`) and its detector is a row in
-  `lib/detector-models.js`; `ml.worker.js` holds one model **per task**
-  (`slots.vlm`, `slots.detect`) so both share one ORT instance and one WebGPU
-  device. The gate must never be able to silence the monitor: every failure
-  path inside it returns "scan anyway", and the heartbeat is unskippable.
+- The **object gate** (docs/PRD-object-gate.md) is a three-stage cascade: a
+  64×48 pixel diff, then YOLO26 over the frame, then — only if the *set of
+  objects* changed — the VLM. **Every decision lives in `lib/gate-session.js`**
+  (baseline, heartbeat, stage-0 skips, deferral, detector backoff, rebasing),
+  pure and clock-injected so whole sessions run under `node --test`;
+  `useMonitor` only fetches what each step asks for. The tracker is
+  `lib/object-gate.js`, the pixel diff `lib/motion.js`, and the detector a row
+  in `lib/detector-models.js`. `ml.worker.js` keeps the detector in its own
+  slot (`detector`) beside the VLM's `current`, so both share one ORT instance
+  and one WebGPU device. The gate must never be able to silence the monitor:
+  every failure path inside it decides "scan anyway", the heartbeat is
+  unskippable, and stage 0 may only skip while every track is settled — a
+  still frame skipping the detector mid-transition strands a candidate and
+  loses an arrival. `scripts/dev-gate-e2e.mjs` drives the built app in
+  headless Chromium with a fake camera and a counting fake provider; run it
+  after touching any of this.
 - The YOLO26 export's `logits` are **raw**, so scores are per-class `sigmoid`,
   never softmax, and there is no background class — which is why the decode is
   ours (`decodeDetections`) rather than transformers.js's
