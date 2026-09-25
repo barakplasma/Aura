@@ -13,6 +13,7 @@ import {
   resolveBrowserRuntime,
   selectBrowserDevice,
   loadDetector,
+  selectDetectorDevice,
   detectObjects,
   isDetectorLoaded,
   unloadDetector,
@@ -72,6 +73,13 @@ function freshWorker() {
 // after at least one microtask tick (even the "already loaded" fast path
 // resolves through a Promise) — spin microtasks until the expected message
 // has actually landed in `posted`, rather than asserting on it immediately.
+// loadDetector() probes the GPU adapter before it posts anything, so the
+// worker spawns a few microtasks after the call rather than inside it.
+async function spawnedWorker(getWorker) {
+  for (let i = 0; i < 50 && !getWorker(); i++) await Promise.resolve();
+  return getWorker();
+}
+
 async function waitForPosted(fw, n) {
   for (let i = 0; i < 50 && fw.posted.length < n; i++) {
     await Promise.resolve();
@@ -513,7 +521,7 @@ test("a stored runtime of 'auto' resolves before transport selection", async () 
 async function loadedFakeDetector(key = "yolo26n-int8", device = "wasm") {
   const getWorker = freshWorker();
   const loadP = loadDetector(key);
-  const fw = getWorker();
+  const fw = await spawnedWorker(getWorker);
   await waitForPosted(fw, 1);
   fw.reply({ id: fw.posted[0].id, type: "ready", device });
   await loadP;
@@ -523,7 +531,7 @@ async function loadedFakeDetector(key = "yolo26n-int8", device = "wasm") {
 test("loadDetector posts a 'detect' task load and remembers the device", async () => {
   const getWorker = freshWorker();
   const p = loadDetector("yolo26n-int8");
-  const fw = getWorker();
+  const fw = await spawnedWorker(getWorker);
   await waitForPosted(fw, 1);
   const req = fw.posted[0];
   assert.equal(req.type, "load");
@@ -540,7 +548,7 @@ test("loadDetector de-duplicates concurrent loads of the same row", async () => 
   const getWorker = freshWorker();
   const a = loadDetector(DEFAULT_DETECTOR_MODEL);
   const b = loadDetector(DEFAULT_DETECTOR_MODEL);
-  const fw = getWorker();
+  const fw = await spawnedWorker(getWorker);
   await waitForPosted(fw, 1);
   assert.equal(fw.posted.length, 1, "one load message for two callers");
   fw.reply({ id: fw.posted[0].id, type: "ready", device: "webgpu" });
@@ -607,4 +615,25 @@ test("unloadDetector frees only the detector's slot", async () => {
   fw.reply({ id: req.id, type: "ready", device: null });
   await p;
   assert.equal(isDetectorLoaded("yolo26n-int8"), false);
+});
+
+test("selectDetectorDevice falls back to WASM when WebGPU exists but gives no adapter", async () => {
+  // The case a headless browser, a blocklisted GPU, or some Android builds
+  // present: navigator.gpu is there, requestAdapter() resolves null. Asking
+  // ORT for "webgpu" anyway fails the load with "no available backend found"
+  // — found by scripts/dev-gate-e2e.mjs, not by reasoning.
+  const int8 = DETECTOR_MODELS["yolo26n-int8"];
+  const fp16 = DETECTOR_MODELS["yolo26n-fp16"];
+  const gpu = (adapter) => ({ gpu: { requestAdapter: async () => adapter } });
+  const f16 = { features: new Set(["shader-f16"]) };
+  const noF16 = { features: new Set() };
+
+  assert.equal(await selectDetectorDevice(int8, {}), "wasm", "no WebGPU API");
+  assert.equal(await selectDetectorDevice(int8, null), "wasm", "no navigator");
+  assert.equal(await selectDetectorDevice(int8, gpu(null)), "wasm", "API present, no adapter");
+  assert.equal(await selectDetectorDevice(int8, gpu(noF16)), "webgpu", "int8 needs no f16");
+  assert.equal(await selectDetectorDevice(fp16, gpu(noF16)), "wasm", "fp16 needs shader-f16");
+  assert.equal(await selectDetectorDevice(fp16, gpu(f16)), "webgpu");
+  const throwing = { gpu: { requestAdapter: async () => { throw new Error("denied"); } } };
+  assert.equal(await selectDetectorDevice(int8, throwing), "wasm", "a refused adapter never throws");
 });
