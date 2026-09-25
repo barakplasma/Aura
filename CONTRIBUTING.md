@@ -128,8 +128,22 @@ scan on a timer no matter what the gate says. The detector knows 80 object
 classes and nothing about smoke, a left-on stove or a wilting plant, so the
 heartbeat is what keeps those visible — setting it to 0 makes them invisible.
 
-The gate's rules are pure functions in `lib/object-gate.js` and `lib/motion.js`,
-so behaviour changes belong there (with a test), not in the hook.
+Every gate decision lives in `lib/gate-session.js` (the tracker in
+`lib/object-gate.js`, the pixel diff in `lib/motion.js`), pure and clock-injected,
+so behaviour changes belong there with a test — not in the hook.
+
+To see the whole thing work in a real browser, build and run the end-to-end
+harness. It drives the app in headless Chromium with a fake camera (an empty room
+alternating with a street scene) and a fake vision model that counts every call:
+
+```bash
+npm run build
+node scripts/dev-gate-e2e.mjs            # gate on: expect a handful of calls
+GATE=0 node scripts/dev-gate-e2e.mjs     # control: roughly one call a second
+```
+
+It downloads the ~3 MB detector once (to your temp dir) and serves it to the
+browser from there, so later runs need no network.
 
 ## Running fully offline
 
