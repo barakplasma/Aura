@@ -15,6 +15,7 @@ import {
   _resetTrackIds,
 } from "../lib/object-gate.js";
 import { COCO_LABELS } from "../lib/detector-models.js";
+import { det } from "./gate-fixtures.js";
 
 // --- helpers ---------------------------------------------------------------
 
@@ -39,15 +40,6 @@ const CLS = {
   backpack: COCO_LABELS.indexOf("backpack"),
 };
 
-// A detection as stepTracks() consumes it (xyxy, normalized).
-function det(label, score, [x, y, w = 0.1, h = 0.2]) {
-  return {
-    classId: COCO_LABELS.indexOf(label),
-    label,
-    score,
-    box: [x - w / 2, y - h / 2, x + w / 2, y + h / 2],
-  };
-}
 
 const OPTS = gateOpts("medium"); // enter .35/2 frames, exit .25/3 frames
 

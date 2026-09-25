@@ -9,25 +9,18 @@ import {
   isBrowserModelLoaded,
   unloadBrowserModel,
 } from "../../lib/browser-engine.js";
+import { GATE_WIDTH, GATE_HEIGHT, toGray, motionPreset } from "../../lib/motion.js";
+import { decodeDetections, gateOpts } from "../../lib/object-gate.js";
 import {
-  GATE_WIDTH,
-  GATE_HEIGHT,
-  toGray,
-  motionScore,
-  motionPreset,
-  isMotion,
-} from "../../lib/motion.js";
-import {
-  decodeDetections,
-  gateOpts,
-  seedTracks,
-  stepTracks,
-  rebaseAnchors,
-  summarize,
-  summaryText,
-  gateDecision,
-  buildSceneHint,
-} from "../../lib/object-gate.js";
+  createGateState,
+  beginTick,
+  afterMotion,
+  afterDetect,
+  detectFailed,
+  defer,
+  scanCompleted,
+  seedFrom,
+} from "../../lib/gate-session.js";
 import {
   DEFAULT_DETECTOR_MODEL,
   parseClassFilter,
@@ -270,17 +263,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     reconnecting: false,
     // Object gate: the tracked inventory, the motion reference, and the
     // bookkeeping that decides whether the VLM runs at all this tick.
-    tracks: [],
-    refGray: null,
+    // Every decision lives in lib/gate-session.js; the hook only owns the
+    // camera-side plumbing (the stage 0 canvas and its reusable buffer),
+    // the detector latency EMA, and the hint riding along with a scan.
+    gate: createGateState(),
     grayBuf: null,
-    pendingGray: null,
-    seedTracks: true,
-    gatePending: false,
-    baselineSig: null,
-    lastScanWallAt: null,
     detectEma: null,
-    gateSkips: 0,
     gateWarned: false,
+    gateHint: "",
   });
   const ctxRef = useRef(null);
   // acquireStream/reconnect are mutually recursive (a track's onended handler
@@ -430,12 +420,10 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       const st = internalRef.current;
       try {
         const { detections } = await detectFrame(video, s);
-        if (!internalRef.current.running || !st.seedTracks) return;
-        st.tracks = seedTracks(detections);
-        st.seedTracks = false;
-        st.objects = summaryText(summarize(st.tracks));
+        if (!internalRef.current.running) return;
+        seedFrom(st.gate, detections);
       } catch {
-        // Leave st.seedTracks set — the next tick retries.
+        // Leave the seed pending — the next detector pass does the same job.
       }
     },
     [detectFrame],
@@ -451,8 +439,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     const mins = Number(s.vlmIdleEvictMin);
     if (!Number.isFinite(mins) || mins <= 0) return;
     if (s.engine !== "browser" || s.demo) return;
-    if (st.lastScanWallAt == null) return;
-    if (Date.now() - st.lastScanWallAt < mins * 60000) return;
+    if (st.gate.lastScanAt == null) return;
+    if (Date.now() - st.gate.lastScanAt < mins * 60000) return;
     if (!isBrowserModelLoaded(s.browserModel)) return;
     st.evicting = true;
     unloadBrowserModel()
@@ -462,87 +450,50 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       });
   }, []);
 
-  // Runs the cascade for one tick. Returns { pass, why, hint } — `pass` false
-  // is the only outcome that skips the VLM, and every failure path inside
-  // returns true, because a broken gate must never silence the monitor.
+  // Runs the cascade for one tick and returns { pass, why, hint }. Every rule
+  // is in lib/gate-session.js; this only fetches what each step asks for — a
+  // 64x48 frame for stage 0, a detector pass for stage 1 — in the order it
+  // asks for them.
   const runGate = useCallback(
     async (video, s) => {
       const st = internalRef.current;
-      const now = Date.now();
+      const g = st.gate;
       const heartbeatMin = Number(s.heartbeatMin);
-      const heartbeatMs =
-        Number.isFinite(heartbeatMin) && heartbeatMin > 0
-          ? heartbeatMin * 60000
-          : 0;
-      const heartbeatDue =
-        heartbeatMs > 0 &&
-        st.lastScanWallAt != null &&
-        now - st.lastScanWallAt >= heartbeatMs;
+      const begin = beginTick(g, {
+        now: Date.now(),
+        signature: baselineSignature(s),
+        heartbeatMs:
+          Number.isFinite(heartbeatMin) && heartbeatMin > 0 ? heartbeatMin * 60000 : 0,
+      });
+      if (begin.decided) return begin;
 
-      // Cold start, and every rebase: the first frame of a session never
-      // enters the cascade. A gate with no reference has nothing to diff
-      // against, and ARM should give a verdict on what the camera sees now.
-      const sig = baselineSignature(s);
-      if (st.baselineSig !== sig || st.lastScanWallAt == null) {
-        st.baselineSig = sig;
-        st.tracks = [];
-        st.seedTracks = true;
-        st.refGray = null;
-        return { pass: true, why: "baseline", hint: "" };
-      }
+      const motion = afterMotion(g, {
+        gray: grabGray(video),
+        preset: motionPreset(s.objectSens || "medium"),
+        heartbeatDue: begin.heartbeatDue,
+      });
+      if (motion.decided) return motion;
 
-      // A pass that the cadence floor deferred is still owed a scan — the
-      // events that justified it were consumed when they were emitted.
-      if (st.gatePending) return { pass: true, why: st.gateWhy || "pending", hint: st.gateHint || "" };
-
-      // Stage 0 — pixel diff. Cheap enough to run on every tick; its only job
-      // is keeping stage 1 off the GPU on a still scene.
-      const preset = motionPreset(s.objectSens || "medium");
-      const gray = grabGray(video);
-      if (gray) {
-        st.pendingGray = gray;
-        if (st.refGray) {
-          const score = motionScore(gray, st.refGray, preset);
-          if (!isMotion(score, preset) && !heartbeatDue)
-            return { pass: false, why: `still ${score.toFixed(2)}`, hint: "" };
-        }
-      }
-
-      // Stage 1 — the detector, and the inventory diff over its output.
-      let events = [];
-      let counts = {};
       try {
         const { opts, detections } = await detectFrame(video, s);
         if (!internalRef.current.running) return { pass: false, why: "", hint: "" };
-        if (st.seedTracks) {
-          st.tracks = seedTracks(detections);
-          st.seedTracks = false;
-        } else {
-          const stepped = stepTracks(st.tracks, detections, opts);
-          st.tracks = stepped.tracks;
-          events = stepped.events;
-        }
-        counts = summarize(st.tracks);
-        st.objects = summaryText(counts);
+        return afterDetect(g, {
+          detections,
+          opts,
+          wakeOn: s.objectWakeOn ?? "added,removed",
+          heartbeatDue: begin.heartbeatDue,
+          promptContext: Boolean(s.objectPromptContext),
+        });
       } catch (err) {
         // A detector that won't load or run (no network on first use, a
-        // refused WebGPU device) must degrade to "no gate at all", not to a
-        // monitor that never scans.
+        // refused WebGPU device) degrades to "no gate", never to a monitor
+        // that stops scanning — and backs off rather than retrying each tick.
         if (!st.gateWarned) {
           st.gateWarned = true;
-          console.warn("[aura] object gate unavailable — scanning every tick", err);
+          console.warn("[aura] object gate unavailable — scanning without it", err);
         }
-        return { pass: true, why: "gate unavailable", hint: "" };
+        return detectFailed(g, { now: Date.now() });
       }
-
-      const decision = gateDecision(events, {
-        wakeOn: s.objectWakeOn ?? "added,removed",
-        heartbeatDue,
-      });
-      const hint = s.objectPromptContext
-        ? buildSceneHint(counts, decision.events)
-        : "";
-      return { ...decision, hint };
     },
     [baselineSignature, detectFrame, grabGray],
   );
@@ -740,19 +691,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       const sinceScan =
         st0.lastScanAt == null ? Infinity : performance.now() - st0.lastScanAt;
       if (decision.pass && sinceScan < st0.lastGapMs) {
-        st0.gatePending = true;
-        st0.gateWhy = decision.why;
-        st0.gateHint = decision.hint;
+        defer(st0.gate, decision);
         gateSkip = true;
       } else if (decision.pass) {
-        st0.gatePending = false;
-        st0.gateHint = decision.hint;
-        st0.gateWhy = decision.why;
+        st0.gateHint = decision.hint || "";
       } else {
         gateSkip = true;
       }
       if (gateSkip) {
-        st0.gateSkips += 1;
         // Idle VRAM eviction: once the VLM only runs a few times an hour,
         // keeping ~800 MB of weights and their KV buffers resident between
         // scans is paying rent on an empty room — and an idle-but-resident
@@ -762,7 +708,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         maybeEvictIdleModel(s);
       }
       setTelemetry((prev) => {
-        const objects = st0.objects || "—";
+        const objects = st0.gate.objects || "—";
         const gate = decision.why || prev.gate;
         const detect = st0.detectEma
           ? `${Math.round(st0.detectEma)}ms · ${detectorDeviceName() || "?"}`
@@ -771,10 +717,10 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           prev.objects === objects &&
           prev.gate === gate &&
           prev.detect === detect &&
-          prev.gateSkipped === st0.gateSkips
+          prev.gateSkipped === st0.gate.skips
         )
           return prev;
-        return { ...prev, objects, gate, detect, gateSkipped: st0.gateSkips };
+        return { ...prev, objects, gate, detect, gateSkipped: st0.gate.skips };
       });
     }
     // A muted track (browser paused the camera, usually while hidden) means
@@ -797,6 +743,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       // Capture once, up front, so the exact frame can be attached to an alert
       // (or kept as a false-negative candidate) without re-drawing the canvas.
       const frame = s.demo ? null : captureFrame();
+      // The motion reference must become *this* frame once the scan lands —
+      // not whatever stage 0 last happened to see (see scanCompleted()).
+      const scanGray = gateOn ? grabGray(video) : null;
       // MAX mode never forces a timeout — a scan runs to completion (or is
       // cancelled by Stop) and the next one starts right after, for the
       // highest achievable frame rate. Other modes self-tune the timeout from
@@ -885,20 +834,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           ? result.latencyMs
           : rtt;
         st.lastScanAt = performance.now();
-        st.lastScanWallAt = Date.now();
-        // Rebase what the gate diffs against: the motion reference becomes
-        // this frame, every track re-anchors where it stands now (which is
-        // what makes movement "since the last scan"), and the deferred-pass
-        // latch is satisfied.
-        if (st.pendingGray) st.refGray = st.pendingGray;
-        st.tracks = rebaseAnchors(st.tracks);
-        st.gatePending = false;
-        st.gateHint = "";
-        // Cold start: seed the inventory from the very frame the baseline scan
-        // just judged, so everything already in shot enters as `present` and
-        // the couch that was there when you armed never emits `added`.
-        if (st.seedTracks && s.objectGate && !s.demo && video)
-          seedFromFrame(video, s);
+        // Rebase what the gate diffs against onto the frame just judged, and
+        // on a cold start seed the inventory from it — so everything already
+        // in shot enters as `present` and the couch never emits `added`.
+        if (s.objectGate && !s.demo) {
+          scanCompleted(st.gate, { now: Date.now(), gray: scanGray });
+          st.gateHint = "";
+          if (st.gate.seedNext && video) seedFromFrame(video, s);
+        }
         st.samples = recordLatency(st.samples, measured);
         const p50 = percentile(st.samples, 50);
         const p90 = percentile(st.samples, 90);
@@ -947,7 +890,11 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
             prompt_tokens: internalRef.current.totalPromptTokens,
             completion_tokens: internalRef.current.totalCompletionTokens,
           }, s.pricing);
+          // Spread prev: this update only owns the per-scan fields. Replacing
+          // the whole object wiped everything else after every scan — the
+          // object gate's rows and the muted-track SKIPPED counter included.
           return {
+            ...prev,
             latency: String(result.latencyMs ?? rtt),
             confidence: Number.isFinite(result.confidence)
               ? String(Math.round(result.confidence))
@@ -1307,19 +1254,10 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     internalRef.current.reconnecting = false;
     // Fresh gate state: a new session re-baselines from its first frame rather
     // than diffing against whatever the last one was looking at.
-    internalRef.current.tracks = [];
-    internalRef.current.refGray = null;
-    internalRef.current.pendingGray = null;
-    internalRef.current.seedTracks = true;
-    internalRef.current.gatePending = false;
+    internalRef.current.gate = createGateState();
     internalRef.current.gateHint = "";
-    internalRef.current.gateWhy = "";
-    internalRef.current.baselineSig = null;
-    internalRef.current.lastScanWallAt = null;
     internalRef.current.detectEma = null;
-    internalRef.current.gateSkips = 0;
     internalRef.current.gateWarned = false;
-    internalRef.current.objects = "";
     setTelemetry((prev) => ({
       ...prev,
       skipped: 0,
