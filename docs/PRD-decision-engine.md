@@ -3,8 +3,10 @@
 Status: **proposed** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
 new self-hosted gateway (`deploy/decision-gateway/`)
 Category: **remote inference**
-Source: [Image JevBench v0.1](https://benchmarkheaven.com/image-jev-bench)
-(read 2026-09-26; frozen split 228 public / 456 sealed)
+Sources (read 2026-09-26): [Image JevBench v0.1](https://benchmarkheaven.com/image-jev-bench)
+(frozen split 228 public / 456 sealed); [Glance](https://github.com/yoheinakajima/glance)
+and its latency study [Glance Speedlab](https://github.com/yoheinakajima/glance-speedlab)
+([report](https://glance.yohei.me/speed/))
 
 ## Problem
 
@@ -57,6 +59,48 @@ Readings that shape this design:
   Aura's eval screen (`lib/eval.js`) is how an operator confirms any of this on
   *their* camera before trusting it.
 
+## Glance and Speedlab: a zero-shot backend, and measured latency rules
+
+[Glance](https://github.com/yoheinakajima/glance) (Apache-2.0) is not a trained
+model. It reads yes/no, pick-one and rating answers from the answer-token
+logits of a **stock, frozen** open VLM (Qwen3-VL 2B/4B/8B by default), in one
+pass, and serves them over `POST /v1/decide` in TypeSafe's request shape with
+an image extension. Qwen3-VL is not in the Image JevBench ranking, but Glance
+publishes its own zero-shot comparison on fresh, human-labelled photos (541
+yes/no questions, three sets):
+
+| System                               | yes/no | pick-one | s / yes-no (full-size photo) | USD / 1K answers           |
+|--------------------------------------|--------|----------|------------------------------|----------------------------|
+| Qwen3-VL-4B read by Glance (laptop)  | 0.939  | 0.933    | 1.1 (0.33 on a small image)  | 0.07–0.32 rented GPU       |
+| Qwen3-VL-2B read by Glance           | 0.904  | 0.907    | 0.66                         | lower                      |
+| same 4B model writing JSON           | 0.945  | 0.930    | 1.6                          | 0.13–0.42                  |
+| Gemini 3.1 Flash-Lite                | 0.961  | 0.933    | 1.6–1.9                      | 0.31–0.34                  |
+
+This is the same mechanism the BROWSER engine already uses for its own
+confidence (`lib/logprob.js`), just on a bigger model, on a server. For this
+PRD Glance is a **third backend family** beside the two fine-tuned ones: no
+training, any Apache/MIT Qwen3-VL checkpoint, and a server that already takes
+images. Two limits: its CPU tier is dual-encoder only (the VLM path wants CUDA
+≥ 12 GB or Apple silicon ≥ 16 GB), and `glance serve` is a single-threaded,
+loopback-only Flask server with no CORS or auth — so it sits behind the gateway
+like every other backend.
+
+[Glance Speedlab](https://glance.yohei.me/speed/) is 21 preregistered latency
+experiments on exactly Aura's loop (camera → resize → gateway → VLM readout →
+scheduler), on one Apple M5. The results that change this design:
+
+| Speedlab result                                                              | Rule for Aura                                                                                                     |
+|------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
+| Model compute dominates; base64 + JSON cost ≤ 0.1 ms p95 at 320 px           | Don't build binary transport or a custom codec. JSON + base64 through the gateway is fine.                        |
+| Several questions in one request: 2.405× faster than sequential requests     | One scan = one request carrying *all* questions about the frame (see fan-out below). Never one call per question. |
+| 8-bit: 1.381× faster, 84/84 decisions, max drift 0.039. 4-bit: drift 0.361   | Tier 1 GGUF is **Q8_0**. Q4/IQ4 variants are rejected up front, not left for the eval to find.                   |
+| Fewer vision tokens / 224 px / early decoder exits: faster but change answers | No uniform token caps or truncation knobs. Frame size is an eval-screen experiment, not a default change.        |
+| 2B is 2.994× faster than 4B but agrees on only 83.3 % of decisions           | A 2B model is a **fast tier with escalation**, never a silent drop-in (see cascade below).                        |
+| Letter-choice scoring on a zero-shot VLM: no faster, less stable             | Zero-shot VLM backends (Glance) score options independently. Letter slots only for models trained on them (decider). |
+| Latest frame, one request in flight                                          | Already Aura's scheduler (`PRD-scan-modes.md`). Keep it; the gateway returns `429` rather than queueing.          |
+| Temporal reuse: 95.1 % fewer inferences (synthetic)                          | Aura's object gate + stage-0 pixel diff already do this, engine-agnostically. Nothing new to build.               |
+| Timing split into capture / request / prefix / score / answer age           | Gateway passes the backend's `timing_ms` through; Aura records it next to `latencyMs`.                            |
+
 ### What these models cannot do
 
 They are classifiers, not chat models. They produce **no text**: no `reason`,
@@ -78,7 +122,7 @@ still need a generator. That is the central design constraint: **split
 4. The announcement leg is pluggable: PROVIDER (chat VLM, only when fired),
    BROWSER, or a plain template — so a fired alert still speaks.
 5. One wire protocol for every decision model: TypeSafe's `POST /v1/systemone`
-   format, which decider's own server already implements, plus an image field.
+   format, which decider's own server already implements, plus Glance's `state.images` extension.
 
 ## Non-goals
 
@@ -114,11 +158,13 @@ flowchart LR
 
   subgraph GPU["Scale-to-zero GPU (optional tier)"]
     JO[Jev-Omni<br/>FastAPI /v1/systemone]
+    GL[Glance<br/>Qwen3-VL-4B /v1/decide]
   end
 
   DEC -- "POST /v1/systemone<br/>HTTPS + CORS" --> GW
   GW -- "/completion, n_probs" --> LS
   GW -- "/v1/systemone" --> JO
+  GW -- "/v1/decide" --> GL
   PROV -- "/chat/completions" --> CLOUD[(user's chat VLM<br/>provider)]
 ```
 
@@ -129,14 +175,14 @@ sequenceDiagram
   participant M as useMonitor
   participant D as lib/decision.js
   participant G as decision-gateway
-  participant B as backend (llama-server | Jev-Omni)
+  participant B as backend (llama-server, Glance or Jev-Omni)
   participant P as announcer (provider)
 
   M->>D: scanDecision({image, mission, question, threshold, ...})
-  D->>G: POST /v1/systemone {model, state, images:[dataURI], questions:{alert:{type:"choice", criteria:{yes,no}}}}
+  D->>G: POST /v1/systemone {model, state:{images:[{id:img0, base64}]}, questions:{alert:{type:"choice", criteria:{yes,no}}}}
   G->>B: backend-native request (raw prompt / images)
-  B-->>G: option logits
-  G-->>D: {answers:{alert:{choice, confidence, probabilities}}, usage}
+  B-->>G: option probabilities + timing
+  G-->>D: {answers:{alert:{choice, confidence, probabilities}}, usage, timing_ms}
   D->>D: confidence = round(100 * p(yes)), triggered = p(yes) >= 0.5
   alt triggered and confidence >= threshold
     D->>P: action leg (runAlertLegs)
@@ -148,21 +194,25 @@ sequenceDiagram
 ## The wire protocol
 
 Aura speaks **TypeSafe's System One format** (`docs.typesafe.ai`), which
-Mapika's `decider/serve.py` already serves for its text models, plus one
-extension field for images. Every backend sits behind the gateway, so the
-browser sees exactly one shape.
+Mapika's `decider/serve.py` already serves for its text models, with the image
+extension **Glance already publishes**: images live in `state.images` as
+`{id, base64}` and questions refer to them as `` `img0` ``. Adopting an existing
+extension instead of inventing one makes Glance a pure passthrough. Every
+backend sits behind the gateway, so the browser sees exactly one shape.
 
 Request (what `lib/decision.js` sends):
 
 ```json
 {
   "model": "decider-2b-vision",
-  "state": "A home security camera frame. Operator context: front porch, daytime.",
-  "images": ["data:image/jpeg;base64,/9j/..."],
+  "state": {
+    "images": [{ "id": "img0", "base64": "/9j/..." }],
+    "context": "A home security camera frame. Operator context: front porch, daytime."
+  },
   "questions": {
     "alert": {
       "type": "choice",
-      "instructions": "Is a package on the doormat?",
+      "instructions": "Is a package on the doormat in `img0`?",
       "criteria": { "yes": "A package is visible on the doormat", "no": "No package on the doormat" }
     }
   }
@@ -177,7 +227,8 @@ Response (TypeSafe's shape, unchanged):
   "answers": {
     "alert": { "type": "choice", "choice": "yes", "confidence": 0.86, "probabilities": { "yes": 0.93, "no": 0.07 } }
   },
-  "usage": { "input_tokens": 412, "output_tokens": 0, "decisions": 1, "gpu_ms": 0 }
+  "usage": { "input_tokens": 412, "output_tokens": 0, "decisions": 1 },
+  "timing_ms": { "prefix": 180, "score": 40, "total": 230 }
 }
 ```
 
@@ -186,10 +237,13 @@ Choices:
 - **`choice` with `{yes, no}`, not `noul`.** Both measured models are option
   classifiers; a `choice` keeps the door open for multi-option missions later
   (below) and returns the full distribution.
-- **`images` is a top-level array of data URIs.** Bonsai's System One path
-  took the image inside `state`; AutoJev types it as `DecisionInput.images`.
-  A top-level field is the cleaner of the two and the gateway normalises
-  either.
+- **Images follow Glance: `state.images[{id, base64}]`, referenced as
+  `` `img0` ``.** Glance's `/v1/decide` accepts this unchanged. Bonsai's
+  System One path put a data URI inside `state` and AutoJev types it as
+  `DecisionInput.images`; the gateway's decider and Jev-Omni adapters unpack
+  it for their own loaders.
+- **`timing_ms` is passed through** when the backend reports it (Glance does),
+  so the latency Aura shows can be split into image prefix and scoring.
 - **Aura's confidence is `p(yes)`, not the response's `confidence`.** TypeSafe
   distinguishes *confidence* (certainty of the model) from *probability*; the
   slider compares against `p(yes)` so that `threshold = 60` means "alert when
@@ -234,8 +288,9 @@ k3s. It is the only thing the browser talks to.
 | CORS          | `Access-Control-Allow-Origin` = configured Aura origin(s); preflight answered locally                                             |
 | Auth          | `Authorization: Bearer <token>` checked against a k8s Secret — the token lives in `aura.decisionKey`, same as a provider API key  |
 | Limits        | ≤ 1 image, ≤ 2 MB decoded, ≤ 8 options, ≤ 4 questions per call; `413` / `400` otherwise                                           |
-| Routing       | `model` → backend from a ConfigMap (`decider-2b-vision` → llama-server, `jev-omni` → GPU URL)                                    |
-| Backends      | `llamacpp` adapter (below) and `systemone` passthrough (any server that already speaks `/v1/systemone` with `images`)            |
+| Routing       | `model` → backend from a ConfigMap (`decider-2b-vision` → llama-server, `jev-omni` / `glance-qwen3vl-4b` → GPU URL)              |
+| Backends      | `llamacpp` adapter (below), `glance` passthrough (`/v1/decide`, same body), `systemone` passthrough for Jev-Omni's wrapper       |
+| Concurrency   | one in-flight request per backend (Glance and llama-server slots are single-request); a second gets `429`, never a queue       |
 | Usage         | echoes backend token counts; adds `decisions` and measured backend wall-time so Aura can price per decision                     |
 | `GET /v1/models` | lists routed models, so Aura's existing "Fetch models" UX works unchanged                                                     |
 | Observability | Prometheus `/metrics` (latency histogram per model, errors) — no frames logged, ever                                              |
@@ -273,16 +328,28 @@ prompt*, softmaxed over the options. That is reproducible on stock
 
 Why CPU first: the operator's VPS is an always-on ARM box that is already paid
 for, so the marginal cost per decision is zero, and a 2 B model at Q8_0
-(2.0 GB + 0.36 GB mmproj) fits comfortably. The open question is latency — a
+(2.0 GB + 0.36 GB mmproj) fits comfortably. **Q8_0, not smaller:** Speedlab
+measured 8-bit within 0.039 of full-precision probabilities and 4-bit at 0.361,
+enough to flip decisions — and the slider reads these probabilities directly. The open question is latency — a
 640×480 frame is roughly 300 visual tokens of prefill on ARM cores; this has
 to be measured, not assumed (see [Rollout](#rollout), phase 1).
 
-### Tier 2 — Jev-Omni on scale-to-zero GPU
+### Tier 2 — Jev-Omni or Glance on scale-to-zero GPU
+
+Two candidates for the GPU tier, compared on the operator's own images by the
+eval screen:
+
+- **Glance + Qwen3-VL-4B** needs only a 12 GB CUDA GPU (an L4 is enough),
+  ships its own server, and uses stock Apache-2.0 weights with no fine-tune —
+  the lowest-effort GPU backend. Its zero-shot yes/no is ~2 points behind
+  Gemini 3.1 Flash-Lite on fresh photos.
+- **Jev-Omni** is the accuracy target (96.8 % on the benchmark's everyday
+  photos) but needs a 24 GB+ GPU and a wrapper we write.
 
 Jev-Omni's reference loader requires CUDA and 24 GB of bf16 weights, so it
 needs an L40S/A100-class GPU. A ~100-line FastAPI wrapper around
 `load_jev_omni().predict(media=..., modality="image")` exposes
-`/v1/systemone` with `images`, and the gateway proxies to it with the
+`/v1/systemone` with `state.images`, and the gateway proxies to it with the
 `systemone` adapter. Host: any scale-to-zero GPU platform that serves an HTTPS
 container (Modal, RunPod serverless, Hugging Face Inference Endpoints, or a
 GPU node joined to k3s). The loader already uses
@@ -324,6 +391,7 @@ configured) re-runs that scan on the PROVIDER engine.
 | `src/screens/SettingsScreen.jsx`      | DECISION engine card: gateway URL, token, model picker (via `/v1/models`), announcer choice, fallback toggle.                                                                             |
 | `src/screens/MissionScreen.jsx`       | Decision question field + "Compile from mission" button.                                                                                                                                 |
 | `src/App.jsx`                         | `providerReady` for DECISION = gateway URL + model; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                          |
+| `src/screens/HistoryScreen.jsx`       | Show the backend's `timing_ms` split (prefix / score) and answer age next to latency when present.                                                                                        |
 | `test/decision.test.js` (new)         | Request building for all three question paths, response parsing (missing letters, malformed JSON, `choice` vs probability disagreement), threshold semantics, fallback, CORS/401 errors. |
 | `deploy/decision-gateway/` (new)      | Go module, Dockerfile (multi-arch, `linux/arm64` first), k8s manifests (Deployment + Service + Ingress with TLS, ConfigMap routes, Secret token), llama-server Deployment for Tier 1.   |
 
@@ -346,11 +414,16 @@ The protocol already allows what chat VLMs do badly:
   up to 20 options well, decider ≤ 8 in its narrow layout.
 - **Speculative fan-out.** One call, several questions: the mission plus
   "is the lens obstructed?" and "is the scene too dark to judge?" — frame
-  health for free, feeding the existing alert-hygiene rules
-  (`PRD-alert-hygiene.md`).
-- **Calibrated gating of the chat VLM.** DECISION as a cheap first pass; only
-  scans with `p(yes)` in an uncertain band (say 0.2–0.8) escalate to the
-  PROVIDER VLM. TypeSafe documents this as confidence-gated routing.
+  health nearly for free, feeding the existing alert-hygiene rules
+  (`PRD-alert-hygiene.md`). Speedlab measured one multi-question request at
+  2.4× faster than separate calls because the image prefix is computed once.
+- **Uncertainty cascade.** Speedlab's 2B-vs-4B result (3× faster, 83 %
+  agreement) says a small model should answer the easy frames and hand off the
+  rest, not replace the big one. The cascade: Tier 1 (decider-2b / a 2B VLM)
+  → Tier 2 (Jev-Omni or Glance 4B) → PROVIDER chat VLM, each step taken only
+  when `p(yes)` lands in an uncertain band (say 0.2–0.8). TypeSafe documents
+  the same idea as confidence-gated routing. The band is tuned on the eval
+  screen, per tier.
 
 ## Rollout
 
@@ -358,15 +431,17 @@ The protocol already allows what chat VLMs do badly:
    where a benchmarked hosted model is already reachable (Gemma 4 31B, Gemini
    3.1 Flash Lite). Spike: run decider-2b-vision Q8_0 under `llama-server` on
    the Hetzner box; record p50/p95 for 640×480 frames and check the letter
-   renormalisation against the Python reference on ~50 images. **Go / no-go
+   renormalisation against the Python reference on ~50 images, with Speedlab's
+   gate: no decision flips and max probability drift ≤ 0.10. **Go / no-go
    for Tier 1 is that latency** (target: p95 < 3 s).
 2. **Phase 1 — Tier 1.** `lib/decision.js` + tests, gateway with `llamacpp`
    adapter, k3s manifests, Settings/Mission UI, eval matrix support. Verify
    with `scripts/dev-gate-e2e.mjs` pointed at a counting fake gateway.
-3. **Phase 2 — Tier 2.** Jev-Omni FastAPI wrapper, `systemone` passthrough,
-   fallback-to-provider, per-decision pricing.
-4. **Phase 3.** Multi-option missions, fan-out health questions, confidence-
-   gated escalation.
+3. **Phase 2 — Tier 2.** `glance` passthrough first (no wrapper to write),
+   then the Jev-Omni FastAPI wrapper; fallback-to-provider, per-decision
+   pricing, `timing_ms` in history.
+4. **Phase 3.** Multi-option missions, fan-out health questions, the
+   uncertainty cascade.
 
 ## Risks and open questions
 
@@ -384,6 +459,12 @@ The protocol already allows what chat VLMs do badly:
 - **Privacy.** Frames leave the phone for the operator's own gateway, never a
   third party (Tier 1). Tier 2 on a hosted GPU platform is a third party —
   flag it in Settings the same way remote providers are flagged.
+- **Glance serving model.** `glance serve` is synchronous and single-request,
+  and its VLM path is not supported on CPU. It is a GPU-tier backend only,
+  and the gateway's one-in-flight rule is required, not optional.
+- **Speedlab evidence is narrow.** One Apple M5, a fixed 84-decision suite,
+  Qwen3-VL only. The rules above are adopted as defaults, and the eval screen
+  plus Phase 0 are where they are re-checked on the VPS and on real frames.
 - **Model churn.** The leaderboard is days old and has ~20 requested-but-
   unmeasured candidates. The row table + passthrough adapter keeps adding one
   cheap.
