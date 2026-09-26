@@ -117,8 +117,7 @@ still need a generator. That is the central design constraint: **split
    `scanClient()` / `scanBrowser()` — `useMonitor`, telemetry, history and the
    eval screen don't change.
 2. **Remote first, config not code.** Every server-side piece is a hosted
-   BYOK CORS proxy or an off-the-shelf proxy (Caddy, nginx, Traefik,
-   Cloudflare) configured, not programmed, in front of an inference server
+   CORS proxy or the Traefik k3s already runs, configured, not programmed, in front of an inference server
    someone else maintains. A
    backend of our own is written only where no server exists at all, and
    the trade-off is stated where it happens.
@@ -157,11 +156,10 @@ flowchart LR
     ANN -->|browser| BRW[scanBrowser action leg]
   end
 
-  CFX[Corsfix<br/>hosted BYOK CORS proxy<br/>substitutes REPLICATE_API_TOKEN]
+  CFX[hosted CORS proxy<br/>Corsfix default<br/>cors.sh or corsproxy.io alt]
 
   subgraph K3s["Hetzner VPS - k3s, config only, optional"]
-    ING[Traefik ingress<br/>TLS]
-    CAD[Caddy<br/>self-hosted alternative]
+    ING[Traefik ingress<br/>TLS, CORS, bearer check,<br/>path allowlist, token injection]
     BON[Bonsai-Llama-Jev<br/>llama-server fork<br/>/v1/systemone, CPU]
   end
 
@@ -169,7 +167,7 @@ flowchart LR
   GPU[optional GPU box<br/>Reflex 4B /v1/systemone]
 
   DEC -- "replicate dialect" --> CFX --> RP
-  DEC -. "replicate dialect, alt" .-> ING -.-> CAD -.-> RP
+  DEC -. "replicate dialect, self-hosted" .-> ING -.-> RP
   DEC -. "content dialect" .-> ING -.-> BON
   DEC -. "reflex dialect" .-> GPU
   PROV -- "/chat/completions" --> CLOUD[(user's chat VLM<br/>provider)]
@@ -292,12 +290,12 @@ Checked 2026-09-26 against each project's own server code and docs.
 |---------------------------------------|-----------------------------------------------------------------------------------------------------------------|-------------------------------------|-----------------------------------------------------------|------------------------------------------------------------------------------|-----------|
 | Jev-Omni (#1)                         | **none** — a Python `predict()` helper, CUDA, 24 GB                                                             | —                                   | —                                                         | a server has to be written                                                   | **yes**   |
 | Mapika decider-2b-vision (#2)         | decider's `serve.py` is **text-only**; a community GGUF runs under upstream `llama-server`                      | via `/completion` `multimodal_data` | `llama-server`: `--cors-origins`, `--api-key`             | TLS only (Traefik ingress); Aura renders decider's prompt (`letter` dialect) | no        |
-| Reflex 4B (#3)                        | `reflex-serve` (FastAPI, Docker image), `/v1/systemone`, CUDA 16 GB                                             | yes (`reflex`)                      | bearer key yes (`--api-key`), **CORS no**                 | CORS headers: Traefik `Headers` middleware or Caddy                          | no        |
+| Reflex 4B (#3)                        | `reflex-serve` (FastAPI, Docker image), `/v1/systemone`, CUDA 16 GB                                             | yes (`reflex`)                      | bearer key yes (`--api-key`), **CORS no**                 | CORS headers: a Traefik `Headers` middleware                                 | no        |
 | djev-spark / djev-dev (#4, #6)        | hosted `api.djev.dev` **paused**; 26B DiffusionGemma custom runtime                                             | —                                   | —                                                         | not viable today                                                             | —         |
 | Gemma 4 31B, GPT, Gemini (#5, #8–#11) | hosted chat APIs                                                                                                | yes                                 | yes                                                       | nothing — already the PROVIDER engine                                        | no        |
 | Bonsai-2-27B v2 (#7)                  | [Bonsai-Llama-Jev](https://github.com/kyr0/Bonsai-Llama-Jev), a `llama-server` fork with native `/v1/systemone` | yes (`content`)                     | **both** (`--cors-origins`, `--api-key`)                  | TLS only (Traefik ingress)                                                   | no        |
 | OpenJev 4B NLI v2 (#12)               | NLI scores, not probabilities (calibration 0, composite 0)                                                      | —                                   | —                                                         | not useful for a threshold                                                   | —         |
-| *Glance Qwen3-VL-4B (not ranked)*     | hosted on Replicate (T4, $0.00022/run); `glance serve` self-run                                                 | yes                                 | Replicate: auth yes, **CORS no**; `glance serve`: neither | hosted BYOK CORS proxy, or Caddy/nginx (below)                               | no        |
+| *Glance Qwen3-VL-4B (not ranked)*     | hosted on Replicate (T4, $0.00022/run); `glance serve` self-run                                                 | yes                                 | Replicate: auth yes, **CORS no**; `glance serve`: neither | a hosted CORS proxy, or Traefik (below)                                      | no        |
 
 Two findings reshape the plan:
 
@@ -310,52 +308,68 @@ Two findings reshape the plan:
   photos, ~10 GB) or a small Qwen3-VL GGUF on the VPS CPU. It is one
   person's fork (last commit 2026-09-24): pin a commit.
 
-### Trade-off: hosted CORS proxy vs self-hosted proxy vs a backend of our own
+### Trade-off: hosted CORS proxy vs self-hosted Traefik vs a backend of our own
 
-A hosted **BYOK CORS proxy** is a paid service that adds CORS headers and
-substitutes a secret you stored with it (your Replicate token) into the
-outgoing request, so the browser never holds that secret. Configured in a
-dashboard, not programmed.
+Hosted CORS proxies come in two kinds, and the difference is where the
+Replicate token lives:
 
-|                               | Hosted BYOK CORS proxy (Corsfix, corsproxy.dev, …)                                                              | Self-hosted config proxy (Caddy / nginx on k3s) | Backend of our own (HF Space ~80 lines, CF Worker ~40 lines) |
-|-------------------------------|-----------------------------------------------------------------------------------------------------------------|-------------------------------------------------|--------------------------------------------------------------|
-| What you run                  | **nothing** — a dashboard entry and ~$5/month                                                                   | a Caddy pod and its config on your k3s          | code: tests, dependency updates, deploys, a runtime to watch |
-| Who holds the Replicate token | the vendor (encrypted at rest, per its docs) — a new custodian                                                  | a k8s Secret on your VPS                        | the Space / Worker platform                                  |
-| Request bodies                | passed through                                                                                                  | passed through                                  | can validate, rewrite, aggregate                             |
-| Replicate model pinning       | **no** — the version is in the body                                                                             | **no** — same reason                            | yes                                                          |
-| Who can spend through it      | requests from your origin (+ a proxy key if enabled); `Origin` is forgeable outside browsers, so enable the key | holders of Aura's bearer token                  | holders of Aura's bearer token, pinned model only            |
-| Secret exfiltration           | blocked only if the secret is **scoped to `api.replicate.com`** — must be configured                            | impossible — the upstream is fixed in config    | impossible                                                   |
-| Limits                        | vendor's: e.g. Corsfix 20 s timeout, 5 MB body, 60 RPM on Hobby                                                 | yours                                           | platform's                                                   |
-| Frames pass through           | the vendor + Replicate                                                                                          | your VPS + Replicate                            | HF or Cloudflare + Replicate                                 |
-| Availability                  | the vendor's; nothing of yours to go down                                                                       | your VPS                                        | the platform's                                               |
-| Switching cost                | change a URL template in Aura settings                                                                          | same                                            | same                                                         |
+- **BYOK secret proxy** (Corsfix): you store the token with the vendor; Aura
+  sends a placeholder and the vendor substitutes it. The token never touches
+  the phone.
+- **Plain CORS proxy** (cors.sh, corsproxy.io): the vendor only adds CORS
+  headers; Aura keeps the token in localStorage and sends it itself. That is
+  exactly how Aura already treats every provider API key (`CLAUDE.md`: "The
+  API key stays in the user's localStorage"), so it adds no new trust model
+  for the device — but the vendor sees the token on every request.
 
-Verdict: **a hosted BYOK CORS proxy is the default** — it is the only option
-with nothing to run, and it gives up nothing the Caddy path had (neither can
-pin the model; both keep the token out of the browser). The price is a
-second vendor holding the Replicate token and seeing frames in transit, which
-is why the self-hosted Caddy config stays in the PRD as the fallback. Code
-remains reserved for Jev-Omni (no server exists) and, optionally, for
-server-side model pinning. Replicate's own pinning alternative is a
-*deployment*, whose URL names one model so a path rule pins it, but
-deployments bill for instance uptime, giving up $0-when-idle.
+|                              | BYOK secret proxy (Corsfix)                                                               | Plain CORS proxy (cors.sh, corsproxy.io)       | Self-hosted: Traefik on k3s                  | Backend of our own (HF Space ~80 lines, CF Worker ~40 lines) |
+|------------------------------|-------------------------------------------------------------------------------------------|------------------------------------------------|----------------------------------------------|--------------------------------------------------------------|
+| What you run                 | **nothing** — a dashboard entry, ~$5/month                                                | **nothing** — an API key, ~$5/month            | four CRDs on the Traefik k3s already runs    | code: tests, dependency updates, deploys, a runtime to watch |
+| Where the Replicate token is | vendor's secret store                                                                     | Aura's localStorage; vendor sees it in transit | in your CRDs on your VPS                     | the Space / Worker platform                                  |
+| Replicate model pinning      | **no** — the version is in the body                                                       | **no**                                         | **no**                                       | yes                                                          |
+| Who can spend through it     | your origin (+ a proxy key if it can be required); `Origin` is forgeable outside browsers | whoever holds the Replicate token              | holders of Aura's bearer token               | holders of Aura's bearer token, pinned model only            |
+| Token exfiltration           | blocked only if the secret is **scoped to `api.replicate.com`**                           | n/a — the token is already on the device       | impossible — the upstream is fixed in config | impossible                                                   |
+| Limits                       | Corsfix: 20 s timeout, 5 MB body, 60 RPM on Hobby                                         | vendor's; not documented for either            | yours                                        | platform's                                                   |
+| Frames pass through          | vendor + Replicate                                                                        | vendor + Replicate                             | your VPS + Replicate                         | HF or Cloudflare + Replicate                                 |
+| Availability                 | vendor's                                                                                  | vendor's                                       | your VPS                                     | platform's                                                   |
+| Switching cost               | a URL + header template in Aura settings                                                  | same                                           | same                                         | same                                                         |
 
-### Default: Replicate Glance 4B through a hosted BYOK CORS proxy
+Verdict: **a hosted proxy is the default** — nothing to run, and it gives up
+nothing the self-hosted path had (none of the config options can pin the
+model). **Corsfix first**, because the token never reaches the phone and its
+preflight is verified. A plain CORS proxy is the simpler alternative if
+keeping the token in Aura's localStorage — like every other provider key —
+is acceptable. Self-hosted Traefik is the fallback for keeping the token and
+frames off third-party proxies. Code stays reserved for Jev-Omni (no server
+exists) and, optionally, server-side model pinning. Replicate's own pinning
+alternative is a *deployment*, whose URL names one model, but deployments
+bill for instance uptime, giving up $0-when-idle.
+
+### Default: Replicate Glance 4B through a hosted CORS proxy
 
 Replicate's API sends no CORS headers (checked: the preflight answers `200`
 with no `Access-Control-Allow-*`), so the page can't call it directly.
 Candidates, checked 2026-09-26:
 
-| Service                                | Secret injection                                                                         | Scoping                                                                                   | Browser preflight for `POST` + `authorization, content-type, prefer` (anonymous probe) | Price                                                                 |
-|----------------------------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|-----------------------------------------------------------------------|
-| **[Corsfix](https://corsfix.com)**     | `{{SECRET_NAME}}` in request headers or query, substituted server-side                   | per "application": exact-match origins **and target domains** (default all — must narrow) | **passes**: `204`, echoes the origin, allows all three headers                         | Hobby $5/month (60 RPM/user, 25 GB); 20 s timeout, 5 MB body          |
-| [corsproxy.dev](https://corsproxy.dev) | managed upstream headers per key, injected only when `target_host` + `path_prefix` match | key locked to allowed origins; header rules bound to host/path by design                  | `405` on `OPTIONS` — a JSON `POST` may not survive preflight; verify with a key        | free tier 100 requests/day; paid tiers not published on the docs page |
-| [corsproxy.io](https://corsproxy.io)   | header rewrites on the Production plan; secret handling not documented                   | production domains per plan                                                               | `401` without a key — verify with one                                                  | Hobby $5/month, Production $29/month                                  |
-| cors.sh                                | none (its key is public by design)                                                       | origin-pinned keys                                                                        | —                                                                                      | — cannot hide the Replicate token                                     |
+| Service                                | Kind        | How Aura authenticates                                                              | Scoping                                                                                   | Browser preflight for `POST` + `authorization, content-type, prefer` (anonymous probe)  | Price                                                                                |
+|----------------------------------------|-------------|-------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
+| **[Corsfix](https://corsfix.com)**     | BYOK secret | `{{SECRET_NAME}}` placeholder in a header, substituted server-side                  | per "application": exact-match origins **and target domains** (default all — must narrow) | **passes**: `204`, echoes the origin, allows all three headers                          | Hobby $5/month (60 RPM/user, 25 GB); 20 s timeout, 5 MB body                         |
+| [cors.sh](https://cors.sh)             | plain       | `x-cors-api-key` header; the Replicate `Authorization` header from Aura             | `live_` keys pinned to your domains, `test_` keys work anywhere                           | **not probed** — this sandbox's egress policy blocks `proxy.cors.sh`; Phase 0 checks it | free tier; Pro 500,000 requests + 500 GB; runs on Cloudflare Workers, streams bodies |
+| [corsproxy.io](https://corsproxy.io)   | plain       | an API key; per-request header rewrites as query parameters (`reqHeaders=…`)        | "allowed referrers"; production domains per plan                                          | `401` without a key — verify with one                                                   | Hobby $5/month (250,000 requests, 3 domains), Production $29/month                   |
+| [corsproxy.dev](https://corsproxy.dev) | BYOK secret | managed upstream headers per key, injected when `target_host` + `path_prefix` match | key locked to allowed origins; header rules bound to host/path by design                  | `405` on `OPTIONS` — a JSON `POST` may not survive preflight; verify with a key         | free 100 requests/day; paid tiers not published                                      |
 
-**Recommended: Corsfix**, the only one verified to pass the browser preflight
-Aura needs, with secrets and target-domain scoping documented. Setup, all in
-its dashboard:
+Notes on the two plain proxies:
+
+- **cors.sh** is the cleaner of the two: a header-based key, origin-pinned
+  `live_` keys, and streaming on Cloudflare's edge. Nothing on its page says
+  it stores secrets, so the Replicate token comes from Aura.
+- **corsproxy.io** documents header rewrites only as URL query parameters.
+  Putting the Replicate token there would write it into URLs, where proxies
+  and logs keep them — so it would have to go as a normal `Authorization`
+  header, and its docs don't say whether that header is forwarded. Last
+  choice until Phase 0 shows it is.
+
+**Recommended: Corsfix.** Setup, all in its dashboard:
 
 1. Create an application: origin `https://barakplasma.github.io` (plus
    `http://localhost:3000` for `npm run dev`), target domain
@@ -384,11 +398,17 @@ If the prediction is not finished within the wait, Aura polls
 `GET …/?https://api.replicate.com/v1/predictions/{id}` through the same proxy
 until it is (cold starts). It reads `output` and `metrics.predict_time`.
 
-In Aura this is just a **URL template plus a header template** on the
-`replicate` dialect — `https://proxy.corsfix.com/?{url}` and
-`Authorization: Bearer {{REPLICATE_API_TOKEN}}` — so moving to another
-vendor, or to the self-hosted Caddy below (`https://decide.example.com{path}`
-with the real bearer), is a settings change, not a code change.
+In Aura every option is a **URL template plus a header template** on the
+`replicate` dialect:
+
+| Route               | URL template                              | Headers Aura sends                                                       |
+|---------------------|-------------------------------------------|--------------------------------------------------------------------------|
+| Corsfix             | `https://proxy.corsfix.com/?{url}`        | `Authorization: Bearer {{REPLICATE_API_TOKEN}}` (placeholder)            |
+| cors.sh             | `https://proxy.cors.sh/{url}`             | `x-cors-api-key: <proxy key>`, `Authorization: Bearer <Replicate token>` |
+| corsproxy.io        | `https://corsproxy.io/?url={url:encoded}` | its key, `Authorization: Bearer <Replicate token>` (if forwarded)        |
+| Self-hosted Traefik | `https://decide.example.com{path}`        | `Authorization: Bearer <Aura proxy token>`                               |
+
+so moving between them is a settings change, not a code change.
 
 Per the Replicate model page: an Nvidia T4, ~1 s predict (the default example:
 1.05 s predict, 1.07 s total), **$0.00022 per run — $0.22 per 1,000
@@ -406,65 +426,86 @@ Costs of this path, stated up front:
 - **Frames reach two third parties**: the proxy vendor in transit (Corsfix
   states it doesn't log bodies) and Replicate. Settings flags this the same
   way it flags a remote chat provider.
-- **The proxy vendor holds your Replicate token.** Use a dedicated Replicate
-  account or token for Aura, set a spend limit if Replicate offers one, and
-  rotate the token and the proxy key like any API key.
+- **A vendor sees your Replicate token** — stored (Corsfix) or in transit on
+  every request (cors.sh, corsproxy.io). Use a dedicated Replicate account or
+  token for Aura, set a spend limit if Replicate offers one, and rotate it
+  like any API key.
 - **Unpinned model.** See the trade-off above.
 - **Vendor timeouts.** Corsfix cuts requests at 20 s, so Aura uses
   `Prefer: wait=15` and polls instead of one long wait.
 
-### Self-hosted alternative: Caddy on k3s
+### Self-hosted alternative: Traefik only
 
-For when the token and frames should not pass through a proxy vendor. Caddy,
-behind the existing k3s Traefik ingress, adds CORS, checks Aura's bearer
-token, allows only the prediction endpoints, caps the body size, and swaps in
-the Replicate token from a k8s Secret. This file was validated with
-`caddy validate` (v2.10.2) and exercised locally: preflight `204` with CORS
-headers, `401` without the token or on any other path, and allowed calls
-reaching Replicate with the injected token.
+For keeping the token and frames off third-party proxies. k3s already runs
+Traefik as its ingress, so it does all of it — TLS, CORS, Aura's bearer check,
+the path allowlist, a body cap and injecting the Replicate token — with no
+extra pod. These CRDs are rendered from a secrets file at apply time (the two
+`${…}` values) and never committed:
 
-```caddyfile
-# deploy/decision-proxy/Caddyfile. Env from a k8s Secret:
-#   AURA_ORIGIN (e.g. https://barakplasma.github.io), AURA_PROXY_TOKEN
-#   (what Aura sends as aura.decisionKey), REPLICATE_API_TOKEN (never leaves the pod)
-:8080 {
-    header Access-Control-Allow-Origin {$AURA_ORIGIN}
-    header Vary Origin
-
-    @preflight method OPTIONS
-    handle @preflight {
-        header Access-Control-Allow-Methods "GET, POST"
-        header Access-Control-Allow-Headers "authorization, content-type, prefer"
-        header Access-Control-Max-Age 600
-        respond 204
-    }
-
-    @replicate {
-        path /v1/predictions /v1/predictions/*
-        header Authorization "Bearer {$AURA_PROXY_TOKEN}"
-    }
-    handle @replicate {
-        request_body {
-            max_size 4MB
-        }
-        reverse_proxy https://api.replicate.com {
-            header_up Host {upstream_hostport}
-            header_up Authorization "Bearer {$REPLICATE_API_TOKEN}"
-        }
-    }
-
-    handle {
-        respond 401
-    }
-}
+```yaml
+# deploy/decision-proxy/traefik.yaml, rendered with envsubst from a SOPS file
+apiVersion: v1
+kind: Service
+metadata: { name: replicate-api, namespace: aura }
+spec:
+  type: ExternalName          # needs allowExternalNameServices: true on Traefik's
+  externalName: api.replicate.com  # kubernetesCRD provider (a k3s HelmChartConfig)
+  ports: [{ name: https, port: 443 }]
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: { name: aura-cors, namespace: aura }
+spec:
+  headers:                    # also answers preflights itself
+    accessControlAllowOriginList: ["https://barakplasma.github.io"]
+    accessControlAllowMethods: [GET, POST]
+    accessControlAllowHeaders: [authorization, content-type, prefer]
+    accessControlMaxAge: 600
+    addVaryHeader: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: { name: aura-body-limit, namespace: aura }
+spec:
+  buffering: { maxRequestBodyBytes: 4000000 }
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: { name: replicate-auth, namespace: aura }
+spec:
+  headers:
+    customRequestHeaders: { Authorization: "Bearer ${REPLICATE_API_TOKEN}" }
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata: { name: aura-decide, namespace: aura }
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`decide.example.com`) && Method(`OPTIONS`)
+      middlewares: [{ name: aura-cors }]
+      services: [{ name: replicate-api, port: 443, scheme: https, passHostHeader: false }]
+    - match: >-
+        Host(`decide.example.com`)
+        && (Path(`/v1/predictions`) || PathPrefix(`/v1/predictions/`))
+        && Header(`Authorization`, `Bearer ${AURA_PROXY_TOKEN}`)
+      middlewares: [{ name: aura-cors }, { name: aura-body-limit }, { name: replicate-auth }]
+      services: [{ name: replicate-api, port: 443, scheme: https, passHostHeader: false }]
 ```
 
-The nginx equivalent is the stock image's `templates/` envsubst plus
-`proxy_set_header Authorization "Bearer ${REPLICATE_API_TOKEN}"`, an
-`if ($http_authorization != ...)` check and `add_header ... always` for
-CORS — also config only. Traefik alone can do the CORS part (`Headers`
-middleware) but can't read the Replicate token from a Secret into a header,
-so Caddy stays in the chain for this path.
+The same routers and middlewares, written for Traefik's file provider, were
+run on Traefik v3.5.3 against the real API: the preflight got `200` with the
+CORS headers (answered by the middleware), requests without the token or on
+any other path got `404`, an allowed request reached Replicate with the
+injected token, and a 5 MB body got `413`. The CRD form itself (the
+ExternalName upstream in particular) is verified in Phase 0 on the cluster.
+
+The cost of Traefik-only: its middlewares can't read a k8s Secret into a
+header, so both tokens sit in CRD objects rather than Secrets — hence
+rendering from an encrypted file at apply time, and RBAC that treats
+`middlewares.traefik.io` and `ingressroutes.traefik.io` in the `aura`
+namespace as secret-bearing. Unmatched requests get Traefik's `404`, not
+`401`.
 
 **Alternative with no infrastructure at all:** an operator-owned private
 Hugging Face Space (~80 lines, derived from the
@@ -556,7 +597,7 @@ camera, worst case — a scan every 5 s, nothing skipped by the gate:
 | Setup                                          | Scans / hour | Hourly cost                              | Effective $ / 1K  |
 |------------------------------------------------|--------------|------------------------------------------|-------------------|
 | **Default: Corsfix → Replicate Glance 4B**     | 720          | ~$0.16 + $5/month flat, $0 per idle hour | 0.22 + proxy plan |
-| Caddy on k3s → Replicate Glance 4B             | 720          | ~$0.16, $0 when idle                     | 0.22              |
+| Traefik on k3s → Replicate Glance 4B           | 720          | ~$0.16, $0 when idle                     | 0.22              |
 | Self-hosted: Bonsai-Llama-Jev on VPS CPU       | 720          | $0 marginal                              | ~0                |
 | Own GPU kept warm (~$0.8–2/h), Reflex/Jev-Omni | 720          | $0.8–2                                   | $1.1–2.8          |
 | Hosted Gemma 4 31B chat VLM (benchmark rate)   | 720          | ~$0.06                                   | 0.08              |
@@ -586,7 +627,7 @@ configured) re-runs that scan on the PROVIDER engine.
 | `src/screens/HistoryScreen.jsx`     | Show backend timing (`timing_ms` or Replicate `metrics`) next to latency when present.                                                                                                                                                                         |
 | `test/decision.test.js` (new)       | Golden fixtures per dialect, the three question paths, threshold semantics, fan-out, polling, fallback, CORS/401 errors.                                                                                                                                       |
 | `docs/decision-proxy.md` (new)      | Corsfix setup steps (application origins, target domain `api.replicate.com` only, secret, proxy key) and how to verify the scoping. Configuration only.                                                                                                        |
-| `deploy/decision-proxy/` (optional) | The Caddyfile above, a k8s Deployment/Service/Secret/Ingress for it, and a README. Configuration only.                                                                                                                                                         |
+| `deploy/decision-proxy/` (optional) | The Traefik CRDs above, rendered from an encrypted secrets file at apply time, and a README. Configuration only.                                                                                                                                               |
 | `deploy/bonsai-llama-jev/` (later)  | k8s manifests for the self-hosted server (image build from a pinned commit, `--cors-origins`, `--api-key-file`, Ingress). Configuration only.                                                                                                                  |
 
 Settings keys, following the existing `aura.*` localStorage pattern:
@@ -628,8 +669,9 @@ The protocol already allows what chat VLMs do badly:
    prove the scoping: a request through it to any host other than
    `api.replicate.com` carrying `{{REPLICATE_API_TOKEN}}` must be refused, and
    find out whether a request with a forged `Origin` but no proxy key is
-   refused (step 3). Then, from a browser on the Aura
-   origin, measure through it: warm p50/p95 over
+   refused (step 3). Probe cors.sh's preflight the same way (this sandbox
+   couldn't reach it) as the plain-proxy alternative. Then, from a browser on
+   the Aura origin, measure through Corsfix: warm p50/p95 over
    ~100 scans of 640×480 frames, cold-start time after an idle hour, and
    per-run cost from Replicate's dashboard; run the same frames through the
    current PROVIDER model for an accuracy comparison. In parallel, build the
@@ -662,7 +704,7 @@ The protocol already allows what chat VLMs do badly:
 - **Proxy vendor custody.** The hosted proxy holds the Replicate token and sees
   frames. A misconfigured target domain ("all domains") turns it into a
   token-exfiltration relay — Phase 0 tests this before anything else. Small
-  vendors come and go; switching is a URL template, and Caddy is the
+  vendors come and go; switching is a URL template, and Traefik is the
   self-hosted fallback.
 - **Model availability.** `untapped/glance-qwen3-vl-4b` is a community model
   (918 runs when read); its owner can change or delete it, as already
