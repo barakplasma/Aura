@@ -321,23 +321,24 @@ twelve ranked systems is published there.** The only typed-decision image
 model on Replicate is Glance's `untapped/glance-qwen3-vl-4b`, which the
 benchmark didn't rank.
 
-| System (rank)                         | On the ARM k3s (CPU)                                                                                                                                                                      | On Replicate                                                                                     | Likely home                      |
-|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|----------------------------------|
-| **Mapika decider-2b-vision (#2)**     | **Yes, most likely.** 2B; community GGUF at Q8_0 is 2.0 GB + 0.36 GB projector; upstream `llama-server` builds on arm64 and has CORS + API keys built in. Latency on ARM cores unmeasured | not published; would fit a T4 as a Cog push                                                      | **self-hosted**                  |
-| Bonsai-2-27B v2 (#7)                  | server runs on CPU, but a 27B model on ARM cores is likely far too slow (its 0.8 s p50 was on a GPU); ~7.6 GB of weights                                                                  | not published; ~10 GB VRAM with llama.cpp CUDA fits a T4/L4 Cog image                            | Replicate, if pushed             |
-| Reflex 4B (#3)                        | no — CUDA-only server (16 GB GPU), Triton kernels                                                                                                                                         | not published; already ships a Dockerfile + FastAPI server, the easiest GPU model to port to Cog | Replicate, if pushed             |
-| Jev-Omni (#1)                         | no — CUDA-only, 24 GB bf16                                                                                                                                                                | not published; needs an L40S-class GPU and a predictor we write (it has no server at all)        | Replicate, if pushed (costliest) |
-| djev-spark / djev-dev (#4, #6)        | no — 26B DiffusionGemma custom runtime                                                                                                                                                    | not published; its own hosted API is paused                                                      | neither today                    |
-| OpenJev 4B NLI v2 (#12)               | not useful — no probabilities for the threshold                                                                                                                                           | —                                                                                                | neither                          |
-| Gemma 4 31B, GPT, Gemini (#5, #8–#11) | —                                                                                                                                                                                         | — (already hosted APIs)                                                                          | PROVIDER engine, BYOK today      |
-| *Glance Qwen3-VL-4B (unranked)*       | no — Glance's VLM path needs CUDA or Apple silicon                                                                                                                                        | **published**: T4, ~1 s, $0.00022/run                                                            | **Replicate, today**             |
+| System (rank)                         | On the ARM k3s (CPU)                                                                                                                                                                      | On Replicate                                                                                     | Likely home                 |
+|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|-----------------------------|
+| **Mapika decider-2b-vision (#2)**     | **Yes, most likely.** 2B; community GGUF at Q8_0 is 2.0 GB + 0.36 GB projector; upstream `llama-server` builds on arm64 and has CORS + API keys built in. Latency on ARM cores unmeasured | not published; would fit a T4 as a Cog push                                                      | **self-hosted**             |
+| Bonsai-2-27B v2 (#7)                  | server runs on CPU, but a 27B model on ARM cores is likely far too slow (its 0.8 s p50 was on a GPU); ~7.6 GB of weights                                                                  | not published; ~10 GB VRAM with llama.cpp CUDA fits a T4/L4 Cog image                            | Replicate, if pushed        |
+| Reflex 4B (#3)                        | no — CUDA-only server (16 GB GPU), Triton kernels                                                                                                                                         | not published; already ships a Dockerfile + FastAPI server, the easiest GPU model to port to Cog | Replicate, if pushed        |
+| Jev-Omni (#1)                         | no — CUDA-only, 24 GB bf16                                                                                                                                                                | **being published** as public `barakplasma/jev-omni` (L40S), from `deploy/replicate/jev-omni/`   | **Replicate**               |
+| djev-spark / djev-dev (#4, #6)        | no — 26B DiffusionGemma custom runtime                                                                                                                                                    | not published; its own hosted API is paused                                                      | neither today               |
+| OpenJev 4B NLI v2 (#12)               | not useful — no probabilities for the threshold                                                                                                                                           | —                                                                                                | neither                     |
+| Gemma 4 31B, GPT, Gemini (#5, #8–#11) | —                                                                                                                                                                                         | — (already hosted APIs)                                                                          | PROVIDER engine, BYOK today |
+| *Glance Qwen3-VL-4B (unranked)*       | no — Glance's VLM path needs CUDA or Apple silicon                                                                                                                                        | **published**: T4, ~1 s, $0.00022/run                                                            | **Replicate, today**        |
 
 So: **decider-2b-vision is the benchmarked model most likely to run
 self-hosted**, and it is the only one that plausibly runs on the ARM node at
 all. **No benchmarked model runs on Replicate today.** Glance 4B is the
-Replicate default until one is pushed. The candidates to push are Reflex
-(easiest: it already ships a container) and Jev-Omni (most accurate on
-everyday photos, 96.8 %, but a GPU class up and a predictor to write).
+Replicate default until one is pushed. Jev-Omni, the #1 system and the most
+accurate on everyday photos (96.8 %), is being published as
+`barakplasma/jev-omni` (below); Reflex is the next easiest to push, since it
+already ships a container.
 
 A push must be a **public** Replicate model to stay BYOK. Each Aura user then
 runs it with their own token and pays only predict time. A private model or
@@ -705,15 +706,38 @@ which a Traefik `Headers` middleware (`accessControlAllowOriginList`,
 16 GB CUDA GPU, so it only makes sense on a GPU box you already have or rent
 by the hour.
 
-### The one backend that needs code: Jev-Omni
+### The one backend that needs code: Jev-Omni on Replicate
 
-Jev-Omni has no server of any kind. Using it means writing and owning a
-~100-line FastAPI wrapper around `load_jev_omni().predict(media=...,
-modality="image")` that serves `/v1/systemone` (it could adopt the `reflex`
-dialect so Aura needs no new adapter), plus a 24 GB+ GPU (L40S/A100 class).
-That is the trade-off in its purest form: the most accurate open model on the
-benchmark's everyday photos (96.8 %), bought with code, a GPU bill and
-another runtime. Deferred until the eval screen shows the cheaper paths miss.
+Jev-Omni has no server of any kind, so it is the one model that needs code: a
+Cog predictor, `deploy/replicate/jev-omni/`, published as the **public**
+Replicate model [`barakplasma/jev-omni`](https://replicate.com/barakplasma/jev-omni)
+on an L40S (48 GB; the model is 24 GB in bf16). Public keeps it BYOK: every
+caller runs it with their own Replicate token and pays only for their own
+predict time. The owner is billed only for their own runs, never for other
+users' runs or for idle time.
+
+- **Same dialect as Glance.** Inputs are `question`, `question_type`
+  (`yes_no` | `choice`), `options_json`, and `image` or `image_base64`
+  (plus an optional `state` text context). The output is `{answer,
+  confidence, probabilities: [{label, probability}]}`. So Aura's `replicate`
+  adapter serves both; a model row differs only in its version id and price.
+- **Pinned and checked.** `setup()` downloads `akhilaaa3/Jev-Omni` at revision
+  `5addda86…`, checks the sha256 of the two files it executes or
+  deserialises (`jev_omni.py`, `head.pt`) against the repo's own
+  `sha256.json`, and loads the head with `weights_only=True`. The upstream
+  loader always fetches the latest revision, so the predictor assembles the
+  same pieces from the pinned snapshot itself.
+- **Refuses to serve a wrong stack.** After loading, it runs the model's own
+  `verification.json` cases and fails setup if any probability drifts more
+  than 0.05 from the published reference.
+- **Weights are fetched at boot, not baked in.** That keeps the image small
+  enough to build on a GitHub runner, at the price of a slow cold boot:
+  ~24 GB downloaded, not billed to anyone for a public model. Aura's
+  fallback-to-provider covers it.
+- **Built by CI.** `.github/workflows/replicate-jev-omni.yml` runs the
+  predictor's unit tests, then `cog push` (Cog 0.23.0) whenever
+  `deploy/replicate/jev-omni/**` changes. It needs the repository secret
+  `REPLICATE_CLI_AUTH_TOKEN`; without it, the job stops green with a notice.
 
 ### Cost reality
 
@@ -751,6 +775,7 @@ configured) re-runs that scan on the PROVIDER engine.
 | `src/screens/MissionScreen.jsx`                        | Decision question field + "Compile from mission" button.                                                                                                                                                                                                       |
 | `src/App.jsx`                                          | `providerReady` for DECISION = endpoint URL + model row; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                                                                                          |
 | `src/screens/HistoryScreen.jsx`                        | Show backend timing (`timing_ms` or Replicate `metrics`) next to latency when present.                                                                                                                                                                         |
+| `deploy/replicate/jev-omni/` (new)                     | Cog predictor for the public `barakplasma/jev-omni` model (pinned revision, hash checks, self-verification), its unit tests, and `.github/workflows/replicate-jev-omni.yml` that pushes it.                                                                    |
 | `test/decision.test.js` (new)                          | Golden fixtures per dialect, the three question paths, threshold semantics, fan-out, polling, fallback, CORS/401 errors.                                                                                                                                       |
 | homelab-manifests `apps/aura-relay/` (new, other repo) | The chart above (no secrets, no pods) plus `bootstrap/traefik/helmchartconfig.yaml`; the namespace and Argo CD `Application` are created out-of-band like the repo's other apps. Configuration only.                                                           |
 | `deploy/bonsai-llama-jev/` (later)                     | k8s manifests for the self-hosted server (image build from a pinned commit, `--cors-origins`, `--api-key-file`, Ingress). Configuration only.                                                                                                                  |

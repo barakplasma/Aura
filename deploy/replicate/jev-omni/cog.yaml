@@ -1,0 +1,11 @@
+# Jev-Omni (akhilaaa3/Jev-Omni, Apache-2.0) as a public Replicate model:
+# r8.im/barakplasma/jev-omni. Public so every caller pays for their own
+# runs with their own token (BYOK) - see docs/PRD-decision-engine.md.
+# Weights (~24 GB) are not baked into the image; setup() downloads a
+# pinned revision, so the image stays small enough to build on a GitHub
+# runner.
+build:
+  gpu: true
+  python_version: "3.12"
+  python_requirements: requirements.txt
+predict: "predict.py:Predictor"
