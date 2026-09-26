@@ -11,9 +11,8 @@ import binascii
 import hashlib
 import importlib
 import json
-import os
-import sys
 import pathlib
+import sys
 import tempfile
 
 from cog import BasePredictor, Input, Path
@@ -92,7 +91,6 @@ def verification_drift(got: dict[str, float], reference: dict[str, float]) -> fl
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
-        os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
         import torch
         import transformers
         from huggingface_hub import snapshot_download
