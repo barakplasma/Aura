@@ -6,6 +6,9 @@
 # runner.
 build:
   gpu: true
+  # Cog 0.23 has no CUDA mapping for torch 2.14; pin it to match the
+  # +cu126 wheels in requirements.txt.
+  cuda: "12.6"
   python_version: "3.12"
   python_requirements: requirements.txt
 run: "predict.py:Predictor"
