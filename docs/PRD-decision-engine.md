@@ -160,20 +160,21 @@ flowchart LR
 
   CFX[hosted plain CORS proxy<br/>Corsfix, cors.sh, corsproxy.io<br/>optional, no secrets]
 
-  subgraph K3s["Operator's Hetzner VPS - k3s, config only"]
-    ING[Traefik pass-through<br/>TLS, CORS, path allowlist,<br/>rate limit, no secrets]
+  subgraph K3s["homelab k3s - apps/aura-relay, config only"]
+    CFT[cloudflare-tunnel Ingress<br/>aura-relay.526462738.xyz]
+    ING[Traefik IngressRoute<br/>CORS, path allowlist,<br/>rate limit, no secrets]
   end
 
   subgraph Own["User's own server, optional - their endpoint + key"]
-    BON[Bonsai-Llama-Jev<br/>llama-server fork<br/>/v1/systemone, CORS built in]
-    GPU[Reflex 4B<br/>/v1/systemone, GPU]
+    BON[decider-2b-vision Q8_0<br/>llama-server on ARM CPU<br/>CORS + API key built in]
+    GPU[Reflex 4B or Jev-Omni<br/>needs a GPU]
   end
 
   RP[Replicate<br/>untapped/glance-qwen3-vl-4b<br/>billed to the user's account]
 
-  DEC -- "replicate dialect<br/>user's own r8_ token" --> ING --> RP
+  DEC -- "replicate dialect<br/>user's own r8_ token" --> CFT --> ING --> RP
   DEC -. "alt relay URL" .-> CFX -.-> RP
-  DEC -. "content / reflex dialect" .-> Own
+  DEC -. "letter / content / reflex dialect" .-> Own
   PROV -- "/chat/completions" --> CLOUD[(user's chat VLM<br/>provider)]
 ```
 
@@ -183,7 +184,7 @@ flowchart LR
 sequenceDiagram
   participant M as useMonitor
   participant D as lib/decision.js
-  participant C as relay (Traefik pass-through)
+  participant C as aura-relay.526462738.xyz
   participant R as Replicate (Glance Qwen3-VL-4B)
   participant P as announcer (provider)
 
@@ -312,6 +313,40 @@ Two findings reshape the plan:
   photos, ~10 GB) or a small Qwen3-VL GGUF on the VPS CPU. It is one
   person's fork (last commit 2026-09-24): pin a commit.
 
+### Where each benchmarked model can run: your k3s or Replicate
+
+"Self-hosted" here means the operator's Hetzner ARM k3s node: CPU only, no
+GPU. Replicate was searched by name and topic on 2026-09-26: **none of the
+twelve ranked systems is published there.** The only typed-decision image
+model on Replicate is Glance's `untapped/glance-qwen3-vl-4b`, which the
+benchmark didn't rank.
+
+| System (rank)                         | On the ARM k3s (CPU)                                                                                                                                                                      | On Replicate                                                                                     | Likely home                      |
+|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|----------------------------------|
+| **Mapika decider-2b-vision (#2)**     | **Yes, most likely.** 2B; community GGUF at Q8_0 is 2.0 GB + 0.36 GB projector; upstream `llama-server` builds on arm64 and has CORS + API keys built in. Latency on ARM cores unmeasured | not published; would fit a T4 as a Cog push                                                      | **self-hosted**                  |
+| Bonsai-2-27B v2 (#7)                  | server runs on CPU, but a 27B model on ARM cores is likely far too slow (its 0.8 s p50 was on a GPU); ~7.6 GB of weights                                                                  | not published; ~10 GB VRAM with llama.cpp CUDA fits a T4/L4 Cog image                            | Replicate, if pushed             |
+| Reflex 4B (#3)                        | no — CUDA-only server (16 GB GPU), Triton kernels                                                                                                                                         | not published; already ships a Dockerfile + FastAPI server, the easiest GPU model to port to Cog | Replicate, if pushed             |
+| Jev-Omni (#1)                         | no — CUDA-only, 24 GB bf16                                                                                                                                                                | not published; needs an L40S-class GPU and a predictor we write (it has no server at all)        | Replicate, if pushed (costliest) |
+| djev-spark / djev-dev (#4, #6)        | no — 26B DiffusionGemma custom runtime                                                                                                                                                    | not published; its own hosted API is paused                                                      | neither today                    |
+| OpenJev 4B NLI v2 (#12)               | not useful — no probabilities for the threshold                                                                                                                                           | —                                                                                                | neither                          |
+| Gemma 4 31B, GPT, Gemini (#5, #8–#11) | —                                                                                                                                                                                         | — (already hosted APIs)                                                                          | PROVIDER engine, BYOK today      |
+| *Glance Qwen3-VL-4B (unranked)*       | no — Glance's VLM path needs CUDA or Apple silicon                                                                                                                                        | **published**: T4, ~1 s, $0.00022/run                                                            | **Replicate, today**             |
+
+So: **decider-2b-vision is the benchmarked model most likely to run
+self-hosted**, and it is the only one that plausibly runs on the ARM node at
+all. **No benchmarked model runs on Replicate today.** Glance 4B is the
+Replicate default until one is pushed. The candidates to push are Reflex
+(easiest: it already ships a container) and Jev-Omni (most accurate on
+everyday photos, 96.8 %, but a GPU class up and a predictor to write).
+
+A push must be a **public** Replicate model to stay BYOK. Each Aura user then
+runs it with their own token and pays only predict time. A private model or
+deployment bills its owner for uptime: one account paying for everyone.
+
+A self-hosted decider on the operator's k3s is the operator's own endpoint and
+key, the same as a local Ollama. Other Aura users bring their own server, or
+use Replicate with their own token.
+
 ### BYOK: every user brings their own Replicate token
 
 Aura is BYOK: each user's provider key lives in their own localStorage and
@@ -355,27 +390,105 @@ the choice for an operator without a server — then Corsfix in plain mode
 `authorization, content-type, prefer`), bearing in mind its per-user pricing
 scales with Aura's audience.
 
-### Default relay: Traefik pass-through
+### Default relay: `aura-relay.526462738.xyz` in homelab-manifests
 
-k3s already runs Traefik, so this is four CRDs and no extra pod. No token
-appears anywhere in them:
+The relay lives in the operator's
+[homelab-manifests](https://github.com/barakplasma/homelab-manifests) repo
+as one more Argo CD-reconciled chart, `apps/aura-relay/`, following the
+repo's existing conventions:
+
+- **Public path** is the same as `convertx` and `babybuddy`: the STRRL
+  `cloudflare-tunnel` Ingress (which manages DNS and TLS) fronts Traefik
+  through an ExternalName `traefik-proxy` Service, and a Traefik
+  `IngressRoute` on the `web` entryPoint does the routing. TLS ends at
+  Cloudflare.
+- **No Deployment, no PVC, no Secret.** The chart renders two ExternalName
+  Services, the Ingress, three Middlewares and one IngressRoute — seven
+  objects, all in namespace `aura-relay`. It uses the repo's `charts/common`
+  library for the Services and the Ingress.
+- **No Cloudflare Access** on this host, unlike the repo's other apps: Aura
+  calls it with cross-origin `fetch()`, which can't complete an Access
+  login. Each user's own Replicate token is the authentication.
+- **Rate limit keyed on `CF-Connecting-IP`.** Behind the tunnel every
+  request reaches Traefik from `cloudflared`, so a per-source-IP limit would
+  be one bucket for all users.
+- **Out-of-band, like the repo's PVCs:** the `aura-relay` namespace, the Argo
+  CD `Application`, and one k3s `HelmChartConfig` that sets
+  `allowExternalNameServices: true` on Traefik's `kubernetesCRD` provider,
+  so an IngressRoute may target `api.replicate.com` (kept in
+  `bootstrap/traefik/`).
+
+`apps/aura-relay/values.yaml`:
 
 ```yaml
-# deploy/decision-proxy/traefik.yaml — no secrets; safe to commit
-apiVersion: v1
-kind: Service
-metadata: { name: replicate-api, namespace: aura }
-spec:
-  type: ExternalName               # needs allowExternalNameServices: true on
-  externalName: api.replicate.com  # Traefik's kubernetesCRD provider (k3s HelmChartConfig)
-  ports: [{ name: https, port: 443 }]
+# BYOK relay for Aura's DECISION engine (Aura docs/PRD-decision-engine.md).
+# Every Aura user sends their OWN Replicate token; this chart forwards it
+# unchanged and holds no credential. Never add a token here - a stored or
+# injected key would bill one account for every Aura user.
+#
+# No Deployment: Traefik (k3s-bundled, kube-system) does all the work.
+# Needs allowExternalNameServices on Traefik's kubernetesCRD provider -
+# see bootstrap/traefik/helmchartconfig.yaml.
+namespaceOverride: aura-relay
+nameOverride: aura-relay
+
+host: aura-relay.526462738.xyz
+# Aura is served from GitHub Pages; the Origin header is scheme+host only.
+auraOrigin: https://barakplasma.github.io
+
+rateLimit:
+  average: 2   # requests/second per end-user IP
+  burst: 10
+
+maxRequestBodyBytes: 4000000   # a 640x480 JPEG as base64 is ~100 KB
+
+# Additional Services (rendered via common.serviceSpec).
+services:
+  # Upstream: Replicate's API, reached through Traefik as an ExternalName.
+  replicate-api:
+    type: ExternalName
+    externalName: api.replicate.com
+    ports:
+      - name: https
+        port: 443
+  # Same pattern as convertx/babybuddy: the cloudflare-tunnel Ingress
+  # fronts Traefik, which owns routing and the middlewares below.
+  traefik-proxy:
+    type: ExternalName
+    externalName: traefik.kube-system.svc.cluster.local
+    ports:
+      - name: web
+        port: 80
+
+# Public entry: STRRL cloudflare-tunnel Ingress (manages DNS + TLS).
+# NO Cloudflare Access on this host - the browser calls it cross-origin
+# with fetch(), which can't complete an Access login; the per-user
+# Replicate token is the authentication.
+ingress:
+  nameOverride: cloudflare-tunnel
+  host: aura-relay.526462738.xyz
+  serviceName: traefik-proxy
+  servicePort: 80
+```
+
+`apps/aura-relay/templates/resources.yaml`:
+
+```yaml
+{{- $ns := .Values.namespaceOverride | default .Release.Namespace }}
+{{- range $name, $svc := .Values.services }}
+{{ include "common.serviceSpec" (merge (dict "name" $name "svc" $svc) $) }}
+---
+{{- end }}
+{{ include "common.ingress" . }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
-metadata: { name: aura-cors, namespace: aura }
+metadata:
+  name: aura-relay-cors
+  namespace: {{ $ns }}
 spec:
-  headers:                         # also answers preflights itself
-    accessControlAllowOriginList: ["https://barakplasma.github.io"]
+  headers:  # also answers CORS preflights itself
+    accessControlAllowOriginList: [{{ .Values.auraOrigin | quote }}]
     accessControlAllowMethods: [GET, POST]
     accessControlAllowHeaders: [authorization, content-type, prefer]
     accessControlMaxAge: 600
@@ -383,50 +496,94 @@ spec:
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
-metadata: { name: aura-body-limit, namespace: aura }
+metadata:
+  name: aura-relay-body-limit
+  namespace: {{ $ns }}
 spec:
-  buffering: { maxRequestBodyBytes: 4000000 }
+  buffering:
+    maxRequestBodyBytes: {{ .Values.maxRequestBodyBytes }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
-metadata: { name: aura-ratelimit, namespace: aura }
+metadata:
+  name: aura-relay-ratelimit
+  namespace: {{ $ns }}
 spec:
-  rateLimit: { average: 2, burst: 10 }   # per client IP
+  rateLimit:
+    average: {{ .Values.rateLimit.average }}
+    burst: {{ .Values.rateLimit.burst }}
+    sourceCriterion:
+      # Behind Cloudflare Tunnel every request arrives from cloudflared;
+      # the end user's IP is only in this header.
+      requestHeaderName: CF-Connecting-IP
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
-metadata: { name: aura-decide, namespace: aura }
+metadata:
+  name: aura-relay
+  namespace: {{ $ns }}
 spec:
-  entryPoints: [websecure]
+  entryPoints: [web]  # TLS terminates at Cloudflare
   routes:
-    - match: >-
-        Host(`decide.example.com`) && Method(`OPTIONS`)
-        && Header(`Origin`, `https://barakplasma.github.io`)
-      middlewares: [{ name: aura-cors }]
-      services: [{ name: replicate-api, port: 443, scheme: https, passHostHeader: false }]
-    - match: >-
-        Host(`decide.example.com`)
-        && Header(`Origin`, `https://barakplasma.github.io`)
-        && (Path(`/v1/predictions`) || PathPrefix(`/v1/predictions/`))
-        && HeaderRegexp(`Authorization`, `^Bearer r8_[A-Za-z0-9]+$`)
-      middlewares: [{ name: aura-cors }, { name: aura-body-limit }, { name: aura-ratelimit }]
-      services: [{ name: replicate-api, port: 443, scheme: https, passHostHeader: false }]
+    - kind: Rule
+      match: Host(`{{ .Values.host }}`) && Method(`OPTIONS`) && Header(`Origin`, `{{ .Values.auraOrigin }}`)
+      middlewares:
+        - name: aura-relay-cors
+      services:
+        - name: replicate-api
+          port: 443
+          scheme: https
+          passHostHeader: false
+    - kind: Rule
+      match: Host(`{{ .Values.host }}`) && Header(`Origin`, `{{ .Values.auraOrigin }}`) && (Path(`/v1/predictions`) || PathPrefix(`/v1/predictions/`)) && HeaderRegexp(`Authorization`, `^Bearer r8_[A-Za-z0-9]+$`)
+      middlewares:
+        - name: aura-relay-cors
+        - name: aura-relay-body-limit
+        - name: aura-relay-ratelimit
+      services:
+        - name: replicate-api
+          port: 443
+          scheme: https
+          passHostHeader: false
 ```
 
-The same routers and middlewares, written for Traefik's file provider, were
-run on Traefik v3.5.3 against the real API:
+`bootstrap/traefik/helmchartconfig.yaml`:
 
-- the preflight got `200` with the CORS headers (answered by the middleware);
-- a request carrying a user's (fake) `r8_…` token was forwarded unchanged —
-  Replicate itself answered `401 … not a valid authentication token`;
-- no token, another origin, or another path (e.g. `/v1/account`) got `404`;
-- a 5 MB body got `413`; a burst of 14 requests got `429` after 12.
+```yaml
+# Applied out-of-band (k3s owns the Traefik HelmChart in kube-system).
+# Lets IngressRoutes target ExternalName Services - needed by
+# apps/aura-relay to reach api.replicate.com.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    providers:
+      kubernetesCRD:
+        allowExternalNameServices: true
+```
 
-The CRD form itself (the ExternalName upstream in particular) is verified in
-Phase 0 on the cluster. The `Origin` match is not security — any script can
-send it — it just keeps other websites from using the relay from their
-visitors' browsers; the path allowlist and the per-IP rate limit are what
-bound abuse, and an abuser can only ever spend their own Replicate token.
+Verified so far:
+
+- **The chart:** in a scratch copy of the repo, `helm lint apps/aura-relay`
+  passes and `helm template` renders the seven objects above in `aura-relay`.
+- **The routing and middlewares:** the same routers and middlewares, as
+  Traefik file-provider config, ran on Traefik v3.5.3 against the real API.
+  - The preflight got `200` with the CORS headers, answered by the middleware.
+  - A user's (fake) `r8_…` token was forwarded unchanged; Replicate itself
+    rejected it.
+  - No token, another origin, or another path (e.g. `/v1/account`) got `404`.
+  - A 5 MB body got `413`.
+  - A burst from one `CF-Connecting-IP` got `429` while a second
+    `CF-Connecting-IP` from the same connection still went through.
+
+The in-cluster pieces — ExternalName upstream via the HelmChartConfig,
+Cloudflare's tunnel in front — are Phase 0. The `Origin` match is not
+security (any script can send it); it keeps other websites from using the
+relay from their visitors' browsers. The path allowlist and the rate limit
+bound abuse, and an abuser can only spend their own Replicate token.
 
 ### What Aura sends
 
@@ -449,7 +606,7 @@ The relay is a **URL template** in Settings, defaulting to the operator's:
 
 | Relay                    | URL template                              | Extra header                                                                         |
 |--------------------------|-------------------------------------------|--------------------------------------------------------------------------------------|
-| Operator's Traefik       | `https://decide.example.com{path}`        | —                                                                                    |
+| Operator's Traefik       | `https://aura-relay.526462738.xyz{path}`  | —                                                                                    |
 | Corsfix, plain mode      | `https://proxy.corsfix.com/?{url}`        | — (origin allowlist; no secrets configured)                                          |
 | cors.sh                  | `https://proxy.cors.sh/{url}`             | `x-cors-api-key: <operator's live_ key>` — public by design, pinned to Aura's origin |
 | corsproxy.io             | `https://corsproxy.io/?url={url:encoded}` | its key; whether it forwards `Authorization` is undocumented                         |
@@ -582,21 +739,21 @@ configured) re-runs that scan on the PROVIDER engine.
 
 ## Aura changes
 
-| File                               | Change                                                                                                                                                                                                                                                         |
-|------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `lib/decision.js` (new)            | `scanDecision()`, `missionToQuestion()`, and the dialect adapters (`replicate`, `content`, `reflex`, `glance`, `letter`) as pure `toRequest` / `fromResponse` pairs, plus polling for `replicate`. Plain `fetch` + `AbortController`. Reuses `runAlertLegs()`. |
-| `lib/decision-models.js` (new)     | One row per model: id, label, `dialect`, endpoint path, pinned version where one exists, max options, per-run price, benchmark snapshot with source URL + read date. A row, not a branch — same rule as `browser-models.js`.                                   |
-| `lib/aura.js`                      | Export a `callProvider`-based `runProviderLeg()` so the DECISION engine can announce through the configured provider.                                                                                                                                          |
-| `lib/pricing.js`                   | `perDecision` rate from the row (Replicate: $0.00022 / run) or manual; `costForUsage()` handles `usage.decisions`.                                                                                                                                             |
-| `lib/eval.js`                      | Accept `engine: 'decision'` in the matrix — decision models run beside chat VLMs on the same images.                                                                                                                                                           |
-| `src/hooks/useMonitor.js`          | Dispatch on `engine === 'decision'`; fallback-to-provider on transport error when enabled.                                                                                                                                                                     |
-| `src/screens/SettingsScreen.jsx`   | DECISION card: the user's own key (Replicate token or self-hosted server key), relay URL template (defaults to the operator's), model row, announcer, fallback toggle, and a notice that the key and frames pass through the relay.                            |
-| `src/screens/MissionScreen.jsx`    | Decision question field + "Compile from mission" button.                                                                                                                                                                                                       |
-| `src/App.jsx`                      | `providerReady` for DECISION = endpoint URL + model row; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                                                                                          |
-| `src/screens/HistoryScreen.jsx`    | Show backend timing (`timing_ms` or Replicate `metrics`) next to latency when present.                                                                                                                                                                         |
-| `test/decision.test.js` (new)      | Golden fixtures per dialect, the three question paths, threshold semantics, fan-out, polling, fallback, CORS/401 errors.                                                                                                                                       |
-| `deploy/decision-proxy/` (new)     | The Traefik pass-through CRDs above (no secrets, committed as-is), the k3s `HelmChartConfig` enabling ExternalName services, and a README covering the alternative relay URLs. Configuration only.                                                             |
-| `deploy/bonsai-llama-jev/` (later) | k8s manifests for the self-hosted server (image build from a pinned commit, `--cors-origins`, `--api-key-file`, Ingress). Configuration only.                                                                                                                  |
+| File                                                   | Change                                                                                                                                                                                                                                                         |
+|--------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lib/decision.js` (new)                                | `scanDecision()`, `missionToQuestion()`, and the dialect adapters (`replicate`, `content`, `reflex`, `glance`, `letter`) as pure `toRequest` / `fromResponse` pairs, plus polling for `replicate`. Plain `fetch` + `AbortController`. Reuses `runAlertLegs()`. |
+| `lib/decision-models.js` (new)                         | One row per model: id, label, `dialect`, endpoint path, pinned version where one exists, max options, per-run price, benchmark snapshot with source URL + read date. A row, not a branch — same rule as `browser-models.js`.                                   |
+| `lib/aura.js`                                          | Export a `callProvider`-based `runProviderLeg()` so the DECISION engine can announce through the configured provider.                                                                                                                                          |
+| `lib/pricing.js`                                       | `perDecision` rate from the row (Replicate: $0.00022 / run) or manual; `costForUsage()` handles `usage.decisions`.                                                                                                                                             |
+| `lib/eval.js`                                          | Accept `engine: 'decision'` in the matrix — decision models run beside chat VLMs on the same images.                                                                                                                                                           |
+| `src/hooks/useMonitor.js`                              | Dispatch on `engine === 'decision'`; fallback-to-provider on transport error when enabled.                                                                                                                                                                     |
+| `src/screens/SettingsScreen.jsx`                       | DECISION card: the user's own key (Replicate token or self-hosted server key), relay URL template (defaults to the operator's), model row, announcer, fallback toggle, and a notice that the key and frames pass through the relay.                            |
+| `src/screens/MissionScreen.jsx`                        | Decision question field + "Compile from mission" button.                                                                                                                                                                                                       |
+| `src/App.jsx`                                          | `providerReady` for DECISION = endpoint URL + model row; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                                                                                          |
+| `src/screens/HistoryScreen.jsx`                        | Show backend timing (`timing_ms` or Replicate `metrics`) next to latency when present.                                                                                                                                                                         |
+| `test/decision.test.js` (new)                          | Golden fixtures per dialect, the three question paths, threshold semantics, fan-out, polling, fallback, CORS/401 errors.                                                                                                                                       |
+| homelab-manifests `apps/aura-relay/` (new, other repo) | The chart above (no secrets, no pods) plus `bootstrap/traefik/helmchartconfig.yaml`; the namespace and Argo CD `Application` are created out-of-band like the repo's other apps. Configuration only.                                                           |
+| `deploy/bonsai-llama-jev/` (later)                     | k8s manifests for the self-hosted server (image build from a pinned commit, `--cors-origins`, `--api-key-file`, Ingress). Configuration only.                                                                                                                  |
 
 Settings keys, following the existing `aura.*` localStorage pattern:
 `aura.decisionUrl` (the relay URL template, defaulting to the operator's
@@ -635,9 +792,11 @@ The protocol already allows what chat VLMs do badly:
 
 ## Rollout
 
-1. **Phase 0 — spike, no Aura code.** Apply `deploy/decision-proxy/` to k3s
-   and confirm the CRD form behaves like the tested file-provider config
-   (ExternalName upstream, `404` off-path, `413`, `429`). Probe cors.sh and
+1. **Phase 0 — spike, no Aura code.** Merge `apps/aura-relay/` into
+   homelab-manifests, apply the HelmChartConfig, create the namespace and
+   Argo CD `Application`, and confirm `aura-relay.526462738.xyz` behaves like
+   the tested file-provider config through Cloudflare (ExternalName upstream,
+   `404` off-path, `413`, `429` per `CF-Connecting-IP`). Probe cors.sh and
    corsproxy.io with keys (preflight, and whether `Authorization` is
    forwarded) so the alternative relay rows are verified. Then, from a
    browser on the Aura origin with a personal Replicate token, measure
