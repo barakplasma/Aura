@@ -34,13 +34,13 @@ Aura's scenes are closest to the benchmark's **Everyday photo** track (184
 synthetic household photos, yes/no questions like *"Is the parcel visibly
 damaged?"*). The core track (UI screenshots, charts, documents) matters less.
 
-| System                         | Kind                          | Everyday sealed acc. | Overall composite | p50 / p95         | USD / 1K decisions | Weights / access                                                                |
-|--------------------------------|-------------------------------|----------------------|-------------------|-------------------|--------------------|---------------------------------------------------------------------------------|
-| **Jev-Omni**                   | Gemma 4 12B + 256-way head    | 96.8 %               | **73.10** (#1)    | 0.076 s / 0.103 s | 0.0224             | [akhilaaa3/Jev-Omni](https://huggingface.co/akhilaaa3/Jev-Omni), Apache-2.0, ~24 GB bf16, CUDA |
-| **Mapika decider-2b-vision**   | Qwen3.5-2B VL, letter logits  | 89.5 %               | 66.77 (#2)        | 0.091 s / 0.154 s | 0.0259             | [Mapika/decider-2b-vision](https://huggingface.co/Mapika/decider-2b-vision), Apache-2.0, 4.4 GB bf16; [GGUF + mmproj](https://huggingface.co/mradermacher/decider-2b-vision-GGUF) |
-| Reflex 4B                      | Qwen3.5-4B + LoRA             | 88.4 %               | 65.38 (#3)        | 0.154 s / 0.191 s | 0.0488             | [kshetrajna12/reflex](https://github.com/kshetrajna12/reflex)                  |
-| Gemma 4 31B IT (hosted)        | chat VLM                      | 96.8 %               | 47.14             | 1.425 s / 2.868 s | 0.0816             | already reachable via the PROVIDER engine (e.g. Cerebras `gemma-4-31b`)        |
-| Gemini 3.1 Flash Lite (hosted) | chat VLM                      | 100 %                | 9.58              | 1.799 s / 19.8 s  | 0.3888             | already reachable via the PROVIDER engine (Gemini preset)                      |
+| System                         | Kind                         | Everyday sealed acc. | Overall composite | p50 / p95         | USD / 1K decisions | Weights / access                                                                                                                                                                  |
+|--------------------------------|------------------------------|----------------------|-------------------|-------------------|--------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Jev-Omni**                   | Gemma 4 12B + 256-way head   | 96.8 %               | **73.10** (#1)    | 0.076 s / 0.103 s | 0.0224             | [akhilaaa3/Jev-Omni](https://huggingface.co/akhilaaa3/Jev-Omni), Apache-2.0, ~24 GB bf16, CUDA                                                                                    |
+| **Mapika decider-2b-vision**   | Qwen3.5-2B VL, letter logits | 89.5 %               | 66.77 (#2)        | 0.091 s / 0.154 s | 0.0259             | [Mapika/decider-2b-vision](https://huggingface.co/Mapika/decider-2b-vision), Apache-2.0, 4.4 GB bf16; [GGUF + mmproj](https://huggingface.co/mradermacher/decider-2b-vision-GGUF) |
+| Reflex 4B                      | Qwen3.5-4B + LoRA            | 88.4 %               | 65.38 (#3)        | 0.154 s / 0.191 s | 0.0488             | [kshetrajna12/reflex](https://github.com/kshetrajna12/reflex)                                                                                                                     |
+| Gemma 4 31B IT (hosted)        | chat VLM                     | 96.8 %               | 47.14             | 1.425 s / 2.868 s | 0.0816             | already reachable via the PROVIDER engine (e.g. Cerebras `gemma-4-31b`)                                                                                                           |
+| Gemini 3.1 Flash Lite (hosted) | chat VLM                     | 100 %                | 9.58              | 1.799 s / 19.8 s  | 0.3888             | already reachable via the PROVIDER engine (Gemini preset)                                                                                                                         |
 
 Readings that shape this design:
 
@@ -69,12 +69,12 @@ an image extension. Qwen3-VL is not in the Image JevBench ranking, but Glance
 publishes its own zero-shot comparison on fresh, human-labelled photos (541
 yes/no questions, three sets):
 
-| System                               | yes/no | pick-one | s / yes-no (full-size photo) | USD / 1K answers           |
-|--------------------------------------|--------|----------|------------------------------|----------------------------|
-| Qwen3-VL-4B read by Glance (laptop)  | 0.939  | 0.933    | 1.1 (0.33 on a small image)  | 0.07–0.32 rented GPU       |
-| Qwen3-VL-2B read by Glance           | 0.904  | 0.907    | 0.66                         | lower                      |
-| same 4B model writing JSON           | 0.945  | 0.930    | 1.6                          | 0.13–0.42                  |
-| Gemini 3.1 Flash-Lite                | 0.961  | 0.933    | 1.6–1.9                      | 0.31–0.34                  |
+| System                              | yes/no | pick-one | s / yes-no (full-size photo) | USD / 1K answers     |
+|-------------------------------------|--------|----------|------------------------------|----------------------|
+| Qwen3-VL-4B read by Glance (laptop) | 0.939  | 0.933    | 1.1 (0.33 on a small image)  | 0.07–0.32 rented GPU |
+| Qwen3-VL-2B read by Glance          | 0.904  | 0.907    | 0.66                         | lower                |
+| same 4B model writing JSON          | 0.945  | 0.930    | 1.6                          | 0.13–0.42            |
+| Gemini 3.1 Flash-Lite               | 0.961  | 0.933    | 1.6–1.9                      | 0.31–0.34            |
 
 This is the same mechanism the BROWSER engine already uses for its own
 confidence (`lib/logprob.js`), just on a bigger model, on a server. For this
@@ -89,17 +89,17 @@ like every other backend.
 experiments on exactly Aura's loop (camera → resize → gateway → VLM readout →
 scheduler), on one Apple M5. The results that change this design:
 
-| Speedlab result                                                              | Rule for Aura                                                                                                     |
-|------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
-| Model compute dominates; base64 + JSON cost ≤ 0.1 ms p95 at 320 px           | Don't build binary transport or a custom codec. JSON + base64 through the gateway is fine.                        |
-| Several questions in one request: 2.405× faster than sequential requests     | One scan = one request carrying *all* questions about the frame (see fan-out below). Never one call per question. |
-| 8-bit: 1.381× faster, 84/84 decisions, max drift 0.039. 4-bit: drift 0.361   | Tier 1 GGUF is **Q8_0**. Q4/IQ4 variants are rejected up front, not left for the eval to find.                   |
-| Fewer vision tokens / 224 px / early decoder exits: faster but change answers | No uniform token caps or truncation knobs. Frame size is an eval-screen experiment, not a default change.        |
-| 2B is 2.994× faster than 4B but agrees on only 83.3 % of decisions           | A 2B model is a **fast tier with escalation**, never a silent drop-in (see cascade below).                        |
-| Letter-choice scoring on a zero-shot VLM: no faster, less stable             | Zero-shot VLM backends (Glance) score options independently. Letter slots only for models trained on them (decider). |
-| Latest frame, one request in flight                                          | Already Aura's scheduler (`PRD-scan-modes.md`). Keep it; the gateway returns `429` rather than queueing.          |
-| Temporal reuse: 95.1 % fewer inferences (synthetic)                          | Aura's object gate + stage-0 pixel diff already do this, engine-agnostically. Nothing new to build.               |
-| Timing split into capture / request / prefix / score / answer age           | Gateway passes the backend's `timing_ms` through; Aura records it next to `latencyMs`.                            |
+| Speedlab result                                                               | Rule for Aura                                                                                                        |
+|-------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| Model compute dominates; base64 + JSON cost ≤ 0.1 ms p95 at 320 px            | Don't build binary transport or a custom codec. JSON + base64 through the gateway is fine.                           |
+| Several questions in one request: 2.405× faster than sequential requests      | One scan = one request carrying *all* questions about the frame (see fan-out below). Never one call per question.    |
+| 8-bit: 1.381× faster, 84/84 decisions, max drift 0.039. 4-bit: drift 0.361    | Tier 1 GGUF is **Q8_0**. Q4/IQ4 variants are rejected up front, not left for the eval to find.                       |
+| Fewer vision tokens / 224 px / early decoder exits: faster but change answers | No uniform token caps or truncation knobs. Frame size is an eval-screen experiment, not a default change.            |
+| 2B is 2.994× faster than 4B but agrees on only 83.3 % of decisions            | A 2B model is a **fast tier with escalation**, never a silent drop-in (see cascade below).                           |
+| Letter-choice scoring on a zero-shot VLM: no faster, less stable              | Zero-shot VLM backends (Glance) score options independently. Letter slots only for models trained on them (decider). |
+| Latest frame, one request in flight                                           | Already Aura's scheduler (`PRD-scan-modes.md`). Keep it; the gateway returns `429` rather than queueing.             |
+| Temporal reuse: 95.1 % fewer inferences (synthetic)                           | Aura's object gate + stage-0 pixel diff already do this, engine-agnostically. Nothing new to build.                  |
+| Timing split into capture / request / prefix / score / answer age             | Gateway passes the backend's `timing_ms` through; Aura records it next to `latencyMs`.                               |
 
 ### What these models cannot do
 
@@ -283,17 +283,17 @@ Python `predict()` helper and no server. So this PRD adds one small service.
 A single static binary in `deploy/decision-gateway/`, deployed to the operator's
 k3s. It is the only thing the browser talks to.
 
-| Concern       | Behaviour                                                                                                                        |
-|---------------|----------------------------------------------------------------------------------------------------------------------------------|
-| CORS          | `Access-Control-Allow-Origin` = configured Aura origin(s); preflight answered locally                                             |
-| Auth          | `Authorization: Bearer <token>` checked against a k8s Secret — the token lives in `aura.decisionKey`, same as a provider API key  |
-| Limits        | ≤ 1 image, ≤ 2 MB decoded, ≤ 8 options, ≤ 4 questions per call; `413` / `400` otherwise                                           |
-| Routing       | `model` → backend from a ConfigMap (`decider-2b-vision` → llama-server, `jev-omni` / `glance-qwen3vl-4b` → GPU URL)              |
-| Backends      | `llamacpp` adapter (below), `glance` passthrough (`/v1/decide`, same body), `systemone` passthrough for Jev-Omni's wrapper       |
-| Concurrency   | one in-flight request per backend (Glance and llama-server slots are single-request); a second gets `429`, never a queue       |
-| Usage         | echoes backend token counts; adds `decisions` and measured backend wall-time so Aura can price per decision                     |
-| `GET /v1/models` | lists routed models, so Aura's existing "Fetch models" UX works unchanged                                                     |
-| Observability | Prometheus `/metrics` (latency histogram per model, errors) — no frames logged, ever                                              |
+| Concern          | Behaviour                                                                                                                        |
+|------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| CORS             | `Access-Control-Allow-Origin` = configured Aura origin(s); preflight answered locally                                            |
+| Auth             | `Authorization: Bearer <token>` checked against a k8s Secret — the token lives in `aura.decisionKey`, same as a provider API key |
+| Limits           | ≤ 1 image, ≤ 2 MB decoded, ≤ 8 options, ≤ 4 questions per call; `413` / `400` otherwise                                          |
+| Routing          | `model` → backend from a ConfigMap (`decider-2b-vision` → llama-server, `jev-omni` / `glance-qwen3vl-4b` → GPU URL)              |
+| Backends         | `llamacpp` adapter (below), `glance` passthrough (`/v1/decide`, same body), `systemone` passthrough for Jev-Omni's wrapper       |
+| Concurrency      | one in-flight request per backend (Glance and llama-server slots are single-request); a second gets `429`, never a queue         |
+| Usage            | echoes backend token counts; adds `decisions` and measured backend wall-time so Aura can price per decision                      |
+| `GET /v1/models` | lists routed models, so Aura's existing "Fetch models" UX works unchanged                                                        |
+| Observability    | Prometheus `/metrics` (latency histogram per model, errors) — no frames logged, ever                                             |
 
 Go because the gateway is I/O glue with no ML in it; the ML stays in the
 backends' own runtimes.
@@ -361,12 +361,12 @@ concern applies to the *OmniJev* variants, not this repo — keep the pin.
 The benchmark's $0.02 / 1K for Jev-Omni assumes a saturated GPU. For one
 camera:
 
-| Setup                               | Scans / hour (5 s cadence) | Hourly cost                       | Effective $ / 1K |
-|-------------------------------------|----------------------------|-----------------------------------|------------------|
-| Tier 1, CPU on existing VPS         | 720                        | $0 marginal                       | ~0               |
-| Tier 2, GPU kept warm (~$0.8–2/h)   | 720                        | $0.8–2                            | $1.1–2.8         |
-| Tier 2, scale-to-zero, bursty       | depends on gate skip rate  | cold starts 30–90 s               | varies           |
-| Hosted Gemma 4 31B (benchmark rate) | 720                        | ~$0.06                            | 0.08             |
+| Setup                               | Scans / hour (5 s cadence) | Hourly cost         | Effective $ / 1K |
+|-------------------------------------|----------------------------|---------------------|------------------|
+| Tier 1, CPU on existing VPS         | 720                        | $0 marginal         | ~0               |
+| Tier 2, GPU kept warm (~$0.8–2/h)   | 720                        | $0.8–2              | $1.1–2.8         |
+| Tier 2, scale-to-zero, bursty       | depends on gate skip rate  | cold starts 30–90 s | varies           |
+| Hosted Gemma 4 31B (benchmark rate) | 720                        | ~$0.06              | 0.08             |
 
 So Tier 2 only pays off when **the object gate keeps it asleep** (the
 DECISION engine is only called on scene changes and heartbeats) or when
@@ -380,20 +380,20 @@ configured) re-runs that scan on the PROVIDER engine.
 
 ## Aura changes
 
-| File                                  | Change                                                                                                                                                                                   |
-|---------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `lib/decision.js` (new)               | `scanDecision()`, `fetchDecisionModels()`, pure `buildDecisionRequest()` / `parseDecisionResponse()` / `missionToQuestion()`. Browser-only APIs (`fetch`, `AbortController`). Reuses `runAlertLegs()` for announce/webhook. |
-| `lib/decision-models.js` (new)        | Table of known decision models, one row each (id, label, backend hint, max options, benchmark snapshot with source URL + read date). A row, not a branch — same rule as `browser-models.js`. |
-| `lib/aura.js`                         | Export `callProvider`-based `runProviderLeg()` so the DECISION engine can announce through the configured provider without duplicating request code.                                   |
-| `lib/pricing.js`                      | `perDecision` rate source: gateway-reported, else the row's benchmark rate, else manual. `costForUsage()` handles `usage.decisions`.                                                  |
-| `lib/eval.js`                         | Accept `engine: 'decision'` in the matrix — detection-only is already what eval runs, so decision models drop straight in beside chat VLMs on the same images.                            |
-| `src/hooks/useMonitor.js`             | Dispatch on `engine === 'decision'`; fallback-to-provider on transport error when enabled.                                                                                               |
-| `src/screens/SettingsScreen.jsx`      | DECISION engine card: gateway URL, token, model picker (via `/v1/models`), announcer choice, fallback toggle.                                                                             |
-| `src/screens/MissionScreen.jsx`       | Decision question field + "Compile from mission" button.                                                                                                                                 |
-| `src/App.jsx`                         | `providerReady` for DECISION = gateway URL + model; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                          |
-| `src/screens/HistoryScreen.jsx`       | Show the backend's `timing_ms` split (prefix / score) and answer age next to latency when present.                                                                                        |
-| `test/decision.test.js` (new)         | Request building for all three question paths, response parsing (missing letters, malformed JSON, `choice` vs probability disagreement), threshold semantics, fallback, CORS/401 errors. |
-| `deploy/decision-gateway/` (new)      | Go module, Dockerfile (multi-arch, `linux/arm64` first), k8s manifests (Deployment + Service + Ingress with TLS, ConfigMap routes, Secret token), llama-server Deployment for Tier 1.   |
+| File                             | Change                                                                                                                                                                                                                      |
+|----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lib/decision.js` (new)          | `scanDecision()`, `fetchDecisionModels()`, pure `buildDecisionRequest()` / `parseDecisionResponse()` / `missionToQuestion()`. Browser-only APIs (`fetch`, `AbortController`). Reuses `runAlertLegs()` for announce/webhook. |
+| `lib/decision-models.js` (new)   | Table of known decision models, one row each (id, label, backend hint, max options, benchmark snapshot with source URL + read date). A row, not a branch — same rule as `browser-models.js`.                                |
+| `lib/aura.js`                    | Export `callProvider`-based `runProviderLeg()` so the DECISION engine can announce through the configured provider without duplicating request code.                                                                        |
+| `lib/pricing.js`                 | `perDecision` rate source: gateway-reported, else the row's benchmark rate, else manual. `costForUsage()` handles `usage.decisions`.                                                                                        |
+| `lib/eval.js`                    | Accept `engine: 'decision'` in the matrix — detection-only is already what eval runs, so decision models drop straight in beside chat VLMs on the same images.                                                              |
+| `src/hooks/useMonitor.js`        | Dispatch on `engine === 'decision'`; fallback-to-provider on transport error when enabled.                                                                                                                                  |
+| `src/screens/SettingsScreen.jsx` | DECISION engine card: gateway URL, token, model picker (via `/v1/models`), announcer choice, fallback toggle.                                                                                                               |
+| `src/screens/MissionScreen.jsx`  | Decision question field + "Compile from mission" button.                                                                                                                                                                    |
+| `src/App.jsx`                    | `providerReady` for DECISION = gateway URL + model; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                                                            |
+| `src/screens/HistoryScreen.jsx`  | Show the backend's `timing_ms` split (prefix / score) and answer age next to latency when present.                                                                                                                          |
+| `test/decision.test.js` (new)    | Request building for all three question paths, response parsing (missing letters, malformed JSON, `choice` vs probability disagreement), threshold semantics, fallback, CORS/401 errors.                                    |
+| `deploy/decision-gateway/` (new) | Go module, Dockerfile (multi-arch, `linux/arm64` first), k8s manifests (Deployment + Service + Ingress with TLS, ConfigMap routes, Secret token), llama-server Deployment for Tier 1.                                       |
 
 Settings keys, following the existing `aura.*` localStorage pattern:
 `aura.decisionUrl`, `aura.decisionKey` (blank allowed, like a local provider),
