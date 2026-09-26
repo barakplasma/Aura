@@ -326,7 +326,7 @@ benchmark didn't rank.
 | **Mapika decider-2b-vision (#2)**     | **Yes, most likely.** 2B; community GGUF at Q8_0 is 2.0 GB + 0.36 GB projector; upstream `llama-server` builds on arm64 and has CORS + API keys built in. Latency on ARM cores unmeasured | not published; would fit a T4 as a Cog push                                                      | **self-hosted**             |
 | Bonsai-2-27B v2 (#7)                  | server runs on CPU, but a 27B model on ARM cores is likely far too slow (its 0.8 s p50 was on a GPU); ~7.6 GB of weights                                                                  | not published; ~10 GB VRAM with llama.cpp CUDA fits a T4/L4 Cog image                            | Replicate, if pushed        |
 | Reflex 4B (#3)                        | no — CUDA-only server (16 GB GPU), Triton kernels                                                                                                                                         | not published; already ships a Dockerfile + FastAPI server, the easiest GPU model to port to Cog | Replicate, if pushed        |
-| Jev-Omni (#1)                         | no — CUDA-only, 24 GB bf16                                                                                                                                                                | **being published** as public `barakplasma/jev-omni` (L40S), from `deploy/replicate/jev-omni/`   | **Replicate**               |
+| Jev-Omni (#1)                         | no — CUDA-only; reserve 80 GB VRAM for FP32 load plus runtime                                                                                                                                                                | **being published** as public `barakplasma/jev-omni` (A100 80 GB), from `deploy/replicate/jev-omni/`   | **Replicate**               |
 | djev-spark / djev-dev (#4, #6)        | no — 26B DiffusionGemma custom runtime                                                                                                                                                    | not published; its own hosted API is paused                                                      | neither today               |
 | OpenJev 4B NLI v2 (#12)               | not useful — no probabilities for the threshold                                                                                                                                           | —                                                                                                | neither                     |
 | Gemma 4 31B, GPT, Gemini (#5, #8–#11) | —                                                                                                                                                                                         | — (already hosted APIs)                                                                          | PROVIDER engine, BYOK today |
@@ -711,7 +711,8 @@ by the hour.
 Jev-Omni has no server of any kind, so it is the one model that needs code: a
 Cog predictor, `deploy/replicate/jev-omni/`, published as the **public**
 Replicate model [`barakplasma/jev-omni`](https://replicate.com/barakplasma/jev-omni)
-on an L40S (48 GB; the model is 24 GB in bf16). Public keeps it BYOK: every
+on an A100 80 GB (FP32 weights require about 50 GB before runtime overhead).
+Public keeps it BYOK: every
 caller runs it with their own Replicate token and pays only for their own
 predict time. The owner is billed only for their own runs, never for other
 users' runs or for idle time.
@@ -730,10 +731,11 @@ users' runs or for idle time.
 - **Refuses to serve a wrong stack.** After loading, it runs the model's own
   `verification.json` cases and fails setup if any probability drifts more
   than 0.05 from the published reference.
-- **Weights are fetched at boot, not baked in.** That keeps the image small
-  enough to build on a GitHub runner, at the price of a slow cold boot:
-  ~24 GB downloaded, not billed to anyone for a public model. Aura's
-  fallback-to-provider covers it.
+- **Weights are baked into the image.** Cog downloads the pinned ~24 GB
+  checkpoint during the image build, so Replicate startup no longer downloads
+  model files. Inference follows Jev-Omni's BF16 autocast path. The CI runner
+  needs enough disk for the checkpoint, CUDA layers, and image; Aura's
+  fallback-to-provider still covers model startup failures.
 - **Built by CI.** `.github/workflows/replicate-jev-omni.yml` runs the
   predictor's unit tests, then `cog push` (Cog 0.23.0) whenever
   `deploy/replicate/jev-omni/**` changes. It needs the repository secret

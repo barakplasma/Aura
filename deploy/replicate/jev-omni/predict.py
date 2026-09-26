@@ -17,19 +17,12 @@ import tempfile
 
 from cog import BasePredictor, Input, Path
 
-MODEL_ID = "akhilaaa3/Jev-Omni"
-REVISION = "5addda86ddee081a68fb067477ea100c221b8917"
-# From the repo's own sha256.json at REVISION. jev_omni.py is imported as
+# From the repo's own sha256.json at the pinned revision. jev_omni.py is imported as
 # code and head.pt is deserialised, so both are checked before use.
 EXPECTED_SHA256 = {
     "jev_omni.py": "11d761b0b6cefc8aac29757f43af4b2b02af8f9b6c6dad19834c0b14538180f0",
     "head.pt": "8c81edecd733f7db327604803c14cf9ecbee53d2af055eeb09f78b64bcbf2638",
 }
-ALLOW_PATTERNS = [
-    "config.json", "generation_config.json", "model*.safetensors*", "processor_config.json",
-    "tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
-    "decision_config.json", "head.pt", "jev_omni.py", "verification.json",
-]
 YES_NO = ["Yes", "No"]
 MAX_OPTIONS = 20  # the model card: quality above 20 options is not established
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -93,10 +86,13 @@ class Predictor(BasePredictor):
     def setup(self) -> None:
         import torch
         import transformers
-        from huggingface_hub import snapshot_download
         from transformers import AutoConfig, AutoProcessor
 
-        path = pathlib.Path(snapshot_download(MODEL_ID, revision=REVISION, allow_patterns=ALLOW_PATTERNS))
+        # The Cog image build downloads this pinned snapshot into the image;
+        # never wait for the multi-GB Hub transfer during prediction startup.
+        path = pathlib.Path("/opt/jev-omni")
+        if not path.is_dir():
+            raise RuntimeError(f"Baked Jev-Omni snapshot is missing: {path}")
         for name, expected in EXPECTED_SHA256.items():
             actual = sha256_file(path / name)
             if actual != expected:

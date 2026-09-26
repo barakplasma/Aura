@@ -1,9 +1,9 @@
 # Jev-Omni (akhilaaa3/Jev-Omni, Apache-2.0) as a public Replicate model:
 # r8.im/barakplasma/jev-omni. Public so every caller pays for their own
 # runs with their own token (BYOK) - see docs/PRD-decision-engine.md.
-# Weights (~24 GB) are not baked into the image; setup() downloads a
-# pinned revision, so the image stays small enough to build on a GitHub
-# runner.
+# Download the pinned model while building the image. This moves the large
+# Hugging Face transfer out of Replicate's startup path. The build runner needs
+# enough disk for the ~24 GB pinned checkpoint, CUDA base layers, and final image.
 build:
   gpu: true
   # Cog 0.23 has no CUDA mapping for torch 2.14; pin it to match the
@@ -11,4 +11,14 @@ build:
   cuda: "12.6"
   python_version: "3.12"
   python_requirements: requirements.txt
+  run:
+    - >-
+      python -c 'from huggingface_hub import snapshot_download;
+      snapshot_download(repo_id="akhilaaa3/Jev-Omni",
+      revision="5addda86ddee081a68fb067477ea100c221b8917",
+      allow_patterns=["config.json", "generation_config.json",
+      "model*.safetensors*", "processor_config.json", "tokenizer.json",
+      "tokenizer_config.json", "chat_template.jinja", "decision_config.json",
+      "head.pt", "jev_omni.py", "verification.json"],
+      local_dir="/opt/jev-omni")'
 run: "predict.py:Predictor"
