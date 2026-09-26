@@ -1,0 +1,25 @@
+# akhilaaa3/Jev-Omni's requirements at the pinned revision, minus the
+# audio/video extras (opencv, soundfile, librosa): this model only serves
+# image questions. Everything is pinned, including the transitive anyio and
+# idna, to releases with no known advisories on osv.dev (checked
+# 2026-09-26). torch is newer than upstream's floor (>=2.10) because 2.10
+# has advisories fixed in 2.13; setup() re-runs the model's own
+# verification cases, so a stack that shifts the probabilities won't serve.
+# torch/torchvision come from PyTorch's CUDA 12.6 index to match cog.yaml's
+# cuda: "12.6" (PyPI's default 2.14 wheels need CUDA 13 / driver 580+).
+# The pins stay plain (no +cu126): PEP 440 lets ==2.14.0 match the local
+# 2.14.0+cu126 build, which pip ranks above PyPI's, and scanners that only
+# read PyPI (osv-scanner) can still resolve and audit the tree.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.14.0
+torchvision==0.29.0
+transformers==5.17.0
+tokenizers==0.23.1
+huggingface_hub==1.33.0
+accelerate==1.15.0
+safetensors==0.8.0
+numpy==2.5.3
+pillow==12.3.0
+anyio==4.15.1
+idna==3.20
+loguru==0.7.3

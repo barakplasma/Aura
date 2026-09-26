@@ -4,6 +4,8 @@ node_modules/
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+# Skills lockfiles are local; project skills under .agents/skills are tracked.
+skills-lock.json
 .env
 .env.local
 .dev.vars

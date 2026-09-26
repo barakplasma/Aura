@@ -1,0 +1,7 @@
+build:
+  gpu: false
+  python_version: "3.12"
+  python_requirements: requirements.txt
+  run:
+    - pip install --no-deps decider-ai==1.5.0
+run: "predict.py:Predictor"
