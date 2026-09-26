@@ -1,7 +1,7 @@
 # PRD — DECISION engine: Image JevBench models as Aura's detector, remote first
 
 Status: **proposed** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
-new self-hosted gateway (`deploy/decision-gateway/`)
+small Hugging Face Space shim (`deploy/hf-space/`); no server to operate
 Category: **remote inference**
 Sources (read 2026-09-26): [Image JevBench v0.1](https://benchmarkheaven.com/image-jev-bench)
 (frozen split 228 public / 456 sealed); [Glance](https://github.com/yoheinakajima/glance)
@@ -49,7 +49,8 @@ Readings that shape this design:
   calibration 87.7 (vs 87.9–92.9). This is the target model.
 - **decider-2b-vision is the cheap-to-host runner-up.** 2 B parameters, a
   community GGUF with a vision projector exists, so it can run under
-  `llama-server` — including on CPU. This is the first model we ship against.
+  `llama-server` — including on CPU. It has no hosted endpoint, so it belongs
+  to the optional self-hosted path.
 - **Benchmark latency and price are warm, GPU-local numbers.** Local latency
   was adjusted (2× + 0.15 s), not measured over the internet; local price is
   GPU-seconds × a GPU-hour rate, which assumes the GPU is busy. A single Aura
@@ -77,13 +78,14 @@ yes/no questions, three sets):
 | Gemini 3.1 Flash-Lite               | 0.961  | 0.933    | 1.6–1.9                      | 0.31–0.34            |
 
 This is the same mechanism the BROWSER engine already uses for its own
-confidence (`lib/logprob.js`), just on a bigger model, on a server. For this
-PRD Glance is a **third backend family** beside the two fine-tuned ones: no
-training, any Apache/MIT Qwen3-VL checkpoint, and a server that already takes
-images. Two limits: its CPU tier is dual-encoder only (the VLM path wants CUDA
-≥ 12 GB or Apple silicon ≥ 16 GB), and `glance serve` is a single-threaded,
-loopback-only Flask server with no CORS or auth — so it sits behind the gateway
-like every other backend.
+confidence (`lib/logprob.js`), just on a bigger model, on a server. It is also
+the **only one of these readouts with a hosted, pay-per-run endpoint**:
+[untapped/glance-qwen3-vl-4b](https://replicate.com/untapped/glance-qwen3-vl-4b)
+on Replicate (T4, ~1 s, $0.00022 per run). That makes Glance on Replicate the
+**default model** of this PRD: no training, stock Apache-2.0 weights, nothing
+to host. Self-running it is harder: its CPU tier is dual-encoder only (the VLM
+path wants CUDA ≥ 12 GB or Apple silicon ≥ 16 GB), and `glance serve` is a
+single-threaded, loopback-only Flask server with no CORS or auth.
 
 [Glance Speedlab](https://glance.yohei.me/speed/) is 21 preregistered latency
 experiments on exactly Aura's loop (camera → resize → gateway → VLM readout →
@@ -93,13 +95,13 @@ scheduler), on one Apple M5. The results that change this design:
 |-------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
 | Model compute dominates; base64 + JSON cost ≤ 0.1 ms p95 at 320 px            | Don't build binary transport or a custom codec. JSON + base64 through the gateway is fine.                           |
 | Several questions in one request: 2.405× faster than sequential requests      | One scan = one request carrying *all* questions about the frame (see fan-out below). Never one call per question.    |
-| 8-bit: 1.381× faster, 84/84 decisions, max drift 0.039. 4-bit: drift 0.361    | Tier 1 GGUF is **Q8_0**. Q4/IQ4 variants are rejected up front, not left for the eval to find.                       |
+| 8-bit: 1.381× faster, 84/84 decisions, max drift 0.039. 4-bit: drift 0.361    | A self-hosted GGUF is **Q8_0**. Q4/IQ4 variants are rejected up front, not left for the eval to find.                |
 | Fewer vision tokens / 224 px / early decoder exits: faster but change answers | No uniform token caps or truncation knobs. Frame size is an eval-screen experiment, not a default change.            |
 | 2B is 2.994× faster than 4B but agrees on only 83.3 % of decisions            | A 2B model is a **fast tier with escalation**, never a silent drop-in (see cascade below).                           |
 | Letter-choice scoring on a zero-shot VLM: no faster, less stable              | Zero-shot VLM backends (Glance) score options independently. Letter slots only for models trained on them (decider). |
-| Latest frame, one request in flight                                           | Already Aura's scheduler (`PRD-scan-modes.md`). Keep it; the gateway returns `429` rather than queueing.             |
+| Latest frame, one request in flight                                           | Already Aura's scheduler (`PRD-scan-modes.md`). Keep it; a self-hosted gateway returns `429` rather than queueing.   |
 | Temporal reuse: 95.1 % fewer inferences (synthetic)                           | Aura's object gate + stage-0 pixel diff already do this, engine-agnostically. Nothing new to build.                  |
-| Timing split into capture / request / prefix / score / answer age             | Gateway passes the backend's `timing_ms` through; Aura records it next to `latencyMs`.                               |
+| Timing split into capture / request / prefix / score / answer age             | The Space (or gateway) returns `timing_ms`; Aura records it next to `latencyMs`.                                     |
 
 ### What these models cannot do
 
@@ -114,9 +116,10 @@ still need a generator. That is the central design constraint: **split
    typed-decision model over HTTP and returns the same result shape as
    `scanClient()` / `scanBrowser()` — `useMonitor`, telemetry, history and the
    eval screen don't change.
-2. **Remote first:** the model runs on a server the operator controls, reached
-   over HTTPS with CORS, the same trust model as a local Ollama. The browser
-   stays backend-free for everything else.
+2. **Remote first, no backend to operate.** The default path uses hosted
+   inference the operator already pays for per call (Replicate) and a managed
+   shim (a Hugging Face Space) — nothing to deploy, patch or keep up. A
+   self-hosted path stays possible for later, not required.
 3. Confidence comes from the model's own probability of the positive option,
    so the sensitivity slider means *probability*, not a vibe.
 4. The announcement leg is pluggable: PROVIDER (chat VLM, only when fired),
@@ -151,20 +154,22 @@ flowchart LR
     ANN -->|browser| BRW[scanBrowser action leg]
   end
 
-  subgraph K3s["Hetzner ARM VPS - k3s"]
-    GW[decision-gateway<br/>Go: CORS, bearer auth,<br/>size caps, routing, usage]
-    LS[llama-server<br/>decider-2b-vision GGUF<br/>+ mmproj, CPU]
+  subgraph Default["Default path - nothing to operate"]
+    SP[operator's private HF Space<br/>Gradio /decide, CPU basic<br/>holds REPLICATE_API_TOKEN]
+    RP[Replicate<br/>untapped/glance-qwen3-vl-4b<br/>T4, pay per run]
   end
 
-  subgraph GPU["Scale-to-zero GPU (optional tier)"]
-    JO[Jev-Omni<br/>FastAPI /v1/systemone]
-    GL[Glance<br/>Qwen3-VL-4B /v1/decide]
+  subgraph Later["Optional self-hosted path - later"]
+    GW[decision-gateway<br/>Go on k3s]
+    LS[llama-server<br/>decider-2b-vision Q8_0]
+    JO[Jev-Omni<br/>GPU]
   end
 
-  DEC -- "POST /v1/systemone<br/>HTTPS + CORS" --> GW
-  GW -- "/completion, n_probs" --> LS
-  GW -- "/v1/systemone" --> JO
-  GW -- "/v1/decide" --> GL
+  DEC -- "gradio transport<br/>HF token, CORS ok" --> SP
+  SP -- "POST /v1/predictions<br/>one run per question" --> RP
+  DEC -. "http transport<br/>/v1/systemone" .-> GW
+  GW -.-> LS
+  GW -.-> JO
   PROV -- "/chat/completions" --> CLOUD[(user's chat VLM<br/>provider)]
 ```
 
@@ -174,15 +179,17 @@ flowchart LR
 sequenceDiagram
   participant M as useMonitor
   participant D as lib/decision.js
-  participant G as decision-gateway
-  participant B as backend (llama-server, Glance or Jev-Omni)
+  participant G as HF Space shim
+  participant B as Replicate (Glance Qwen3-VL-4B)
   participant P as announcer (provider)
 
   M->>D: scanDecision({image, mission, question, threshold, ...})
-  D->>G: POST /v1/systemone {model, state:{images:[{id:img0, base64}]}, questions:{alert:{type:"choice", criteria:{yes,no}}}}
-  G->>B: backend-native request (raw prompt / images)
-  B-->>G: option probabilities + timing
-  G-->>D: {answers:{alert:{choice, confidence, probabilities}}, usage, timing_ms}
+  D->>G: POST /gradio_api/call/decide {data:[systemone JSON with state.images]}
+  G-->>D: {event_id}
+  D->>G: GET /gradio_api/call/decide/{event_id} (SSE)
+  G->>B: POST /v1/predictions {question, question_type, image_base64}, Prefer wait
+  B-->>G: {answer, confidence, probabilities:[{label, probability}]}
+  G-->>D: event complete: {answers:{alert:{choice, confidence, probabilities}}, timing_ms}
   D->>D: confidence = round(100 * p(yes)), triggered = p(yes) >= 0.5
   alt triggered and confidence >= threshold
     D->>P: action leg (runAlertLegs)
@@ -197,14 +204,17 @@ Aura speaks **TypeSafe's System One format** (`docs.typesafe.ai`), which
 Mapika's `decider/serve.py` already serves for its text models, with the image
 extension **Glance already publishes**: images live in `state.images` as
 `{id, base64}` and questions refer to them as `` `img0` ``. Adopting an existing
-extension instead of inventing one makes Glance a pure passthrough. Every
-backend sits behind the gateway, so the browser sees exactly one shape.
+extension instead of inventing one makes Glance a pure passthrough. This JSON
+is Aura's internal contract whatever carries it: the default `gradio`
+transport wraps it as the one string argument of a Space endpoint, and the
+optional `http` transport POSTs it as-is to anything that serves
+`/v1/systemone` or Glance's `/v1/decide` with CORS.
 
 Request (what `lib/decision.js` sends):
 
 ```json
 {
-  "model": "decider-2b-vision",
+  "model": "glance-qwen3-vl-4b",
   "state": {
     "images": [{ "id": "img0", "base64": "/9j/..." }],
     "context": "A home security camera frame. Operator context: front porch, daytime."
@@ -223,25 +233,26 @@ Response (TypeSafe's shape, unchanged):
 
 ```json
 {
-  "model": "decider-2b-vision@<sha>",
+  "model": "untapped/glance-qwen3-vl-4b@65c82d4f",
   "answers": {
     "alert": { "type": "choice", "choice": "yes", "confidence": 0.86, "probabilities": { "yes": 0.93, "no": 0.07 } }
   },
-  "usage": { "input_tokens": 412, "output_tokens": 0, "decisions": 1 },
-  "timing_ms": { "prefix": 180, "score": 40, "total": 230 }
+  "usage": { "decisions": 1, "predict_s": 1.05 },
+  "timing_ms": { "queue": 20, "predict": 1045, "total": 1190 }
 }
 ```
 
 Choices:
 
-- **`choice` with `{yes, no}`, not `noul`.** Both measured models are option
-  classifiers; a `choice` keeps the door open for multi-option missions later
-  (below) and returns the full distribution.
+- **`choice` with `{yes, no}`, not `noul`.** It returns the full
+  distribution and keeps the door open for multi-option missions later
+  (below). The Space maps it to Replicate's `question_type: "yes_no"` when the
+  labels are exactly yes/no, else `"choice"` with `options_json`.
 - **Images follow Glance: `state.images[{id, base64}]`, referenced as
   `` `img0` ``.** Glance's `/v1/decide` accepts this unchanged. Bonsai's
   System One path put a data URI inside `state` and AutoJev types it as
-  `DecisionInput.images`; the gateway's decider and Jev-Omni adapters unpack
-  it for their own loaders.
+  `DecisionInput.images`; the Space (or a later gateway) unpacks it for
+  whatever it calls — the Replicate model takes plain `image_base64`.
 - **`timing_ms` is passed through** when the backend reports it (Glance does),
   so the latency Aura shows can be split into image prefix and scoring.
 - **Aura's confidence is `p(yes)`, not the response's `confidence`.** TypeSafe
@@ -271,17 +282,92 @@ Three layers, first hit wins:
 `parseDecisionResponse()` as pure functions so all three paths and the
 response parsing are unit-tested under `node --test`.
 
-## Serving, remote first
+## Serving, remote first, without a backend
 
-Aura is a static PWA, so the model has to be behind an HTTPS endpoint with
-CORS open to the Aura origin. None of the measured systems ship that for
-images: decider's HTTP server only serves its *text* models, Jev-Omni ships a
-Python `predict()` helper and no server. So this PRD adds one small service.
+Aura is a static PWA, so whatever it calls must answer the browser with CORS
+headers. Three hosted options exist today for Glance's Qwen3-VL-4B readout,
+checked 2026-09-26:
 
-### `decision-gateway` (Go)
+| Option                                                                                                                               | Browser can call it?                                                                                                                  | Verdict                                                                                                                                                                            |
+|--------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Replicate API directly ([untapped/glance-qwen3-vl-4b](https://replicate.com/untapped/glance-qwen3-vl-4b))                            | **No.** `api.replicate.com` answers the CORS preflight with `200` and no `Access-Control-Allow-*` headers, so every browser blocks it | The model to call, but not from the page                                                                                                                                           |
+| The public demo Space ([yoheinakajima/glance-qwen3-vl-4b-demo](https://huggingface.co/spaces/yoheinakajima/glance-qwen3-vl-4b-demo)) | Yes (Gradio echoes the origin, allows `authorization, content-type`)                                                                  | Template only: it takes the caller's Replicate token as an input (a third party would see it on every scan), and it targets a `-batch-test` model that is no longer public (`404`) |
+| **A private copy of that Space, owned by the operator**                                                                              | Yes, same Gradio CORS; private Spaces take `Authorization: Bearer hf_…`                                                               | **Default.** The Replicate token is a Space secret, never in the browser                                                                                                           |
+
+### Default: operator's private Space → Replicate
+
+The operator duplicates a ~80-line Space that lives in this repo
+(`deploy/hf-space/app.py`, derived from the demo's `app.py`) into their own
+Hugging Face account, marks it private, and sets one secret,
+`REPLICATE_API_TOKEN`. It runs on free CPU-basic hardware; the GPU is
+Replicate's.
+
+The Space exposes one Gradio API endpoint, `decide(request_json: str) -> dict`:
+
+1. Parse Aura's System One JSON (above); reject > 1 image, > 5 MB, > 4
+   questions, > 16 options.
+2. For each question, `POST https://api.replicate.com/v1/predictions` with the
+   pinned version (`65c82d4f…`, not "latest", so a model update can't move
+   the probabilities under a tuned threshold), `Prefer: wait=60`, and input
+   `{question, question_type, options_json, image_base64}`. Questions run
+   concurrently.
+3. Map each `{answer, confidence, probabilities: [{label, probability}]}` to
+   the TypeSafe answer shape and return `answers`, `usage` (`decisions`,
+   `predict_s` from the prediction's `metrics.predict_time`) and `timing_ms`.
+
+Aura's `gradio` transport, with plain `fetch` (no `@gradio/client`
+dependency):
+
+```text
+POST {space}/gradio_api/call/decide   {"data": ["<request JSON>"]}  -> {"event_id": "..."}
+GET  {space}/gradio_api/call/decide/{event_id}                       -> SSE; take the "complete" event's data[0]
+```
+
+with `Authorization: Bearer <hf token>` on both when the Space is private.
+The HF token (a fine-grained, read-only token scoped to that one Space) is
+stored like a provider key, in `aura.decisionKey`.
+
+What the operator gets, per the Replicate model page: an Nvidia T4, ~1 s
+predict time (the default example: 1.05 s predict, 1.07 s total), **$0.00022
+per run — $0.22 per 1,000 decisions**, and, because it is a public model, only
+predict time is billed: an idle camera costs nothing. That is cheaper than
+Gemini 3.1 Flash-Lite ($0.31–0.39 / 1K on both benchmarks) with calibrated
+probabilities instead of written ones, at the price of Glance's ~2-point
+zero-shot gap on yes/no.
+
+Costs of this path, stated up front:
+
+- **Cold starts.** A public Replicate model scales to zero; the first scan
+  after an idle period waits for a T4 boot (unbilled, but slow — Phase 0
+  measures it). `Prefer: wait=60` plus Aura's fallback-to-provider keeps the
+  monitor alive meanwhile.
+- **Two hops.** Browser → Space → Replicate adds network time on top of the
+  ~1 s predict. Still inside the 1.4–4.8 s p50 of hosted chat VLMs; Phase 0
+  measures the real p50/p95.
+- **One run per question.** The public model takes one question per run, so
+  fan-out (below) costs one run each; the batch variant the demo used is not
+  public. Speedlab's 2.4× batching gain is not available on this path.
+- **Third parties see frames.** Hugging Face (the Space) and Replicate both
+  receive the image. Settings flags this exactly like a remote provider.
+- **The Space sleeps** on free hardware after a long idle period (48 h); it
+  wakes on the next request, slowly. An active monitor keeps it awake.
+
+ZeroGPU (running Glance inside the Space on HF's shared GPUs) would remove
+Replicate, but it needs a PRO account and is metered by a daily GPU quota —
+a monitor that scans all day would exhaust it. Not the default.
+
+### Optional, later: self-hosted path
+
+Everything below is only needed if the hosted path fails on cost, latency or
+privacy for a particular operator (for example frames that must not leave the
+operator's own infrastructure). It is kept because it is the only way to run
+decider-2b-vision or Jev-Omni, which have no hosted endpoint.
+
+#### `decision-gateway` (Go)
 
 A single static binary in `deploy/decision-gateway/`, deployed to the operator's
-k3s. It is the only thing the browser talks to.
+k3s. It is the only thing the browser talks to on this path, via the `http`
+transport.
 
 | Concern          | Behaviour                                                                                                                        |
 |------------------|----------------------------------------------------------------------------------------------------------------------------------|
@@ -298,7 +384,7 @@ k3s. It is the only thing the browser talks to.
 Go because the gateway is I/O glue with no ML in it; the ML stays in the
 backends' own runtimes.
 
-### Tier 1 — decider-2b-vision on llama.cpp (CPU, in k3s)
+#### decider-2b-vision on llama.cpp (CPU, in k3s)
 
 decider's readout is *the next-token logits over option letters after the
 prompt*, softmaxed over the options. That is reproducible on stock
@@ -330,23 +416,15 @@ Why CPU first: the operator's VPS is an always-on ARM box that is already paid
 for, so the marginal cost per decision is zero, and a 2 B model at Q8_0
 (2.0 GB + 0.36 GB mmproj) fits comfortably. **Q8_0, not smaller:** Speedlab
 measured 8-bit within 0.039 of full-precision probabilities and 4-bit at 0.361,
-enough to flip decisions — and the slider reads these probabilities directly. The open question is latency — a
+enough to flip decisions — and the slider reads these probabilities directly.
+The open question is latency — a
 640×480 frame is roughly 300 visual tokens of prefill on ARM cores; this has
 to be measured, not assumed (see [Rollout](#rollout), phase 1).
 
-### Tier 2 — Jev-Omni or Glance on scale-to-zero GPU
+#### Jev-Omni on a GPU
 
-Two candidates for the GPU tier, compared on the operator's own images by the
-eval screen:
-
-- **Glance + Qwen3-VL-4B** needs only a 12 GB CUDA GPU (an L4 is enough),
-  ships its own server, and uses stock Apache-2.0 weights with no fine-tune —
-  the lowest-effort GPU backend. Its zero-shot yes/no is ~2 points behind
-  Gemini 3.1 Flash-Lite on fresh photos.
-- **Jev-Omni** is the accuracy target (96.8 % on the benchmark's everyday
-  photos) but needs a 24 GB+ GPU and a wrapper we write.
-
-Jev-Omni's reference loader requires CUDA and 24 GB of bf16 weights, so it
+Jev-Omni is the accuracy target (96.8 % on the benchmark's everyday photos)
+and has no hosted endpoint. Its reference loader requires CUDA and 24 GB of bf16 weights, so it
 needs an L40S/A100-class GPU. A ~100-line FastAPI wrapper around
 `load_jev_omni().predict(media=..., modality="image")` exposes
 `/v1/systemone` with `state.images`, and the gateway proxies to it with the
@@ -359,51 +437,53 @@ concern applies to the *OmniJev* variants, not this repo — keep the pin.
 ### Cost reality
 
 The benchmark's $0.02 / 1K for Jev-Omni assumes a saturated GPU. For one
-camera:
+camera, at the worst case of a scan every 5 s with nothing skipped by the gate:
 
-| Setup                               | Scans / hour (5 s cadence) | Hourly cost         | Effective $ / 1K |
-|-------------------------------------|----------------------------|---------------------|------------------|
-| Tier 1, CPU on existing VPS         | 720                        | $0 marginal         | ~0               |
-| Tier 2, GPU kept warm (~$0.8–2/h)   | 720                        | $0.8–2              | $1.1–2.8         |
-| Tier 2, scale-to-zero, bursty       | depends on gate skip rate  | cold starts 30–90 s | varies           |
-| Hosted Gemma 4 31B (benchmark rate) | 720                        | ~$0.06              | 0.08             |
+| Setup                                         | Scans / hour | Hourly cost          | Effective $ / 1K |
+|-----------------------------------------------|--------------|----------------------|------------------|
+| **Default: Space → Replicate Glance 4B**      | 720          | ~$0.16, $0 when idle | 0.22             |
+| Self-hosted: decider on existing VPS CPU      | 720          | $0 marginal          | ~0               |
+| Self-hosted: own GPU kept warm (~$0.8–2/h)    | 720          | $0.8–2               | $1.1–2.8         |
+| Hosted Gemma 4 31B chat VLM (benchmark rate)  | 720          | ~$0.06               | 0.08             |
+| Hosted Gemini 3.1 Flash-Lite (benchmark rate) | 720          | ~$0.28               | 0.39             |
 
-So Tier 2 only pays off when **the object gate keeps it asleep** (the
-DECISION engine is only called on scene changes and heartbeats) or when
-several cameras share one GPU. That makes Tier 1 the default and Tier 2 a
-measured upgrade — the eval screen decides, not the leaderboard.
+The object gate calls the engine only on scene changes and heartbeats, so real
+spend is a fraction of the worst case on every row. Per-run billing is what
+makes the default path work without a backend: nobody pays for an idle GPU.
 
-A GPU cold start must never silence the monitor: a `503`/timeout from the
-gateway is a scan failure, surfaced like any provider outage, and
+A cold start must never silence the monitor: a `503`/timeout from the Space
+(or gateway) is a scan failure, surfaced like any provider outage, and
 `aura.decisionFallback = 'provider'` (default on when a provider is
 configured) re-runs that scan on the PROVIDER engine.
 
 ## Aura changes
 
-| File                             | Change                                                                                                                                                                                                                      |
-|----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `lib/decision.js` (new)          | `scanDecision()`, `fetchDecisionModels()`, pure `buildDecisionRequest()` / `parseDecisionResponse()` / `missionToQuestion()`. Browser-only APIs (`fetch`, `AbortController`). Reuses `runAlertLegs()` for announce/webhook. |
-| `lib/decision-models.js` (new)   | Table of known decision models, one row each (id, label, backend hint, max options, benchmark snapshot with source URL + read date). A row, not a branch — same rule as `browser-models.js`.                                |
-| `lib/aura.js`                    | Export `callProvider`-based `runProviderLeg()` so the DECISION engine can announce through the configured provider without duplicating request code.                                                                        |
-| `lib/pricing.js`                 | `perDecision` rate source: gateway-reported, else the row's benchmark rate, else manual. `costForUsage()` handles `usage.decisions`.                                                                                        |
-| `lib/eval.js`                    | Accept `engine: 'decision'` in the matrix — detection-only is already what eval runs, so decision models drop straight in beside chat VLMs on the same images.                                                              |
-| `src/hooks/useMonitor.js`        | Dispatch on `engine === 'decision'`; fallback-to-provider on transport error when enabled.                                                                                                                                  |
-| `src/screens/SettingsScreen.jsx` | DECISION engine card: gateway URL, token, model picker (via `/v1/models`), announcer choice, fallback toggle.                                                                                                               |
-| `src/screens/MissionScreen.jsx`  | Decision question field + "Compile from mission" button.                                                                                                                                                                    |
-| `src/App.jsx`                    | `providerReady` for DECISION = gateway URL + model; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                                                            |
-| `src/screens/HistoryScreen.jsx`  | Show the backend's `timing_ms` split (prefix / score) and answer age next to latency when present.                                                                                                                          |
-| `test/decision.test.js` (new)    | Request building for all three question paths, response parsing (missing letters, malformed JSON, `choice` vs probability disagreement), threshold semantics, fallback, CORS/401 errors.                                    |
-| `deploy/decision-gateway/` (new) | Go module, Dockerfile (multi-arch, `linux/arm64` first), k8s manifests (Deployment + Service + Ingress with TLS, ConfigMap routes, Secret token), llama-server Deployment for Tier 1.                                       |
+| File                               | Change                                                                                                                                                                                                                  |
+|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lib/decision.js` (new)            | `scanDecision()`, pure `buildDecisionRequest()` / `parseDecisionResponse()` / `missionToQuestion()`, and two transports: `gradio` (call + SSE, plain `fetch`) and `http`. Reuses `runAlertLegs()` for announce/webhook. |
+| `lib/decision-models.js` (new)     | Table of known decision models, one row each (id, label, backend hint, max options, benchmark snapshot with source URL + read date). A row, not a branch — same rule as `browser-models.js`.                            |
+| `lib/aura.js`                      | Export `callProvider`-based `runProviderLeg()` so the DECISION engine can announce through the configured provider without duplicating request code.                                                                    |
+| `lib/pricing.js`                   | `perDecision` rate source: the row's rate (Replicate: $0.00022 / run), else manual. `costForUsage()` handles `usage.decisions`.                                                                                         |
+| `lib/eval.js`                      | Accept `engine: 'decision'` in the matrix — detection-only is already what eval runs, so decision models drop straight in beside chat VLMs on the same images.                                                          |
+| `src/hooks/useMonitor.js`          | Dispatch on `engine === 'decision'`; fallback-to-provider on transport error when enabled.                                                                                                                              |
+| `src/screens/SettingsScreen.jsx`   | DECISION engine card: Space URL (or `owner/space`), HF token, transport (`gradio` default, `http` for self-hosted), announcer choice, fallback toggle, third-party notice.                                              |
+| `src/screens/MissionScreen.jsx`    | Decision question field + "Compile from mission" button.                                                                                                                                                                |
+| `src/App.jsx`                      | `providerReady` for DECISION = endpoint URL set; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                                                           |
+| `src/screens/HistoryScreen.jsx`    | Show the backend's `timing_ms` split (prefix / score) and answer age next to latency when present.                                                                                                                      |
+| `test/decision.test.js` (new)      | Request building for all three question paths, response parsing (missing letters, malformed JSON, `choice` vs probability disagreement), threshold semantics, fallback, CORS/401 errors.                                |
+| `deploy/hf-space/` (new)           | `app.py` (Gradio `decide` endpoint → Replicate, pinned version), `requirements.txt`, README with the duplicate → private → secret steps. The only server-side code on the default path.                                 |
+| `deploy/decision-gateway/` (later) | Only for the self-hosted path: Go module, multi-arch Dockerfile, k8s manifests, llama-server Deployment.                                                                                                                |
 
 Settings keys, following the existing `aura.*` localStorage pattern:
-`aura.decisionUrl`, `aura.decisionKey` (blank allowed, like a local provider),
-`aura.decisionModel`, `aura.decisionAnnouncer` (`provider` | `browser` |
-`template`), `aura.decisionFallback`, `aura.decisionQuestion`.
+`aura.decisionUrl`, `aura.decisionTransport` (`gradio` | `http`),
+`aura.decisionKey` (HF token; blank allowed for a public Space or a local
+server), `aura.decisionModel`, `aura.decisionAnnouncer` (`provider` |
+`browser` | `template`), `aura.decisionFallback`, `aura.decisionQuestion`.
 
-Invariants carried over from `CLAUDE.md`: no silent mock (an unreachable
-gateway throws), blank token is valid, the service worker never intercepts the
-gateway, demo mode never touches it, and the gateway URL + model — not the
-token — are what "configured" means.
+Invariants carried over from `CLAUDE.md`: no silent mock (an unreachable Space
+throws), blank token is valid, the service worker never intercepts the Space,
+demo mode never touches it, and the endpoint URL — not the token — is what
+"configured" means. No Replicate token ever reaches the browser.
 
 ## Beyond yes/no (later)
 
@@ -413,55 +493,73 @@ The protocol already allows what chat VLMs do badly:
   stranger, nobody}`; the alert fires on a configured subset. Jev-Omni takes
   up to 20 options well, decider ≤ 8 in its narrow layout.
 - **Speculative fan-out.** One call, several questions: the mission plus
-  "is the lens obstructed?" and "is the scene too dark to judge?" — frame
-  health nearly for free, feeding the existing alert-hygiene rules
-  (`PRD-alert-hygiene.md`). Speedlab measured one multi-question request at
-  2.4× faster than separate calls because the image prefix is computed once.
+  "is the lens obstructed?" and "is the scene too dark to judge?", feeding the
+  existing alert-hygiene rules (`PRD-alert-hygiene.md`). On a Glance server
+  or batch model this is nearly free (Speedlab: 2.4× faster than separate
+  calls, the image prefix is computed once); on the default Replicate path
+  each extra question is one more $0.00022 run, run concurrently.
 - **Uncertainty cascade.** Speedlab's 2B-vs-4B result (3× faster, 83 %
   agreement) says a small model should answer the easy frames and hand off the
-  rest, not replace the big one. The cascade: Tier 1 (decider-2b / a 2B VLM)
-  → Tier 2 (Jev-Omni or Glance 4B) → PROVIDER chat VLM, each step taken only
+  rest, not replace the big one. The cascade: Glance 4B on Replicate → a
+  PROVIDER chat VLM (and, if self-hosted, decider-2b below it or Jev-Omni
+  beside it), each step taken only
   when `p(yes)` lands in an uncertain band (say 0.2–0.8). TypeSafe documents
   the same idea as confidence-gated routing. The band is tuned on the eval
   screen, per tier.
 
 ## Rollout
 
-1. **Phase 0 — no code.** Add benchmark notes to `PROVIDER_PRESETS` defaults
-   where a benchmarked hosted model is already reachable (Gemma 4 31B, Gemini
-   3.1 Flash Lite). Spike: run decider-2b-vision Q8_0 under `llama-server` on
-   the Hetzner box; record p50/p95 for 640×480 frames and check the letter
-   renormalisation against the Python reference on ~50 images, with Speedlab's
-   gate: no decision flips and max probability drift ≤ 0.10. **Go / no-go
-   for Tier 1 is that latency** (target: p95 < 3 s).
-2. **Phase 1 — Tier 1.** `lib/decision.js` + tests, gateway with `llamacpp`
-   adapter, k3s manifests, Settings/Mission UI, eval matrix support. Verify
-   with `scripts/dev-gate-e2e.mjs` pointed at a counting fake gateway.
-3. **Phase 2 — Tier 2.** `glance` passthrough first (no wrapper to write),
-   then the Jev-Omni FastAPI wrapper; fallback-to-provider, per-decision
-   pricing, `timing_ms` in history.
-4. **Phase 3.** Multi-option missions, fan-out health questions, the
-   uncertainty cascade.
+1. **Phase 0 — spike, no Aura code.** Write `deploy/hf-space/app.py`,
+   duplicate it privately, set the secret. From a browser on the Aura origin,
+   measure: CORS on the *private* Space with an HF token, warm p50/p95 over
+   ~100 scans of 640×480 frames, cold-start time after an idle hour, and
+   per-run cost from Replicate's dashboard. Run the same frames through the
+   current PROVIDER model for an accuracy comparison. **Go / no-go: warm p95
+   < 3 s and accuracy within 3 points of the current provider on the
+   operator's own frames.** Also add benchmark notes to `PROVIDER_PRESETS`
+   for the hosted chat VLMs Image JevBench measured (Gemma 4 31B, Gemini 3.1
+   Flash-Lite).
+2. **Phase 1 — DECISION engine on the default path.** `lib/decision.js` with
+   the `gradio` transport + tests, Settings/Mission UI, fallback-to-provider,
+   per-decision pricing, eval matrix support. Verify with
+   `scripts/dev-gate-e2e.mjs` pointed at a counting fake Space.
+3. **Phase 2.** Multi-option missions, fan-out health questions, the
+   uncertainty cascade, `timing_ms` in history.
+4. **Only if Phase 0 or real use says so — self-hosted path.** The `http`
+   transport, the Go gateway, decider-2b-vision on llama.cpp (with its own
+   latency and drift gate: no decision flips, max drift ≤ 0.10, p95 < 3 s on
+   the VPS), then Jev-Omni.
 
 ## Risks and open questions
 
 - **Benchmark transfer.** Everyday-photo items are synthetic, curated and
   unambiguous; a porch camera at dusk is not. Mitigation: the eval screen on
   the operator's own images before switching engines.
-- **GGUF fidelity.** Qwen3.5-VL support and image preprocessing in llama.cpp
+- **Replicate cannot be called from the browser.** Verified: no CORS headers
+  on `api.replicate.com`, which is why a Space shim exists at all. If
+  Replicate ever adds CORS, the `http` transport could call it directly and
+  the Space goes away — but the Replicate token would then live in the
+  browser, like provider keys do today.
+- **Model availability.** `untapped/glance-qwen3-vl-4b` is a community model
+  (918 runs at the time of reading); its owner can change or delete it, as
+  already happened to the demo's `-batch-test` model. Pin the version id,
+  and keep `deploy/hf-space/` able to point at a self-pushed copy of the
+  same Cog model (the Glance repo is Apache-2.0).
+- **GGUF fidelity** (self-hosted path only). Qwen3.5-VL support and image preprocessing in llama.cpp
   must match the reference processor; a quantised model can move probabilities.
   Phase 0 compares against the bf16 Python path.
 - **Prompt fidelity.** decider was trained on one exact layout; any whitespace
   drift in the gateway's template changes the letter slot. The template lives
   in one Go function with a golden test copied from `decider/prompt.py`.
-- **CPU latency on ARM** is unmeasured. If it misses the target, Tier 1 moves
-  to a small GPU and the cost table above applies.
-- **Privacy.** Frames leave the phone for the operator's own gateway, never a
-  third party (Tier 1). Tier 2 on a hosted GPU platform is a third party —
-  flag it in Settings the same way remote providers are flagged.
+- **CPU latency on ARM** (self-hosted path only) is unmeasured. If it misses
+  the target, decider moves to a small GPU and the cost table above applies.
+- **Privacy.** On the default path frames go to two third parties, Hugging
+  Face and Replicate — no worse than today's PROVIDER engine, and flagged in
+  Settings the same way. The self-hosted path is the answer for frames that
+  must stay on the operator's own infrastructure.
 - **Glance serving model.** `glance serve` is synchronous and single-request,
-  and its VLM path is not supported on CPU. It is a GPU-tier backend only,
-  and the gateway's one-in-flight rule is required, not optional.
+  and its VLM path is not supported on CPU — another reason the default path
+  uses Replicate's hosted copy rather than a self-run Glance server.
 - **Speedlab evidence is narrow.** One Apple M5, a fixed 84-decision suite,
   Qwen3-VL only. The rules above are adopted as defaults, and the eval screen
   plus Phase 0 are where they are re-checked on the VPS and on real frames.
