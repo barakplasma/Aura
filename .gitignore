@@ -4,6 +4,10 @@ node_modules/
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+# Agent skills installed with `npx skills add` (e.g. replicate/skills) are
+# local too: their files and lock stay out of the repo like .claude/skills.
+.agents/
+skills-lock.json
 .env
 .env.local
 .dev.vars
