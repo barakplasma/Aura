@@ -637,3 +637,37 @@ test("selectDetectorDevice falls back to WASM when WebGPU exists but gives no ad
   const throwing = { gpu: { requestAdapter: async () => { throw new Error("denied"); } } };
   assert.equal(await selectDetectorDevice(int8, throwing), "wasm", "a refused adapter never throws");
 });
+
+test("scanBrowser: a fired alert runs the announcement and webhook legs and sums their usage", async () => {
+  freshWorker();
+  const replies = [
+    '{"triggered":true,"confidence":91,"reason":"a person at the door"}',
+    '{"message":"Someone is at the door."}',
+    '{"message":"door: person"}',
+  ];
+  const calls = [];
+  _setChromeAICall(async (params) => {
+    calls.push(params);
+    return {
+      text: replies[calls.length - 1],
+      usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 },
+    };
+  });
+  const stages = [];
+  const result = await scanBrowser({
+    mission: "a person at the door",
+    action: "Greet them.",
+    webhookAction: "Summarize for the log.",
+    image: "x".repeat(64),
+    runtime: "chrome-ai",
+    onStage: (s) => stages.push(s),
+  });
+  assert.equal(calls.length, 3);
+  // Preceded by the runtime's own "loading" stage.
+  assert.deepEqual(stages.slice(-3), ["detecting", "announcing", "webhook"]);
+  assert.equal(result.triggered, true);
+  assert.equal(result.message, "Someone is at the door.");
+  assert.equal(result.webhookMessage, "door: person");
+  assert.equal(result.usage.prompt_tokens, 150);
+  assert.equal(result.usage.completion_tokens, 15);
+});

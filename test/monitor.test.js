@@ -14,6 +14,7 @@ import {
   parseAction,
   parseWebhookAction,
   normalizeUsage,
+  runAlertLegs,
   isLocalBaseUrl,
   sameOrigin,
 } from "../lib/monitor.js";
@@ -878,4 +879,100 @@ test("parseCompactAction uses the generic fallback when echo and reason are both
 test("parseAction's prose fallback no longer speaks a prompt echo", () => {
   const echo = "You are the announcement generator for an automated monitor.";
   assert.equal(parseAction(echo).message, "Attention please.");
+});
+
+test("runAlertLegs: below threshold runs no legs and keeps the detection usage", async () => {
+  const usage = normalizeUsage({ prompt_tokens: 10, completion_tokens: 2 });
+  const calls = [];
+  const out = await runAlertLegs({
+    detection: { triggered: true, confidence: 0.4, reason: "a cat" },
+    threshold: 0.6,
+    action: "announce it",
+    webhookAction: "post it",
+    usage,
+    onStage: (s) => calls.push(s),
+    runLeg: async (leg) => calls.push(leg),
+  });
+  assert.deepEqual(out, { fired: false, message: "", webhookMessage: "", usage });
+  assert.deepEqual(calls, []);
+});
+
+test("runAlertLegs: fired runs announcement then webhook, in order, and sums usage", async () => {
+  const calls = [];
+  const out = await runAlertLegs({
+    detection: { triggered: true, confidence: 0.9, reason: "a cat" },
+    threshold: 0.6,
+    action: "announce it",
+    webhookAction: "post it",
+    usage: normalizeUsage({ prompt_tokens: 10, completion_tokens: 2 }),
+    onStage: (s) => calls.push(`stage:${s}`),
+    runLeg: async (leg) => {
+      calls.push(`leg:${leg}`);
+      return { message: `${leg} text`, usage: normalizeUsage({ prompt_tokens: 5, completion_tokens: 1 }) };
+    },
+  });
+  assert.deepEqual(calls, ["stage:announcing", "leg:action", "stage:webhook", "leg:webhook"]);
+  assert.equal(out.fired, true);
+  assert.equal(out.message, "action text");
+  assert.equal(out.webhookMessage, "webhook text");
+  assert.equal(out.usage.prompt_tokens, 20);
+  assert.equal(out.usage.completion_tokens, 4);
+});
+
+test("runAlertLegs: a blank action speaks the reason and a blank webhook action skips its leg", async () => {
+  const legs = [];
+  const out = await runAlertLegs({
+    detection: { triggered: true, confidence: 0.9, reason: "a cat" },
+    threshold: 0.6,
+    action: "  ",
+    webhookAction: "",
+    usage: normalizeUsage({}),
+    runLeg: async (leg) => legs.push(leg),
+  });
+  assert.deepEqual(legs, []);
+  assert.equal(out.message, "a cat");
+  assert.equal(out.webhookMessage, "");
+});
+
+test("scanClient: a fired alert runs detection, announcement, webhook in order and sums their usage", async () => {
+  const replies = [
+    '{"triggered":true,"confidence":90,"reason":"a person at the door"}',
+    '{"message":"Someone is at the door."}',
+    '{"message":"door: person"}',
+  ];
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    const content = replies[bodies.length - 1];
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content } }],
+        usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+      }),
+    };
+  };
+  const stages = [];
+  try {
+    const result = await scanClient({
+      baseUrl: "http://localhost:11434/v1",
+      model: "qwen2.5vl",
+      mission: "a person at the door",
+      action: "Greet them.",
+      webhookAction: "Summarize for the log.",
+      image: "x".repeat(64),
+      requestTimeout: 30,
+      onStage: (s) => stages.push(s),
+    });
+    assert.equal(bodies.length, 3);
+    assert.deepEqual(stages, ["detecting", "announcing", "webhook"]);
+    assert.equal(result.triggered, true);
+    assert.equal(result.message, "Someone is at the door.");
+    assert.equal(result.webhookMessage, "door: person");
+    assert.equal(result.usage.prompt_tokens, 300);
+    assert.equal(result.usage.completion_tokens, 30);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
