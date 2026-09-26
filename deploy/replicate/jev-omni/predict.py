@@ -159,9 +159,17 @@ class Predictor(BasePredictor):
                 # below remain useful if pget emits no progress for a long time.
                 process = subprocess.Popen(["pget", "multifile", "-"], stdin=subprocess.PIPE, text=True)
                 assert process.stdin is not None
-                process.stdin.write(manifest)
-                process.stdin.close()
+                try:
+                    process.stdin.write(manifest)
+                except BrokenPipeError:
+                    # Capture the actual pget exit status instead of masking an
+                    # early startup failure with a generic broken-pipe error.
+                    return_code = process.wait()
+                    raise RuntimeError(f"pget exited while reading its manifest (exit_code={return_code})")
+                finally:
+                    process.stdin.close()
                 last_report = download_started
+                previous_total = sum(directory_file_sizes(path).values())
                 while process.poll() is None:
                     time.sleep(30)
                     now = time.monotonic()
@@ -169,13 +177,15 @@ class Predictor(BasePredictor):
                         snapshot = directory_file_sizes(path)
                         total = sum(snapshot.values())
                         elapsed = now - download_started
-                        rate = total / elapsed if elapsed else 0
-                        log(f"weights: pget still running after {elapsed / 60:.1f} min; observed files={len(snapshot)}/{expected_count}, bytes={format_bytes(total)}, avg rate={rate / (1024 ** 2):.2f} MiB/s")
+                        interval = now - last_report
+                        rate = max(0, total - previous_total) / interval if interval else 0
+                        log(f"weights: pget still running after {elapsed / 60:.1f} min; observed files={len(snapshot)}/{expected_count}, bytes={format_bytes(total)}, recent rate={rate / (1024 ** 2):.2f} MiB/s")
                         if snapshot:
                             log("weights: progress by file: " + ", ".join(f"{name}={format_bytes(size)}" for name, size in sorted(snapshot.items())))
                         disk = shutil.disk_usage(path)
                         log(f"weights: disk free={format_bytes(disk.free)}")
                         last_report = now
+                        previous_total = total
                 return_code = process.returncode
                 elapsed = time.monotonic() - download_started
                 if return_code != 0:
@@ -245,6 +255,8 @@ class Predictor(BasePredictor):
         options_json: str = Input(description="JSON array of choice labels (choice only)", default="[]"),
         state: str = Input(description="Optional text context about the scene", default=""),
     ) -> dict:
+        run_started = time.monotonic()
+        log(f"prediction: started question_type={question_type}, image={'file' if image is not None else 'base64' if image_base64 else 'missing'}, state_chars={len(state)}")
         if not question.strip():
             raise ValueError("question is required.")
         options = resolve_options(question_type, options_json)
@@ -262,4 +274,6 @@ class Predictor(BasePredictor):
                                                  media=tmp.name, modality="image")
         else:
             raise ValueError("Provide image or image_base64.")
-        return format_output(result["probabilities"], options)
+        output = format_output(result["probabilities"], options)
+        log(f"prediction: completed in {time.monotonic() - run_started:.2f}s, answer={output['answer']!r}, confidence={output['confidence']:.4f}")
+        return output
