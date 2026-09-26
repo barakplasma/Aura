@@ -21,6 +21,8 @@
 // do: the worker is created by useMonitor after load, is replaced on every
 // model change, and its console messages are not forwarded to the page.
 
+import { cdpSender, settleReply } from "./cdp-request.mjs";
+
 const CDP = process.env.CDP_BASE || "http://127.0.0.1:9222";
 const SECONDS = Number(process.env.SECONDS || 180);
 const DEADLINE = Date.now() + SECONDS * 1000;
@@ -45,7 +47,6 @@ function connect(url, openMs = 8_000) {
     // worker that could not reply, so the open itself is timed: a watcher that
     // cannot report the stall it exists to find is worse than no watcher.
     const ws = new WebSocket(url);
-    let id = 0;
     const waiting = new Map();
     const timer = setTimeout(() => {
       try {
@@ -61,11 +62,8 @@ function connect(url, openMs = 8_000) {
     ws.onclose = () => done(new Error(`ws closed ${url}`));
     ws.onmessage = (m) => {
       const d = JSON.parse(m.data);
-      if (d.id && waiting.has(d.id)) {
-        const ok = waiting.get(d.id);
-        waiting.delete(d.id);
-        ok(d.result);
-      } else if (d.method === "Runtime.consoleAPICalled") {
+      if (settleReply(waiting, d)) return;
+      if (d.method === "Runtime.consoleAPICalled") {
         const text = (d.params?.args || [])
           .map((a) => (a.value !== undefined ? String(a.value) : a.description || a.type))
           .join(" ");
@@ -80,19 +78,10 @@ function connect(url, openMs = 8_000) {
       ws.onclose = () => {};
       resolve({
         ws,
-        send(method, params = {}, ms = 10_000) {
-          const mid = ++id;
-          return new Promise((ok, fail) => {
-            // A dropped entry is not an answer: the original left the promise
-            // unsettled, so `await send("Runtime.enable")` on a starved worker
-            // parked the whole watcher until the deadline killed it.
-            waiting.set(mid, { ok, fail });
-            setTimeout(() => {
-              if (waiting.delete(mid)) fail(new Error(`${method} timed out after ${ms}ms`));
-            }, ms);
-            ws.send(JSON.stringify({ id: mid, method, params }));
-          });
-        },
+        // Every call has a deadline: `await send("Runtime.enable")` on a
+        // starved worker once parked the whole watcher until the deadline
+        // killed it.
+        send: cdpSender(ws, waiting, 10_000),
       });
     };
   });

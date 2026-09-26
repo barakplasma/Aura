@@ -19,6 +19,7 @@
 //   SAMPLES=8 MODELS=smolvlm2-256m,smolvlm2-500m node scripts/dev-latency-ladder.mjs
 
 import WebSocket from "ws";
+import { cdpSender, settleReply } from "./cdp-request.mjs";
 import { percentile } from "../lib/stats.js";
 import { BROWSER_MODELS } from "../lib/browser-models.js";
 
@@ -101,32 +102,18 @@ async function pageTarget() {
 function connect(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
-    let id = 0;
     const waiting = new Map();
     const events = [];
     ws.onmessage = (m) => {
       const d = JSON.parse(m.data);
-      if (d.id && waiting.has(d.id)) {
-        const { ok, fail } = waiting.get(d.id);
-        waiting.delete(d.id);
-        d.error ? fail(new Error(d.error.message)) : ok(d.result);
-      } else if (d.method) events.push(d);
+      if (!settleReply(waiting, d) && d.method) events.push(d);
     };
     ws.onerror = () => reject(new Error(`CDP websocket error: ${url}`));
     ws.onopen = () =>
       resolve({
         ws,
         events,
-        send(method, params = {}, ms = 120_000) {
-          const mid = ++id;
-          return new Promise((ok, fail) => {
-            waiting.set(mid, { ok, fail });
-            setTimeout(() => {
-              if (waiting.delete(mid)) fail(new Error(`${method} timed out`));
-            }, ms);
-            ws.send(JSON.stringify({ id: mid, method, params }));
-          });
-        },
+        send: cdpSender(ws, waiting, 120_000),
         eval(js, { awaitPromise = false } = {}) {
           return this.send("Runtime.evaluate", {
             expression: js,

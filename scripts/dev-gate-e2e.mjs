@@ -37,6 +37,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import WebSocket from "ws";
+import { settleReply } from "./cdp-request.mjs";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
@@ -218,16 +219,12 @@ async function cdpConnect(port) {
   const listeners = [];
   ws.on("message", (raw) => {
     const msg = JSON.parse(raw);
-    if (msg.id && waiting.has(msg.id)) {
-      const { resolve, reject } = waiting.get(msg.id);
-      waiting.delete(msg.id);
-      msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
-    } else for (const fn of listeners) fn(msg);
+    if (!settleReply(waiting, msg)) for (const fn of listeners) fn(msg);
   });
   const send = (method, params = {}, sessionId) =>
     new Promise((resolve, reject) => {
       const mid = ++id;
-      waiting.set(mid, { resolve, reject });
+      waiting.set(mid, { ok: resolve, fail: reject });
       ws.send(JSON.stringify({ id: mid, method, params, sessionId }));
     });
   return { send, on: (fn) => listeners.push(fn), close: () => ws.close() };
