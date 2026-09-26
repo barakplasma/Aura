@@ -393,7 +393,7 @@ scales with Aura's audience.
 ### Default relay: `aura-relay.526462738.xyz` in homelab-manifests
 
 The relay lives in the operator's
-[homelab-manifests](https://github.com/barakplasma/homelab-manifests) repo
+`barakplasma/homelab-manifests` (private) repo
 as one more Argo CD-reconciled chart, `apps/aura-relay/`, following the
 repo's existing conventions:
 
