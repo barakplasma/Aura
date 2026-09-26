@@ -22,3 +22,4 @@ numpy==2.5.3
 pillow==12.3.0
 anyio==4.15.1
 idna==3.20
+loguru==0.7.3

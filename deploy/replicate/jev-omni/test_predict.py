@@ -4,10 +4,15 @@ Run: python3 -m unittest deploy/replicate/jev-omni/test_predict.py
 """
 import base64
 import importlib.util
+import io
 import pathlib
 import sys
+import tempfile
 import types
 import unittest
+from unittest import mock
+
+from loguru import logger
 
 # predict.py imports cog, which only exists inside the Cog image; stub the
 # three names it uses so the pure helpers load anywhere.
@@ -77,6 +82,55 @@ class WeightsManifest(unittest.TestCase):
 
     def test_covers_hashed_files(self):
         self.assertTrue(set(predict.EXPECTED_SHA256) <= set(predict.WEIGHT_FILES))
+
+
+class PgetLogging(unittest.TestCase):
+    def test_child_output_is_relayed_through_loguru(self):
+        sink = io.StringIO()
+        sink_id = logger.add(sink, format="{message}", level="INFO")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                predict.run_pget(
+                    pathlib.Path(tmp),
+                    "https://example.com/weight /tmp/weight\n",
+                    timeout_seconds=5,
+                    command=[sys.executable, "-c", "import os,sys; sys.stdin.read(); sys.stdout.write('first progress\\rsecond progress\\r\\nmax_files=' + os.getenv('PGET_MAX_CONCURRENT_FILES', 'missing') + '\\n'); sys.stderr.write('stderr detail\\n'); sys.stdout.flush(); sys.stderr.flush()"],
+                )
+            self.assertIn("pget: first progress", sink.getvalue())
+            self.assertIn("pget: second progress", sink.getvalue())
+            self.assertIn("pget: max_files=1", sink.getvalue())
+            self.assertIn("pget: stderr detail", sink.getvalue())
+        finally:
+            logger.remove(sink_id)
+
+    def test_hard_deadline_terminates_silent_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(TimeoutError):
+                predict.run_pget(
+                    pathlib.Path(tmp), "manifest\n", timeout_seconds=0.1,
+                    command=[sys.executable, "-c", "import sys,time; sys.stdin.read(); time.sleep(10)"],
+                )
+
+    def test_manifest_can_target_only_missing_files(self):
+        line = predict.weights_manifest(pathlib.Path("/w"), ["model.safetensors"])
+        self.assertEqual(
+            line,
+            f"https://huggingface.co/{predict.MODEL_ID}/resolve/{predict.REVISION}/model.safetensors /w/model.safetensors\n",
+        )
+
+    def test_initialization_failure_disables_automatic_retries(self):
+        predictor = predict.Predictor()
+        predictor.setup()
+        predictor._init_error = RuntimeError("synthetic failure")
+        with self.assertRaisesRegex(RuntimeError, "automatic retry disabled"):
+            predictor._ensure_ready()
+
+    def test_invalid_image_is_rejected_before_model_download(self):
+        predictor = predict.Predictor()
+        predictor.setup()
+        with mock.patch.object(predictor, "_ensure_ready", side_effect=AssertionError("should not initialize")):
+            with self.assertRaisesRegex(ValueError, "valid base64"):
+                predictor.run(question="What is shown?", image_base64="not base64")
 
 
 if __name__ == "__main__":

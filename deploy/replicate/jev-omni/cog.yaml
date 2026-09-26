@@ -2,7 +2,8 @@
 # r8.im/barakplasma/jev-omni. Public so every caller pays for their own
 # runs with their own token (BYOK) - see docs/PRD-decision-engine.md.
 # The ~24 GB checkpoint is not baked in: a layer that size is rejected by
-# r8.im (413 Payload Too Large). setup() fetches it with pget instead.
+# r8.im (413 Payload Too Large). The first prediction fetches it with pget so
+# downloader output and heartbeat diagnostics appear in that prediction's logs.
 build:
   gpu: true
   # Cog 0.23 has no CUDA mapping for torch 2.14; pin it to match the

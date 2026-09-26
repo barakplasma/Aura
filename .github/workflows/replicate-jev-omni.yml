@@ -52,7 +52,9 @@ jobs:
 
       - name: Run the predictor's unit tests
         if: steps.token.outputs.present == 'true'
-        run: python3 -m unittest deploy/replicate/jev-omni/test_predict.py
+        run: |
+          python3 -m pip install loguru==0.7.3
+          python3 -m unittest deploy/replicate/jev-omni/test_predict.py
 
       # A CUDA + torch image needs more than the runner's default free disk.
       - uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
