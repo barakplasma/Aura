@@ -1,5 +1,9 @@
 node_modules/
-.claude/
+# Local Claude Code state (skills, settings.local.json) stays untracked; the
+# SessionStart hook and the settings that register it are shared.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 .env
 .env.local
 .dev.vars

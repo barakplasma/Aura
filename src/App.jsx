@@ -3,7 +3,7 @@ import { IonApp, IonToast } from '@ionic/react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
-import { DEFAULT_BROWSER_MODEL } from '../lib/browser-engine.js';
+import { DEFAULT_BROWSER_MODEL, DEFAULT_DETECTOR_MODEL } from '../lib/browser-engine.js';
 import { pricingKey, resolvePricing } from '../lib/pricing.js';
 import { resumeWindowOpen } from '../lib/keepalive.js';
 import TopBar from './components/TopBar.jsx';
@@ -72,6 +72,18 @@ export default function App() {
   const [webhookSchema, setWebhookSchema] = useLocalStorage('aura.webhookSchema', '');
   const [webhookIncludeImage, setWebhookIncludeImage] = useLocalStorage('aura.webhookIncludeImage', false);
   const [keepScreenOn, setKeepScreenOn] = useLocalStorage('aura.keepScreenOn', true);
+  // Object gate (docs/PRD-object-gate.md) — a local detector decides whether
+  // the vision model runs at all. Off by default: it changes when scans happen.
+  const [objectGate, setObjectGate] = useLocalStorage('aura.objectGate', false);
+  const [objectModel, setObjectModel] = useLocalStorage('aura.objectModel', DEFAULT_DETECTOR_MODEL);
+  const [objectGateEveryS, setObjectGateEveryS] = useLocalStorage('aura.objectGateEveryS', 2);
+  const [objectClasses, setObjectClasses] = useLocalStorage('aura.objectClasses', '');
+  const [objectWakeOn, setObjectWakeOn] = useLocalStorage('aura.objectWakeOn', 'added,removed');
+  const [objectMoveFrac, setObjectMoveFrac] = useLocalStorage('aura.objectMoveFrac', 0.15);
+  const [objectSens, setObjectSens] = useLocalStorage('aura.objectSens', 'medium');
+  const [heartbeatMin, setHeartbeatMin] = useLocalStorage('aura.heartbeatMin', 5);
+  const [objectPromptContext, setObjectPromptContext] = useLocalStorage('aura.objectPromptContext', false);
+  const [vlmIdleEvictMin, setVlmIdleEvictMin] = useLocalStorage('aura.vlmIdleEvictMin', 10);
   // Written by handleStart/handleStop, read once at boot to offer RESUME.
   const [armed, setArmed] = useLocalStorage('aura.armed', false);
   const [armedAt, setArmedAt] = useLocalStorage('aura.armedAt', 0);
@@ -105,6 +117,8 @@ export default function App() {
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
     speech, haptics, demo: demoMode,
     webhookUrl, webhookMethod, webhookHeaders, webhookAction, webhookSchema, webhookIncludeImage,
+    objectGate, objectModel, objectGateEveryS, objectClasses, objectWakeOn,
+    objectMoveFrac, objectSens, heartbeatMin, objectPromptContext, vlmIdleEvictMin,
   };
 
   const videoRef = useRef(null);
@@ -241,6 +255,7 @@ export default function App() {
           {screen === 'monitor' && (
             <MonitorScreen
               running={running}
+              telemetry={telemetry}
               onToggle={handleToggle}
               providerReady={providerReady}
               engine={engine}
@@ -308,6 +323,17 @@ export default function App() {
               cameraFacing={cameraFacing} setCameraFacing={setCameraFacing}
               cameraDeviceId={cameraDeviceId} setCameraDeviceId={setCameraDeviceId}
               keepScreenOn={keepScreenOn} setKeepScreenOn={setKeepScreenOn}
+              mission={mission}
+              objectGate={objectGate} setObjectGate={setObjectGate}
+              objectModel={objectModel} setObjectModel={setObjectModel}
+              objectGateEveryS={objectGateEveryS} setObjectGateEveryS={setObjectGateEveryS}
+              objectClasses={objectClasses} setObjectClasses={setObjectClasses}
+              objectWakeOn={objectWakeOn} setObjectWakeOn={setObjectWakeOn}
+              objectMoveFrac={objectMoveFrac} setObjectMoveFrac={setObjectMoveFrac}
+              objectSens={objectSens} setObjectSens={setObjectSens}
+              heartbeatMin={heartbeatMin} setHeartbeatMin={setHeartbeatMin}
+              objectPromptContext={objectPromptContext} setObjectPromptContext={setObjectPromptContext}
+              vlmIdleEvictMin={vlmIdleEvictMin} setVlmIdleEvictMin={setVlmIdleEvictMin}
               webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
               webhookMethod={webhookMethod} setWebhookMethod={setWebhookMethod}
               webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}

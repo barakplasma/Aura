@@ -1,6 +1,6 @@
 # PRD — Object-inventory gate: YOLO26 as the VLM's doorman
 
-Status: draft · Owner: barakplasma · Scope: `lib/` + `src/` + `test/`
+Status: **implemented** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/`
 Category: **in-browser inference**
 Depends on: worker + offline plumbing from `PRD-browser-engine.md`
 Supersedes: the stage-B CLIP gate in `PRD-local-prefilters.md` (stage A, the
@@ -460,6 +460,67 @@ and the detector is local either way):
 - **Purity**: `lib/object-gate.js` and `lib/detector-models.js` import nothing
   from the DOM, ORT, or Transformers.js; `npm test` green.
 - Gate off ⇒ byte-identical behaviour to today.
+
+## Implementation notes
+
+Built as specified, with three deviations worth recording:
+
+- **Association is IoU *then* nearest-centre**, not IoU alone. At a 2 s cadence
+  a walking person clears their own bounding-box width between ticks, and two
+  non-overlapping boxes have IoU 0 — so pure IoU matching turned one person
+  crossing the frame into a stream of `removed` + `added` pairs, each of which
+  would have woken the VLM. Same-class boxes of comparable size (within 4x
+  area) within `matchMoveFrac` of each other now associate by distance.
+- **The decode threshold is `exitScore`, not `enterScore`.** The weaker
+  detections are what keep an already-present track alive; `stepTracks()` is
+  what refuses to open a *new* track below `enterScore`. Two-tier thresholds
+  only work if the lower tier actually reaches the tracker.
+- **Preprocessing is done in the worker with an OffscreenCanvas**, not through
+  `AutoProcessor`. The export's own `preprocessor_config.json` asks for a
+  stretch-resize and a /255 rescale with no normalization or padding — three
+  lines of canvas — and going through the processor would have added a Hub
+  round-trip plus a `YolosImageProcessor` whose defaults we'd only switch back
+  off.
+
+### Hardening pass
+
+The loop logic was first written inline in `useMonitor`, where nothing could
+test it. Extracting it into `lib/gate-session.js` — pure, clock-injected, so an
+armed session of several hours runs under `node --test` in milliseconds — and
+then driving the built app in headless Chromium (`scripts/dev-gate-e2e.mjs`)
+found six bugs, each now pinned by a test that fails when it is reintroduced:
+
+| Found by                                         | Bug                                                                 | Consequence                                                                                                        |
+|--------------------------------------------------|---------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| reading the extracted logic                      | the stage-0 reference only rebased after a VLM scan                 | any persistent non-object change (a curtain, a lamp) ran the detector on every tick until the heartbeat            |
+| reading the extracted logic                      | a detector that failed to load was retried every tick               | an offline first run re-requested the model from the Hub every 2 s, forever                                        |
+| session tests, against the fix for the first bug | stage 0 could skip the detector while a track was still a candidate | a person who walked in and stood still was **never reported**                                                      |
+| session tests                                    | a tick that decided early rebased onto an *older* stage-0 frame     | a scene returning to how it looked then read as "still"                                                            |
+| real browser                                     | the detector chose `webgpu` whenever `navigator.gpu` existed        | with the API present but no adapter (headless, blocklisted GPUs) every load failed instead of falling back to WASM |
+| real browser                                     | the post-scan telemetry update replaced the whole object            | the gate's rows vanished after every scan, and main's muted-track SKIPPED counter reset with them                  |
+
+The third is the instructive one: the obvious fix for the first bug introduced
+a false negative, the one failure a gate must never have. The rule that closes
+both is that **stage 0 may only skip while every track is settled**.
+
+End to end, on the fake camera (an empty room alternating with Ultralytics'
+`bus.jpg` every 15 s, 1 s gate ticks, a 1 s scan interval, YOLO26n int8 on
+single-threaded WASM at ~1.7 s a pass):
+
+|          | VLM calls in 90 s                                                                  |
+|----------|------------------------------------------------------------------------------------|
+| gate off | 89                                                                                 |
+| gate on  | 6 — the baseline plus one per scene change, each `added bus +4` / `removed bus +4` |
+
+On a phone with WebGPU the detector pass is expected to be tens of
+milliseconds rather than ~1.7 s, which shortens the time from an object
+appearing to the VLM waking; that figure still needs the reference device.
+
+The I/O contract above was verified end to end against the real artifacts
+(`AutoModel.from_pretrained` + `onnx-community/yolo26n-ONNX` int8, Ultralytics'
+own `bus.jpg`): outputs `logits [1,300,80]` and `pred_boxes [1,300,4]`, raw
+logit range −49.20…2.50 (pre-sigmoid, as predicted), decoding via
+`lib/object-gate.js` to `person x4 · bus x1` with no NMS.
 
 ## Risks
 

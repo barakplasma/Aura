@@ -42,10 +42,12 @@
 
 import {
   AutoProcessor,
+  AutoModel,
   AutoModelForImageTextToText,
   AutoTokenizer,
   RawImage,
   StoppingCriteria,
+  Tensor,
   env,
 } from "@huggingface/transformers";
 import { fetchModelSizeEstimate } from "../../lib/model-size.js";
@@ -179,6 +181,12 @@ const DEFAULT_MAX_NEW_TOKENS = 48;
 // One model loaded at a time — the app only ever runs one BROWSER-engine
 // model concurrently, and holding two in VRAM/RAM would be wasteful.
 let current = null; // { task, modelId, device, model, processor, recipe, stopping }
+// The object gate's detector (docs/PRD-object-gate.md) lives in this same
+// worker rather than a second one: one ORT instance, one WebGPU device, one
+// adapter-limits call, one cache bucket. It is a separate slot rather than
+// part of `current` because it coexists with the VLM — single-digit megabytes
+// beside a model three orders of magnitude bigger.
+let detector = null; // { modelId, device, model }
 let operationQueue = Promise.resolve();
 
 // Lets the facade distinguish an import/initialisation failure from a model
@@ -200,6 +208,7 @@ self.addEventListener("message", (event) => {
     try {
       if (type === "load") await handleLoad(id, data);
       else if (type === "scan") await handleScan(id, data);
+      else if (type === "detect") await handleDetect(id, data);
       else if (type === "unload") await handleUnload(id, data);
       else post({ id, type: "error", message: `Unknown message type: ${type}` });
     } catch (err) {
@@ -208,8 +217,9 @@ self.addEventListener("message", (event) => {
   });
 });
 
-function post(msg) {
-  self.postMessage(msg);
+function post(msg, transfer) {
+  if (transfer) self.postMessage(msg, transfer);
+  else self.postMessage(msg);
 }
 
 // ONNX Runtime explains a WebGPU→CPU downgrade with a console warning, and
@@ -235,6 +245,7 @@ for (const kind of ["warn", "error"]) {
 }
 
 async function handleLoad(id, { task, model, dtype, device, recipe }) {
+  if (task === "detect") return handleLoadDetector(id, { model, dtype, device });
   if (task !== "vlm") throw new Error(`Unsupported task: ${task}`);
 
   // Already loaded with the same model + device — nothing to do.
@@ -437,6 +448,91 @@ async function handleScan(
 }
 
 // Flips the interrupt flag so the in-flight generate() loop (if any) stops
+// --- Object gate ----------------------------------------------------------
+
+async function handleLoadDetector(id, { model, dtype, device }) {
+  if (detector && detector.modelId === model && detector.device === device) {
+    post({ id, type: "ready", device: detector.device });
+    return;
+  }
+  await disposeDetector();
+  const resolvedDevice =
+    device || (typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm");
+  // Shares the VLM's device request: useAdapterLimits() is idempotent, and on
+  // a gated session the detector is usually what triggers it first.
+  await useAdapterLimits(resolvedDevice);
+  // No processor. This export's own preprocessor_config.json asks for a
+  // stretch-resize and a /255 rescale with no normalization and no padding —
+  // three lines of OffscreenCanvas below — so AutoProcessor would only add a
+  // Hub round-trip and a YolosImageProcessor whose defaults we'd switch off.
+  const model_ = await AutoModel.from_pretrained(model, {
+    dtype,
+    device: resolvedDevice,
+  });
+  detector = { modelId: model, device: resolvedDevice, model: model_ };
+  post({ id, type: "ready", device: resolvedDevice });
+}
+
+// One reusable canvas and one reusable input buffer: the export's spatial dims
+// are fixed at 640x640, and reallocating 1.6 MB of pixels twice a second would
+// hand the GC work for nothing.
+let detectCanvas = null;
+let detectCtx = null;
+let detectBuffer = null;
+
+async function handleDetect(id, { bitmap, size = 640 }) {
+  if (!detector) throw new Error("No detector loaded — send a 'load' message first.");
+  const start = performance.now();
+
+  if (!detectCanvas || detectCanvas.width !== size) {
+    detectCanvas = new OffscreenCanvas(size, size);
+    detectCtx = detectCanvas.getContext("2d", { willReadFrequently: true });
+    detectBuffer = new Float32Array(3 * size * size);
+  }
+  // Stretch, don't letterbox: the gate only ever compares a frame against
+  // other frames from the same camera, so a consistent aspect distortion
+  // cancels out — and skipping the pad removes both an un-letterboxing step
+  // and a class of off-by-a-pad-offset bugs.
+  detectCtx.drawImage(bitmap, 0, 0, size, size);
+  bitmap.close?.();
+  const { data } = detectCtx.getImageData(0, 0, size, size);
+
+  const plane = size * size;
+  for (let i = 0, p = 0; i < plane; i++, p += 4) {
+    detectBuffer[i] = data[p] / 255;
+    detectBuffer[plane + i] = data[p + 1] / 255;
+    detectBuffer[2 * plane + i] = data[p + 2] / 255;
+  }
+  const out = await detector.model({
+    pixel_values: new Tensor("float32", detectBuffer, [1, 3, size, size]),
+  });
+
+  // logits [1, 300, 80] raw (pre-sigmoid) and pred_boxes [1, 300, 4] as
+  // normalized cxcywh. Copied out of the session's own buffers before being
+  // transferred — what ORT hands back are views the next run may reuse.
+  const logits = Float32Array.from(out.logits.data);
+  const boxes = Float32Array.from(out.pred_boxes.data);
+  post(
+    {
+      id,
+      type: "detections",
+      logits,
+      logitsDims: out.logits.dims.slice(1),
+      boxes,
+      boxesDims: out.pred_boxes.dims.slice(1),
+      latencyMs: Math.round(performance.now() - start),
+    },
+    [logits.buffer, boxes.buffer],
+  );
+}
+
+async function disposeDetector() {
+  if (!detector) return;
+  const previous = detector;
+  detector = null;
+  await previous.model?.dispose?.();
+}
+
 // within one token. There's only ever one model/stopping-criteria pair
 // loaded at a time, so no id matching is needed here.
 function handleAbort() {
@@ -455,6 +551,7 @@ async function disposeCurrent(task) {
 }
 
 async function handleUnload(id, { task }) {
-  await disposeCurrent(task);
+  if (!task || task === "detect") await disposeDetector();
+  if (task !== "detect") await disposeCurrent(task);
   post({ id, type: "ready", device: null });
 }

@@ -27,30 +27,34 @@ React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → mini
 code-split ESM bundles in `public/assets/` (with linked sourcemaps). `src/aura.css`
 is copied to `public/aura.css` by the build — edit the `src/` copy only.
 
-| Path                              | Role                                                                                                                       |
-|-----------------------------------|----------------------------------------------------------------------------------------------------------------------------|
-| `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                                |
-| `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches        |
-| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen    |
-| `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                                    |
-| `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                                 |
-| `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                       |
-| `public/index.html`               | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                          |
-| `public/feedback.js`              | Web Speech + Web Vibration                                                                                                 |
-| `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models                       |
-| `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)           |
-| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                      |
-| `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                |
-| `lib/chrome-ai.js`                | Chrome built-in AI (Gemini Nano) transport parallel to the worker's — see below                                            |
-| `src/workers/ml.worker.js`        | Runs the selected VLM via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers`                  |
-| `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                      |
-| `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                    |
-| `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                            |
-| `lib/eval.js`                     | Prompt-evaluation engine: expands the image × model × prompt matrix, runs detection-only scans, scores results             |
-| `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                          |
-| `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                    |
-| `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                             |
-| `test/`                           | Unit tests for the lib/ pure helpers, demo.js, browser-engine protocol, and scanClient validation                          |
+| Path                              | Role                                                                                                                                  |
+|-----------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `src/App.jsx`                     | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                                           |
+| `src/components/MonitorStage.jsx` | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches                   |
+| `src/screens/`                    | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen               |
+| `src/hooks/useMonitor.js`         | Camera capture + scan loop + alert delivery + telemetry                                                                               |
+| `src/aura.css`                    | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                                            |
+| `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                  |
+| `public/index.html`               | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                     |
+| `public/feedback.js`              | Web Speech + Web Vibration                                                                                                            |
+| `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models                                  |
+| `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)                      |
+| `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                                 |
+| `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                           |
+| `lib/detector-models.js`          | Object-gate detector table (YOLO26 rows) + COCO labels, `suggestClasses()` — pure                                                     |
+| `lib/gate-session.js`             | Object gate's per-session state machine: every scan/skip decision, clock-injected — pure                                              |
+| `lib/object-gate.js`              | Object gate tracker: decode YOLO26 output, hysteresis, `gateDecision()` — pure                                                        |
+| `lib/motion.js`                   | Stage 0 of the gate: 64×48 grayscale diff with mean-brightness subtraction — pure                                                     |
+| `lib/chrome-ai.js`                | Chrome built-in AI (Gemini Nano) transport parallel to the worker's — see below                                                       |
+| `src/workers/ml.worker.js`        | Runs the selected VLM **and** the gate's detector via Transformers.js/WebGPU — the ONLY file that imports `@huggingface/transformers` |
+| `lib/model-size.js`               | Best-effort total download size for a BROWSER model (Hub file-tree lookup), used only by ml.worker.js                                 |
+| `lib/download-progress.js`        | Aggregates per-file download progress into one running, monotonic percentage, used only by ml.worker.js                               |
+| `lib/demo.js`                     | Demo mode: deterministic simulated scans (never emits webhooks)                                                                       |
+| `lib/eval.js`                     | Prompt-evaluation engine: expands the image × model × prompt matrix, runs detection-only scans, scores results                        |
+| `lib/eval-store.js`               | IndexedDB persistence for eval sample images + last run (async adapter, in-memory impl for tests)                                     |
+| `lib/training-store.js`           | localStorage persistence for training examples/artifacts (no ax import)                                                               |
+| `lib/training.js`                 | ax/GEPA optimization — only ever loaded via dynamic `import()`                                                                        |
+| `test/`                           | Unit tests for the lib/ pure helpers, demo.js, browser-engine protocol, and scanClient validation                                     |
 
 The BROWSER engine's runtime choice — `aura.browserRuntime`: 'auto' | 'transformers' | 'chrome-ai' —
 is resolved by `resolveBrowserRuntime()` in lib/browser-engine.js. Auto picks Chrome built-in AI only when
@@ -83,6 +87,7 @@ or from within a dedicated worker:
 npm run build             # esbuild: minify + code-split src/ → public/assets/
 npm run dev               # npx serve public → http://localhost:3000
 npm test                  # node --test
+npm run lint              # stylelint + jscpd + djlint (MegaLinter's checks)
 npm run deploy            # Build + gh-pages -d public
 ```
 
@@ -105,6 +110,27 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Match the surrounding comment density and naming.
 - All AI logic must be browser-compatible (uses `fetch`, `AbortController`, no Node APIs).
 - After changing the engine, add/extend a test in `test/`.
+- The **object gate** (docs/PRD-object-gate.md) is a three-stage cascade: a
+  64×48 pixel diff, then YOLO26 over the frame, then — only if the *set of
+  objects* changed — the VLM. **Every decision lives in `lib/gate-session.js`**
+  (baseline, heartbeat, stage-0 skips, deferral, detector backoff, rebasing),
+  pure and clock-injected so whole sessions run under `node --test`;
+  `useMonitor` only fetches what each step asks for. The tracker is
+  `lib/object-gate.js`, the pixel diff `lib/motion.js`, and the detector a row
+  in `lib/detector-models.js`. `ml.worker.js` keeps the detector in its own
+  slot (`detector`) beside the VLM's `current`, so both share one ORT instance
+  and one WebGPU device. The gate must never be able to silence the monitor:
+  every failure path inside it decides "scan anyway", the heartbeat is
+  unskippable, and stage 0 may only skip while every track is settled — a
+  still frame skipping the detector mid-transition strands a candidate and
+  loses an arrival. `scripts/dev-gate-e2e.mjs` drives the built app in
+  headless Chromium with a fake camera and a counting fake provider; run it
+  after touching any of this.
+- The YOLO26 export's `logits` are **raw**, so scores are per-class `sigmoid`,
+  never softmax, and there is no background class — which is why the decode is
+  ours (`decodeDetections`) rather than transformers.js's
+  `post_process_object_detection()`. Verified against the real artifacts; the
+  boxes are normalized cxcywh and never converted back to pixels.
 - A BROWSER model is a **row in `lib/browser-models.js`, not a branch**. transformers.js
   is not consistent across VLM families — processor argument order, chat-template
   shape, which options are per-call vs. read off the image processor's own config —

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { IonContent } from '@ionic/react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
 import { PROVIDER_PRESETS, providerForUrl } from '../../lib/providers.js';
@@ -19,7 +19,12 @@ import {
   browserModelDevice,
   browserDeviceLimits,
   scanBrowser,
+  DETECTOR_MODELS,
+  DEFAULT_DETECTOR_MODEL,
+  detectorModelKeys,
 } from '../../lib/browser-engine.js';
+import { suggestClasses } from '../../lib/detector-models.js';
+import { parseWakeOn } from '../../lib/object-gate.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 import ProgressBar from '../components/ProgressBar.jsx';
 import { reportHandledError } from '../monitoring.js';
@@ -57,6 +62,17 @@ export default function SettingsScreen({
   cameraFacing, setCameraFacing,
   cameraDeviceId, setCameraDeviceId,
   keepScreenOn, setKeepScreenOn,
+  mission,
+  objectGate, setObjectGate,
+  objectModel, setObjectModel,
+  objectGateEveryS, setObjectGateEveryS,
+  objectClasses, setObjectClasses,
+  objectWakeOn, setObjectWakeOn,
+  objectMoveFrac, setObjectMoveFrac,
+  objectSens, setObjectSens,
+  heartbeatMin, setHeartbeatMin,
+  objectPromptContext, setObjectPromptContext,
+  vlmIdleEvictMin, setVlmIdleEvictMin,
   webhookUrl, setWebhookUrl,
   webhookMethod, setWebhookMethod,
   webhookHeaders, setWebhookHeaders,
@@ -75,6 +91,14 @@ export default function SettingsScreen({
   const [webhookStatus, setWebhookStatus] = useState('');
   const [cameras, setCameras] = useState([]);
   const [cameraStatus, setCameraStatus] = useState('');
+
+  // OBJECT GATE — the detector table and the mission-derived class suggestion
+  // (lib/detector-models.js). The suggestion is offered, never applied: a
+  // wrong watch list is a false-negative generator and has to be visible.
+  const detectorKey =
+    objectModel && DETECTOR_MODELS[objectModel] ? objectModel : DEFAULT_DETECTOR_MODEL;
+  const wakeSet = parseWakeOn(objectWakeOn);
+  const suggested = useMemo(() => suggestClasses(mission), [mission]);
 
   function setManualRate(field, value) {
     const other = field === 'inputRate' ? 'outputRate' : 'inputRate';
@@ -644,6 +668,203 @@ export default function SettingsScreen({
               </div>
             )}
           </div>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <div className="section-label">OBJECT GATE</div>
+        <div className="form-group">
+          <label className="toggle-label">
+            <input
+              id="object-gate-toggle"
+              type="checkbox"
+              className="dc-checkbox"
+              checked={objectGate}
+              onChange={e => setObjectGate(e.target.checked)}
+            />
+            <span>WAKE ON OBJECT CHANGES ONLY</span>
+          </label>
+          <div className="field-hint">
+            Runs a tiny detector (a few MB, on this device) between scans and only calls the
+            vision model when the set of objects in frame actually changes. Cuts GPU load and
+            cost by one to two orders of magnitude on a scene that mostly sits still.
+          </div>
+        </div>
+        {objectGate && (
+          <>
+            <div className="form-group">
+              <label className="field-label" htmlFor="object-model">DETECTOR</label>
+              <select
+                id="object-model"
+                className="dc-select"
+                value={detectorKey}
+                onChange={e => setObjectModel(e.target.value)}
+              >
+                {detectorModelKeys().map(key => (
+                  <option key={key} value={key}>
+                    {DETECTOR_MODELS[key].label} · {DETECTOR_MODELS[key].sizeLabel}
+                  </option>
+                ))}
+              </select>
+              <div className="field-hint">
+                YOLO26 (COCO-80), downloaded once and cached. Licensed AGPL-3.0 by{' '}
+                <a href="https://www.ultralytics.com/license" target="_blank" rel="noreferrer">Ultralytics</a>.
+                {!hasWebGpu && DETECTOR_MODELS[detectorKey]?.requiresWebGpu &&
+                  ' This row wants WebGPU, which this browser does not report — it will run on WASM instead.'}
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="field-label" htmlFor="object-gate-every">CHECK EVERY</label>
+              <input
+                id="object-gate-every"
+                type="number"
+                className="dc-input narrow"
+                min="0.5"
+                step="0.5"
+                value={objectGateEveryS}
+                onChange={e => setObjectGateEveryS(e.target.value)}
+              />
+              <div className="field-hint">Seconds between gate checks. Detection latency is about twice this.</div>
+            </div>
+            <div className="form-group">
+              <label className="field-label" htmlFor="object-classes">WATCH CLASSES</label>
+              <input
+                id="object-classes"
+                type="text"
+                className="dc-input"
+                value={objectClasses}
+                placeholder="blank = all 80 COCO classes"
+                onChange={e => setObjectClasses(e.target.value)}
+              />
+              <div className="field-hint">
+                Comma-separated. Changes to anything else are ignored, which is where most of the
+                saving comes from — and where a false negative would come from, so keep it wide.
+              </div>
+              {suggested.length > 0 && (
+                <div className="inline-row">
+                  <button
+                    id="object-classes-suggest"
+                    className="dc-btn outline"
+                    onClick={() => setObjectClasses(suggested.join(', '))}
+                  >
+                    USE {suggested.join(', ').toUpperCase()}
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="form-group">
+              <label className="field-label">WAKE ON</label>
+              {WAKE_KINDS.map(kind => (
+                <label className="toggle-label" key={kind}>
+                  <input
+                    type="checkbox"
+                    className="dc-checkbox"
+                    checked={wakeSet.has(kind)}
+                    onChange={e => {
+                      const next = new Set(wakeSet);
+                      if (e.target.checked) next.add(kind); else next.delete(kind);
+                      setObjectWakeOn([...next].join(','));
+                    }}
+                  />
+                  <span>{kind.toUpperCase()}</span>
+                </label>
+              ))}
+              <div className="field-hint">
+                MOVED re-triggers while something already in frame keeps moving — right for a
+                driveway, wrong for a doorbell, so it is off by default.
+              </div>
+            </div>
+            {wakeSet.has('moved') && (
+              <div className="form-group">
+                <label className="field-label" htmlFor="object-move-frac">MOVEMENT THRESHOLD</label>
+                <input
+                  id="object-move-frac"
+                  type="range"
+                  className="dc-range"
+                  min="0.02"
+                  max="0.5"
+                  step="0.01"
+                  value={objectMoveFrac}
+                  onChange={e => setObjectMoveFrac(Number(e.target.value))}
+                />
+                <div className="field-hint">
+                  {Math.round(Number(objectMoveFrac) * 100)}% of the frame, measured since the last
+                  scan rather than the last check — so a slow walker still trips it.
+                </div>
+              </div>
+            )}
+            <div className="form-group">
+              <label className="field-label">SENSITIVITY</label>
+              <div className="mode-segments" role="radiogroup" aria-label="Gate sensitivity">
+                {['low', 'medium', 'high'].map(id => (
+                  <button
+                    key={id}
+                    className={`mode-segment ${objectSens === id ? 'active' : ''}`}
+                    role="radio"
+                    aria-checked={objectSens === id}
+                    onClick={() => setObjectSens(id)}
+                  >
+                    {id.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <div className="field-hint">
+                Confidence and persistence needed before an object counts as arrived or gone.
+                HIGH reacts in one check and wakes the model more often.
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="field-label" htmlFor="heartbeat-min">HEARTBEAT EVERY</label>
+              <input
+                id="heartbeat-min"
+                type="number"
+                className="dc-input narrow"
+                min="0"
+                step="1"
+                value={heartbeatMin}
+                onChange={e => setHeartbeatMin(e.target.value)}
+              />
+              <div className="field-hint">
+                Minutes. A full scan runs this often no matter what the gate says — the detector
+                knows 80 object classes and nothing about smoke, a left-on stove, or a wilting
+                plant. 0 disables it, which makes those things invisible.
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="toggle-label">
+                <input
+                  id="object-prompt-context"
+                  type="checkbox"
+                  className="dc-checkbox"
+                  checked={objectPromptContext}
+                  onChange={e => setObjectPromptContext(e.target.checked)}
+                />
+                <span>ADD OBJECTS TO PROMPT</span>
+              </label>
+              <div className="field-hint">
+                Tells the vision model what the detector saw ("person x1, backpack x1"). Helps a
+                small model a lot; changes the prompt, so saved eval runs stop being comparable.
+              </div>
+            </div>
+            {engine === 'browser' && (
+              <div className="form-group">
+                <label className="field-label" htmlFor="vlm-idle-evict">UNLOAD MODEL WHEN IDLE</label>
+                <input
+                  id="vlm-idle-evict"
+                  type="number"
+                  className="dc-input narrow"
+                  min="0"
+                  step="1"
+                  value={vlmIdleEvictMin}
+                  onChange={e => setVlmIdleEvictMin(e.target.value)}
+                />
+                <div className="field-hint">
+                  Minutes of no scans before the vision model is dropped from GPU memory. Weights
+                  stay cached, so waking it costs a second or two rather than a download. 0 = never.
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

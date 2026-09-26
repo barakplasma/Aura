@@ -23,6 +23,7 @@ npm install
 npm run build              # esbuild: minify + code-split src/ → public/assets/
 npm run dev                # → http://localhost:3000  (predev rebuilds for you)
 npm test                   # node --test
+npm run lint               # stylelint + jscpd + djlint, the checks MegaLinter runs in CI
 ```
 
 Run `npm run build` at least once after cloning. Three things under `public/` are
@@ -30,11 +31,16 @@ Run `npm run build` at least once after cloning. Three things under `public/` ar
 `public/sw.js`, `public/assets/ml.worker.js(.map)` and `public/ort/`. The `predev`
 hook covers this if you go straight to `npm run dev`.
 
+`npm run lint:html` needs djlint, which is Python: `pip install djlint`. Claude Code
+on the web does this for you — `.claude/hooks/session-start.sh` runs `npm install`
+and installs djlint at the start of every cloud session.
+
 | Command          | What it does                                                                                                                            |
 |------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies `src/aura.css` and ONNX Runtime's WASM files, generates the service worker |
 | `npm run dev`    | Serves `public/` (rebuilds first via `predev`)                                                                                          |
 | `npm test`       | Unit tests for the pure `lib/` helpers — no DOM, no network                                                                             |
+| `npm run lint`   | Stylelint, jscpd and djlint — the same checks MegaLinter runs on every PR                                                               |
 | `npm run deploy` | Builds and pushes `public/` to the `gh-pages` branch                                                                                    |
 
 ## Pointing it at a model
@@ -104,13 +110,46 @@ afterwards, so it happens once, and works offline after that. **TEST ON CURRENT
 FRAME** runs a single scan before you arm; **CLEAR MODEL CACHE** frees the weights.
 
 The model is picked from a table (`lib/browser-models.js`) based on what the device
-can actually run — the default is LFM2.5-VL 450M, with FastVLM 0.5B as an opt-in
-upgrade and SmolVLM2 256M as the no-WebGPU floor. Cost is always `$0`; there's no
+can actually run — currently SmolVLM2 500M by default, with LFM2.5-VL 450M,
+Qwen3.5 0.8B, nanoLLaVA 1.5 and FastVLM 0.5B as opt-in rows and SmolVLM2 256M as
+the no-WebGPU floor. Chrome's built-in AI (Gemini Nano) is a second transport
+for the same engine where the browser offers it. Cost is always `$0`; there's no
 provider to bill. Nothing about the scan leaves the device — the only network
 traffic is the one-time model download from Hugging Face.
 
 Use the **Evaluate** screen to compare it against your hosted provider on your own
 sample frames before trusting it for a given camera.
+
+### Turning on the object gate
+
+Settings → OBJECT GATE puts a small YOLO26 detector (3–5 MB) in front of the
+vision model: it looks every couple of seconds and only wakes the expensive
+model when the *set of objects* in frame changes. Worth it on any scene that
+mostly sits still, and the main lever against a phone that gets hot while armed.
+
+Knobs that matter: **WATCH CLASSES** (restrict to the COCO classes your mission
+cares about — most of the saving lives here), **WAKE ON** (added / removed /
+moved, with moved off by default), and **HEARTBEAT EVERY**, which forces a full
+scan on a timer no matter what the gate says. The detector knows 80 object
+classes and nothing about smoke, a left-on stove or a wilting plant, so the
+heartbeat is what keeps those visible — setting it to 0 makes them invisible.
+
+Every gate decision lives in `lib/gate-session.js` (the tracker in
+`lib/object-gate.js`, the pixel diff in `lib/motion.js`), pure and clock-injected,
+so behaviour changes belong there with a test — not in the hook.
+
+To see the whole thing work in a real browser, build and run the end-to-end
+harness. It drives the app in headless Chromium with a fake camera (an empty room
+alternating with a street scene) and a fake vision model that counts every call:
+
+```bash
+npm run build
+node scripts/dev-gate-e2e.mjs            # gate on: expect a handful of calls
+GATE=0 node scripts/dev-gate-e2e.mjs     # control: roughly one call a second
+```
+
+It downloads the ~3 MB detector once (to your temp dir) and serves it to the
+browser from there, so later runs need no network.
 
 ## Running fully offline
 
@@ -167,6 +206,9 @@ lib/
   aura.js                 PROVIDER engine: scanClient(), fetchModels()
   browser-engine.js       BROWSER engine facade: scanBrowser(), worker lifecycle
   browser-models.js       Model table + device-based picker (pure, testable)
+  detector-models.js      Object-gate detector table (YOLO26) + COCO labels
+  object-gate.js          Gate: decode detections, track them, decide to scan
+  motion.js               Stage 0 of the gate: a 64x48 pixel diff
   monitor.js              Prompt builders, JSON parsers, usage normalization
   eval.js / eval-store.js Prompt evaluation matrix + IndexedDB persistence
   training.js             ax/GEPA optimization (only ever dynamically imported)

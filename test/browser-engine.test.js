@@ -12,6 +12,13 @@ import {
   FALLBACK_BROWSER_MODEL,
   resolveBrowserRuntime,
   selectBrowserDevice,
+  loadDetector,
+  selectDetectorDevice,
+  detectObjects,
+  isDetectorLoaded,
+  unloadDetector,
+  DETECTOR_MODELS,
+  DEFAULT_DETECTOR_MODEL,
   _setWorkerFactory,
   _setChromeAICall,
   _setChromeAIProbe,
@@ -29,8 +36,9 @@ class FakeWorker {
     this.listeners = { message: [], error: [], messageerror: [] };
     this.terminated = false;
   }
-  postMessage(msg) {
+  postMessage(msg, transfer) {
     this.posted.push(msg);
+    if (transfer) this.transfers = [...(this.transfers || []), transfer];
   }
   addEventListener(type, fn) {
     this.listeners[type]?.push(fn);
@@ -65,6 +73,13 @@ function freshWorker() {
 // after at least one microtask tick (even the "already loaded" fast path
 // resolves through a Promise) — spin microtasks until the expected message
 // has actually landed in `posted`, rather than asserting on it immediately.
+// loadDetector() probes the GPU adapter before it posts anything, so the
+// worker spawns a few microtasks after the call rather than inside it.
+async function spawnedWorker(getWorker) {
+  for (let i = 0; i < 50 && !getWorker(); i++) await Promise.resolve();
+  return getWorker();
+}
+
 async function waitForPosted(fw, n) {
   for (let i = 0; i < 50 && fw.posted.length < n; i++) {
     await Promise.resolve();
@@ -496,4 +511,163 @@ test("a stored runtime of 'auto' resolves before transport selection", async () 
   assert.equal(result.runtime, "chrome-ai", "'auto' must resolve, not pass through");
   assert.equal(chromeCalls, 1);
   assert.equal(getWorker(), undefined, "no worker spawned on the auto-resolved chrome path");
+});
+
+// --- Object gate ----------------------------------------------------------
+
+// The detector equivalent of loadedFakeWorker() above: a fake worker with the
+// detector already loaded, so a test that only cares about detect/unload
+// doesn't repeat the load handshake (which jscpd rightly flagged as a clone).
+async function loadedFakeDetector(key = "yolo26n-int8", device = "wasm") {
+  const getWorker = freshWorker();
+  const loadP = loadDetector(key);
+  const fw = await spawnedWorker(getWorker);
+  await waitForPosted(fw, 1);
+  fw.reply({ id: fw.posted[0].id, type: "ready", device });
+  await loadP;
+  return { fw, getWorker };
+}
+
+test("loadDetector posts a 'detect' task load and remembers the device", async () => {
+  const getWorker = freshWorker();
+  const p = loadDetector("yolo26n-int8");
+  const fw = await spawnedWorker(getWorker);
+  await waitForPosted(fw, 1);
+  const req = fw.posted[0];
+  assert.equal(req.type, "load");
+  assert.equal(req.task, "detect", "the VLM's slot must not be touched");
+  assert.equal(req.model, DETECTOR_MODELS["yolo26n-int8"].modelId);
+  assert.equal(req.dtype, "int8");
+  fw.reply({ id: req.id, type: "ready", device: "wasm" });
+  assert.deepEqual(await p, { device: "wasm" });
+  assert.equal(isDetectorLoaded("yolo26n-int8"), true);
+  assert.equal(isDetectorLoaded("yolo26n-fp16"), false);
+});
+
+test("loadDetector de-duplicates concurrent loads of the same row", async () => {
+  const getWorker = freshWorker();
+  const a = loadDetector(DEFAULT_DETECTOR_MODEL);
+  const b = loadDetector(DEFAULT_DETECTOR_MODEL);
+  const fw = await spawnedWorker(getWorker);
+  await waitForPosted(fw, 1);
+  assert.equal(fw.posted.length, 1, "one load message for two callers");
+  fw.reply({ id: fw.posted[0].id, type: "ready", device: "webgpu" });
+  assert.deepEqual(await Promise.all([a, b]), [
+    { device: "webgpu" },
+    { device: "webgpu" },
+  ]);
+});
+
+test("loadDetector rejects an unknown row without posting anything", async () => {
+  const getWorker = freshWorker();
+  await assert.rejects(loadDetector("yolo99-xl"), /Unknown detector model/);
+  assert.equal(getWorker(), undefined, "no worker is even spawned");
+});
+
+test("detectObjects transfers the bitmap and returns the raw tensors", async () => {
+  const { fw } = await loadedFakeDetector();
+  const bitmap = { close() {} }; // stand-in for an ImageBitmap
+  const p = detectObjects(bitmap, { model: "yolo26n-int8" });
+  await waitForPosted(fw, 2);
+  // An already-loaded detector must not be re-loaded per frame: the second
+  // message is the detect itself, not another load.
+  assert.equal(fw.posted.length, 2);
+  const req = fw.posted[1];
+  assert.equal(req.type, "detect");
+  assert.equal(req.size, DETECTOR_MODELS["yolo26n-int8"].inputSize);
+  assert.equal(req.bitmap, bitmap);
+  assert.deepEqual(fw.transfers.at(-1), [bitmap], "bitmap is transferred, not copied");
+
+  const logits = new Float32Array([1, 2, 3]);
+  const boxes = new Float32Array([0.5, 0.5, 0.2, 0.2]);
+  fw.reply({
+    id: req.id,
+    type: "detections",
+    logits,
+    logitsDims: [300, 80],
+    boxes,
+    boxesDims: [300, 4],
+    latencyMs: 31,
+  });
+  const out = await p;
+  assert.equal(out.logits, logits);
+  assert.equal(out.boxes, boxes);
+  assert.deepEqual(out.dims, [300, 80]);
+  assert.equal(out.latencyMs, 31);
+});
+
+test("a worker crash rejects an in-flight detect and drops the detector", async () => {
+  const { fw } = await loadedFakeDetector();
+  const p = detectObjects({ close() {} }, { model: "yolo26n-int8" });
+  await waitForPosted(fw, 2);
+  fw.crash("out of memory");
+  await assert.rejects(p, /worker crashed/);
+  assert.equal(isDetectorLoaded("yolo26n-int8"), false, "state is dropped with the worker");
+});
+
+test("unloadDetector frees only the detector's slot", async () => {
+  const { fw } = await loadedFakeDetector();
+  const p = unloadDetector();
+  await waitForPosted(fw, 2);
+  const req = fw.posted[1];
+  assert.equal(req.type, "unload");
+  assert.equal(req.task, "detect");
+  fw.reply({ id: req.id, type: "ready", device: null });
+  await p;
+  assert.equal(isDetectorLoaded("yolo26n-int8"), false);
+});
+
+test("selectDetectorDevice falls back to WASM when WebGPU exists but gives no adapter", async () => {
+  // The case a headless browser, a blocklisted GPU, or some Android builds
+  // present: navigator.gpu is there, requestAdapter() resolves null. Asking
+  // ORT for "webgpu" anyway fails the load with "no available backend found"
+  // — found by scripts/dev-gate-e2e.mjs, not by reasoning.
+  const int8 = DETECTOR_MODELS["yolo26n-int8"];
+  const fp16 = DETECTOR_MODELS["yolo26n-fp16"];
+  const gpu = (adapter) => ({ gpu: { requestAdapter: async () => adapter } });
+  const f16 = { features: new Set(["shader-f16"]) };
+  const noF16 = { features: new Set() };
+
+  assert.equal(await selectDetectorDevice(int8, {}), "wasm", "no WebGPU API");
+  assert.equal(await selectDetectorDevice(int8, null), "wasm", "no navigator");
+  assert.equal(await selectDetectorDevice(int8, gpu(null)), "wasm", "API present, no adapter");
+  assert.equal(await selectDetectorDevice(int8, gpu(noF16)), "webgpu", "int8 needs no f16");
+  assert.equal(await selectDetectorDevice(fp16, gpu(noF16)), "wasm", "fp16 needs shader-f16");
+  assert.equal(await selectDetectorDevice(fp16, gpu(f16)), "webgpu");
+  const throwing = { gpu: { requestAdapter: async () => { throw new Error("denied"); } } };
+  assert.equal(await selectDetectorDevice(int8, throwing), "wasm", "a refused adapter never throws");
+});
+
+test("scanBrowser: a fired alert runs the announcement and webhook legs and sums their usage", async () => {
+  freshWorker();
+  const replies = [
+    '{"triggered":true,"confidence":91,"reason":"a person at the door"}',
+    '{"message":"Someone is at the door."}',
+    '{"message":"door: person"}',
+  ];
+  const calls = [];
+  _setChromeAICall(async (params) => {
+    calls.push(params);
+    return {
+      text: replies[calls.length - 1],
+      usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 },
+    };
+  });
+  const stages = [];
+  const result = await scanBrowser({
+    mission: "a person at the door",
+    action: "Greet them.",
+    webhookAction: "Summarize for the log.",
+    image: "x".repeat(64),
+    runtime: "chrome-ai",
+    onStage: (s) => stages.push(s),
+  });
+  assert.equal(calls.length, 3);
+  // Preceded by the runtime's own "loading" stage.
+  assert.deepEqual(stages.slice(-3), ["detecting", "announcing", "webhook"]);
+  assert.equal(result.triggered, true);
+  assert.equal(result.message, "Someone is at the door.");
+  assert.equal(result.webhookMessage, "door: person");
+  assert.equal(result.usage.prompt_tokens, 150);
+  assert.equal(result.usage.completion_tokens, 15);
 });
