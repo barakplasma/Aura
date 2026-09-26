@@ -120,6 +120,9 @@ class PgetLogging(unittest.TestCase):
             f"https://huggingface.co/{predict.MODEL_ID}/resolve/{predict.REVISION}/model.safetensors /w/model.safetensors\n",
         )
 
+    def test_pget_allows_one_retry(self):
+        self.assertEqual(predict.PGET_COMMAND[predict.PGET_COMMAND.index("--retries") + 1], "1")
+
     def test_initialization_failure_disables_automatic_retries(self):
         predictor = predict.Predictor()
         predictor.classifier = None

@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 15419)
+Total output lines: 895
+
 # PRD — DECISION engine: Image JevBench models as Aura's detector, remote first
 
 Status: **proposed** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
@@ -373,12 +376,7 @@ a free bandwidth relay** — which is what the configs below address.
 
 |                            | Aura's operator: Traefik pass-through (default)                                               | Hosted plain CORS proxy (Corsfix, cors.sh, corsproxy.io — no secrets stored)                                                                                                        | The user's own relay (bring your own proxy URL)            |
 |----------------------------|-----------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
-| What runs                  | two routes + three middlewares on the Traefik k3s already runs; no secrets at all             | nothing for the operator; a vendor account                                                                                                                                          | whatever the user chooses (the same Traefik snippet works) |
-| Who sees each user's token | the operator — **who already serves the JavaScript that reads localStorage**, so no new party | a new third party, for every user                                                                                                                                                   | the user                                                   |
-| Who pays for the relay     | the operator: bandwidth only (~50–100 KB per scan)                                            | the operator, priced by users/requests: Corsfix Hobby allows 3 concurrent users (Scale: 100 for $19/month); cors.sh Pro 500,000 requests; corsproxy.io Hobby 250,000 requests/month | the user                                                   |
-| Who pays for inference     | each user, on their own Replicate account                                                     | same                                                                                                                                                                                | same                                                       |
-| Abuse control              | exact `Origin` match, prediction paths only, `Bearer r8_…` shape, 4 MB cap, per-IP rate limit | the vendor's origin allowlist and plan limits                                                                                                                                       | the user's                                                 |
-| Availability               | the operator's VPS                                                                            | the vendor's                                                                                                                                                                        | the user's                                                 |
+| What runs                  | two routes + three middlewares on the Traefik k3s already runs; no secrets at all             | nothing for the operator; a vendor account                                                                                                                          …419 tokens truncated…                 | the vendor's                                                                                                                                                                        | the user's                                                 |
 
 **Default: the operator's Traefik pass-through**, with a **proxy URL field in
 Settings** so any user can switch to a hosted proxy or their own relay (or to
@@ -736,7 +734,7 @@ users' runs or for idle time.
   models, so cold downloads no longer inflate the paid prediction time. Cog
   keeps setup logs separately; the predictor replays the captured Loguru trace
   into the first prediction log after startup. Pget has bounded concurrency,
-  disables HTTP retries, and stops after an eight-minute deadline, with 30-second
+  allows one HTTP retry and stops after an eight-minute deadline, with 30-second
   file-growth and disk heartbeats. A cold worker still adds about 2–3 minutes of
   startup latency; Replicate's health-check logs hold live setup output. Signed
   download query strings are redacted. Inference follows Jev-Omni's bf16 autocast

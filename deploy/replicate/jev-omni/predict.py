@@ -51,7 +51,7 @@ PGET_HEARTBEAT_SECONDS = 30
 PGET_COMMAND = [
     "pget", "--force", "--log-level", "info", "--concurrency", "8", "--chunk-size", "16M",
     "--max-conn-per-host", "8",
-    "--connect-timeout", "10s", "--retries", "0", "multifile", "-",
+    "--connect-timeout", "10s", "--retries", "1", "multifile", "-",
 ]
 
 
