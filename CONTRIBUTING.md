@@ -23,6 +23,7 @@ npm install
 npm run build              # esbuild: minify + code-split src/ → public/assets/
 npm run dev                # → http://localhost:3000  (predev rebuilds for you)
 npm test                   # node --test
+npm run lint               # stylelint + jscpd + djlint, the checks MegaLinter runs in CI
 ```
 
 Run `npm run build` at least once after cloning. Three things under `public/` are
@@ -30,11 +31,16 @@ Run `npm run build` at least once after cloning. Three things under `public/` ar
 `public/sw.js`, `public/assets/ml.worker.js(.map)` and `public/ort/`. The `predev`
 hook covers this if you go straight to `npm run dev`.
 
+`npm run lint:html` needs djlint, which is Python: `pip install djlint`. Claude Code
+on the web does this for you — `.claude/hooks/session-start.sh` runs `npm install`
+and installs djlint at the start of every cloud session.
+
 | Command          | What it does                                                                                                                            |
 |------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies `src/aura.css` and ONNX Runtime's WASM files, generates the service worker |
 | `npm run dev`    | Serves `public/` (rebuilds first via `predev`)                                                                                          |
 | `npm test`       | Unit tests for the pure `lib/` helpers — no DOM, no network                                                                             |
+| `npm run lint`   | Stylelint, jscpd and djlint — the same checks MegaLinter runs on every PR                                                               |
 | `npm run deploy` | Builds and pushes `public/` to the `gh-pages` branch                                                                                    |
 
 ## Pointing it at a model

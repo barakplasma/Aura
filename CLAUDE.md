@@ -87,6 +87,7 @@ or from within a dedicated worker:
 npm run build             # esbuild: minify + code-split src/ → public/assets/
 npm run dev               # npx serve public → http://localhost:3000
 npm test                  # node --test
+npm run lint              # stylelint + jscpd + djlint (MegaLinter's checks)
 npm run deploy            # Build + gh-pages -d public
 ```
 

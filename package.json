@@ -13,7 +13,11 @@
     "preview:deploy": "wrangler deploy",
     "predeploy": "npm run build",
     "deploy": "npx gh-pages -d public -m \"deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ)\"",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "npm run lint:css && npm run lint:dup && npm run lint:html",
+    "lint:css": "stylelint \"src/**/*.css\"",
+    "lint:dup": "jscpd --config .jscpd.json --reporters console .",
+    "lint:html": "djlint --lint --ignore H049 public/index.html public/probe.html"
   },
   "engines": {
     "node": ">=18"
@@ -31,7 +35,10 @@
   "devDependencies": {
     "esbuild": "^0.28.1",
     "gh-pages": "^6.1.1",
+    "jscpd": "^4.3.0",
     "serve": "^14.2.3",
+    "stylelint": "^16.26.1",
+    "stylelint-config-standard": "^38.0.0",
     "wrangler": "^4.54.0",
     "ws": "^8.21.3"
   },
