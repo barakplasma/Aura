@@ -5,7 +5,18 @@ Run: python3 -m unittest deploy/replicate/jev-omni/test_predict.py
 import base64
 import importlib.util
 import pathlib
+import sys
+import types
 import unittest
+
+# predict.py imports cog, which only exists inside the Cog image; stub the
+# three names it uses so the pure helpers load anywhere.
+if "cog" not in sys.modules:
+    cog = types.ModuleType("cog")
+    cog.BasePredictor = object
+    cog.Path = pathlib.Path
+    cog.Input = lambda default=None, **_: default
+    sys.modules["cog"] = cog
 
 spec = importlib.util.spec_from_file_location("predict", pathlib.Path(__file__).with_name("predict.py"))
 predict = importlib.util.module_from_spec(spec)

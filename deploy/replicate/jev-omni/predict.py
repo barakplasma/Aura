@@ -13,16 +13,10 @@ import importlib
 import json
 import os
 import sys
+import pathlib
 import tempfile
-from pathlib import Path
 
-try:
-    from cog import BasePredictor, Input, Path as CogPath
-except ImportError:  # the pure helpers below are unit-tested without cog installed
-    BasePredictor, CogPath = object, Path
-
-    def Input(default=None, **_):  # noqa: N802 - mirrors cog.Input
-        return default
+from cog import BasePredictor, Input, Path
 
 MODEL_ID = "akhilaaa3/Jev-Omni"
 REVISION = "5addda86ddee081a68fb067477ea100c221b8917"
@@ -84,7 +78,7 @@ def format_output(probabilities: dict[str, float], options: list[str]) -> dict:
     return {"answer": best["label"], "confidence": best["probability"], "probabilities": ranked}
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -104,7 +98,7 @@ class Predictor(BasePredictor):
         from huggingface_hub import snapshot_download
         from transformers import AutoConfig, AutoProcessor
 
-        path = Path(snapshot_download(MODEL_ID, revision=REVISION, allow_patterns=ALLOW_PATTERNS))
+        path = pathlib.Path(snapshot_download(MODEL_ID, revision=REVISION, allow_patterns=ALLOW_PATTERNS))
         for name, expected in EXPECTED_SHA256.items():
             actual = sha256_file(path / name)
             if actual != expected:
@@ -124,7 +118,7 @@ class Predictor(BasePredictor):
         self.classifier = jev_omni.JevOmni(model, head, AutoProcessor.from_pretrained(path), decoder, "cuda")
         self._verify(path)
 
-    def _verify(self, path: Path) -> None:
+    def _verify(self, path: pathlib.Path) -> None:
         """Refuse to serve if a reference case drifts: catches a wrong torch/transformers stack."""
         verification = json.loads((path / "verification.json").read_text())
         tolerance = max(0.05, 2 * float(verification.get("worst_abs_diff", 0.02)))
@@ -133,10 +127,10 @@ class Predictor(BasePredictor):
             if drift > tolerance:
                 raise RuntimeError(f"verification drift {drift:.3f} on {case['question']!r}")
 
-    def predict(
+    def run(
         self,
         question: str = Input(description="Question about the image, e.g. 'Is a package on the doormat?'"),
-        image: CogPath = Input(description="JPEG, PNG, or WebP image", default=None),
+        image: Path = Input(description="JPEG, PNG, or WebP image", default=None),
         image_base64: str = Input(description="Base64-encoded image (plain or data: URI) for API clients", default=""),
         question_type: str = Input(description="yes_no or choice", choices=["yes_no", "choice"], default="yes_no"),
         options_json: str = Input(description="JSON array of choice labels (choice only)", default="[]"),
@@ -146,7 +140,7 @@ class Predictor(BasePredictor):
             raise ValueError("question is required.")
         options = resolve_options(question_type, options_json)
         if image is not None:
-            if Path(image).stat().st_size > MAX_IMAGE_BYTES:
+            if pathlib.Path(image).stat().st_size > MAX_IMAGE_BYTES:
                 raise ValueError("image must be 5 MB or smaller.")
             result = self.classifier.predict(state=state, question=question, options=options,
                                              media=str(image), modality="image")
