@@ -11,10 +11,14 @@ import binascii
 import hashlib
 import importlib
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from datetime import datetime, timezone
 
 from cog import BasePredictor, Input, Path
 
@@ -36,6 +40,22 @@ EXPECTED_SHA256 = {
 YES_NO = ["Yes", "No"]
 MAX_OPTIONS = 20  # the model card: quality above 20 options is not established
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+def log(message: str) -> None:
+    """Write an immediately flushed, timestamped line to Replicate's logs."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    print(f"[{now}] {message}", flush=True)
+
+
+def directory_file_sizes(path: pathlib.Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    return {str(p.relative_to(path)): p.stat().st_size for p in path.rglob("*") if p.is_file()}
+
+
+def format_bytes(size: int) -> str:
+    return f"{size / (1024 ** 3):.2f} GiB ({size:,} bytes)"
 
 
 def resolve_options(question_type: str, options_json: str) -> list[str]:
@@ -100,42 +120,119 @@ def verification_drift(got: dict[str, float], reference: dict[str, float]) -> fl
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
+        setup_started = time.monotonic()
+        log(f"setup: starting Jev-Omni {MODEL_ID}@{REVISION}")
+        log(f"setup: Python {sys.version.split()[0]}, PID {os.getpid()}, weights directory {WEIGHTS_DIR}")
         import torch
         import transformers
         from transformers import AutoConfig, AutoProcessor
+
+        log(f"setup: torch {torch.__version__}, transformers {transformers.__version__}")
+        log(f"setup: CUDA available={torch.cuda.is_available()}, device_count={torch.cuda.device_count()}")
+        if torch.cuda.is_available():
+            for index in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(index)
+                log(f"setup: CUDA device {index}: {props.name}, memory={format_bytes(props.total_memory)}")
 
         # Baking the ~24 GB checkpoint into the image makes one layer too big
         # for r8.im (413 from its CDN), so setup fetches the pinned files with
         # pget, Replicate's parallel downloader, which is much faster than
         # snapshot_download. A warm container that already has them skips it.
         path = WEIGHTS_DIR
-        if not all((path / name).is_file() for name in WEIGHT_FILES):
-            subprocess.run(["pget", "multifile", "-"], input=weights_manifest(path), text=True, check=True)
+        path.mkdir(parents=True, exist_ok=True)
+        existing = directory_file_sizes(path)
+        missing = [name for name in WEIGHT_FILES if not (path / name).is_file()]
+        expected_count = len(WEIGHT_FILES)
+        log(f"weights: pinned manifest has {expected_count} files; {len(missing)} missing, {expected_count - len(missing)} present")
+        if existing:
+            log("weights: existing files: " + ", ".join(f"{name}={format_bytes(size)}" for name, size in sorted(existing.items())))
+        disk = shutil.disk_usage(path)
+        log(f"weights: disk free={format_bytes(disk.free)}, total={format_bytes(disk.total)}")
+        if missing:
+            manifest = weights_manifest(path)
+            log("weights: pget will fetch: " + ", ".join(missing))
+            log(f"weights: starting pget multifile for {len(missing)} files; manifest revision={REVISION}")
+            download_started = time.monotonic()
+            try:
+                # Inherit stdout/stderr so pget's own progress and errors appear
+                # directly in Replicate's prediction logs. Periodic snapshots
+                # below remain useful if pget emits no progress for a long time.
+                process = subprocess.Popen(["pget", "multifile", "-"], stdin=subprocess.PIPE, text=True)
+                assert process.stdin is not None
+                process.stdin.write(manifest)
+                process.stdin.close()
+                last_report = download_started
+                while process.poll() is None:
+                    time.sleep(30)
+                    now = time.monotonic()
+                    if now - last_report >= 30 and process.poll() is None:
+                        snapshot = directory_file_sizes(path)
+                        total = sum(snapshot.values())
+                        elapsed = now - download_started
+                        rate = total / elapsed if elapsed else 0
+                        log(f"weights: pget still running after {elapsed / 60:.1f} min; observed files={len(snapshot)}/{expected_count}, bytes={format_bytes(total)}, avg rate={rate / (1024 ** 2):.2f} MiB/s")
+                        if snapshot:
+                            log("weights: progress by file: " + ", ".join(f"{name}={format_bytes(size)}" for name, size in sorted(snapshot.items())))
+                        disk = shutil.disk_usage(path)
+                        log(f"weights: disk free={format_bytes(disk.free)}")
+                        last_report = now
+                return_code = process.returncode
+                elapsed = time.monotonic() - download_started
+                if return_code != 0:
+                    log(f"weights: pget FAILED exit_code={return_code} after {elapsed / 60:.1f} min")
+                    raise subprocess.CalledProcessError(return_code, ["pget", "multifile", "-"])
+                snapshot = directory_file_sizes(path)
+                log(f"weights: pget completed in {elapsed / 60:.1f} min; files={len(snapshot)}/{expected_count}, total={format_bytes(sum(snapshot.values()))}")
+                for name, size in sorted(snapshot.items()):
+                    log(f"weights: downloaded {name}: {format_bytes(size)}")
+            except Exception as err:
+                elapsed = time.monotonic() - download_started
+                log(f"weights: download raised {type(err).__name__} after {elapsed / 60:.1f} min: {err}")
+                snapshot = directory_file_sizes(path)
+                log("weights: files present at failure: " + (", ".join(f"{name}={format_bytes(size)}" for name, size in sorted(snapshot.items())) or "none"))
+                raise
+        else:
+            log("weights: all manifest files already exist; skipping pget")
         for name, expected in EXPECTED_SHA256.items():
+            hash_started = time.monotonic()
+            log(f"integrity: hashing {name} ({format_bytes((path / name).stat().st_size)})")
             actual = sha256_file(path / name)
             if actual != expected:
+                log(f"integrity: FAILED {name}: got sha256={actual}, expected={expected}")
                 raise RuntimeError(f"{name} sha256 {actual} != pinned {expected}")
+            log(f"integrity: verified {name} sha256={actual} in {time.monotonic() - hash_started:.1f}s")
 
         # The upstream loader (load_jev_omni) always fetches the latest
         # revision; assemble the same pieces from the pinned snapshot instead.
         sys.path.insert(0, str(path))
+        load_started = time.monotonic()
+        log("model: importing pinned Jev-Omni implementation and reading config")
         jev_omni = importlib.import_module("jev_omni")
         config = AutoConfig.from_pretrained(path)
+        log(f"model: loading architecture={config.architectures[0]} on CUDA with BF16")
         model = getattr(transformers, config.architectures[0]).from_pretrained(
             path, dtype=torch.bfloat16, device_map="cuda").eval()
+        log(f"model: base weights loaded in {time.monotonic() - load_started:.1f}s")
         decision = json.loads((path / "decision_config.json").read_text())
+        log("model: loading decision head and processor")
         head = jev_omni._Head256(decision["hidden_size"]).to("cuda").eval()
         head.load_state_dict(torch.load(path / "head.pt", map_location="cuda", weights_only=True))
         _, decoder = jev_omni._find_backbone(model)
         self.classifier = jev_omni.JevOmni(model, head, AutoProcessor.from_pretrained(path), decoder, "cuda")
+        log(f"model: initialization complete in {time.monotonic() - load_started:.1f}s; running verification")
+        verify_started = time.monotonic()
         self._verify(path)
+        log(f"setup: ready; verification took {time.monotonic() - verify_started:.1f}s, total setup {time.monotonic() - setup_started:.1f}s")
 
     def _verify(self, path: pathlib.Path) -> None:
         """Refuse to serve if a reference case drifts: catches a wrong torch/transformers stack."""
         verification = json.loads((path / "verification.json").read_text())
         tolerance = max(0.05, 2 * float(verification.get("worst_abs_diff", 0.02)))
+        log(f"verification: {len(verification['cases'])} reference cases, allowed drift={tolerance:.3f}")
         for case, reference in zip(verification["cases"], verification["reference"]):
+            case_started = time.monotonic()
             drift = verification_drift(self.classifier.predict(**case)["probabilities"], reference)
+            log(f"verification: question={case['question']!r}, drift={drift:.3f}, elapsed={time.monotonic() - case_started:.1f}s")
             if drift > tolerance:
                 raise RuntimeError(f"verification drift {drift:.3f} on {case['question']!r}")
 
