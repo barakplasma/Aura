@@ -408,3 +408,10 @@ test("scanDecision: a failed decision re-runs on the fallback and says why; Stop
   await assert.rejects(scanDecision({ ...base, fallback, signal: stop.signal, fetchImpl }));
   assert.equal(fellBack, 1);
 });
+
+test("every relay preset carries a note, and lookups are by exact URL", async () => {
+  const { RELAY_PRESETS, relayPresetFor } = await import("../lib/decision-models.js");
+  for (const p of RELAY_PRESETS) assert.ok(p.note, p.id);
+  assert.equal(relayPresetFor(DEFAULT_RELAY_URL).id, "operator");
+  assert.equal(relayPresetFor("https://my.relay{path}"), null);
+});

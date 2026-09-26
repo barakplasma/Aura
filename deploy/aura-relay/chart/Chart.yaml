@@ -1,0 +1,6 @@
+apiVersion: v2
+name: aura-relay
+description: BYOK CORS pass-through relay for Aura's DECISION engine. No pods, no secrets.
+type: application
+version: 0.1.0
+appVersion: "traefik-v3"

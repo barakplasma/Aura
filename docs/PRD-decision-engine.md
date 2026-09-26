@@ -927,6 +927,38 @@ The protocol already allows what chat VLMs do badly:
    of the current provider on a user's own frames.** Also add benchmark
    notes to `PROVIDER_PRESETS` for the hosted chat VLMs Image JevBench
    measured (Gemma 4 31B, Gemini 3.1 Flash-Lite).
+
+   Status, 2026-09-26. The relay chart now lives in Aura as
+   `deploy/aura-relay/` (self-contained, `helm lint` clean), with a conformance
+   probe (`scripts/relay-probe.mjs`) and a no-cluster harness
+   (`scripts/dev-relay-local.mjs`).
+   - [x] Chart + HelmChartConfig written. They render the 7 objects above.
+   - [x] Routing and middlewares verified on Traefik 3.5.3 against a fake
+     upstream: every check passes (preflight, token forwarded, CORS on the
+     answer, `404`s, `413`, per-IP `429`).
+   - [x] Benchmark notes on `PROVIDER_PRESETS` (`benchmarkNote()`, shown
+     under MODEL in Settings; Cerebras now suggests `gemma-4-31b`).
+   - [x] Hosted proxies probed:
+     - Corsfix passes the preflight but needs the origin registered
+       (`403 domain_not_registered`).
+     - corsproxy.io answers the anonymous preflight `401`.
+     - `proxy.cors.sh` doesn't resolve.
+
+     Settings now shows these notes next to the relay presets.
+   - [ ] **Blocker:** `aura-relay.526462738.xyz` answers with a Cloudflare
+     managed challenge (`cf-mitigated: challenge`) even on the preflight, so
+     no `fetch()` can use it. It needs a WAF skip rule, or Bot Fight Mode
+     off, for this host (`deploy/aura-relay/README.md`).
+   - [ ] Copy the chart into homelab-manifests `apps/aura-relay/`, apply the
+     HelmChartConfig, and create the namespace and Argo CD `Application`.
+     This is the operator's step: that repo isn't reachable from the
+     implementing session.
+   - [ ] Measure with a personal token:
+     `REPLICATE_API_TOKEN=… node scripts/relay-probe.mjs <relay> --measure 100`
+     prints cold-start, warm p50/p95 and the go/no-go. Then run the same
+     frames against the current PROVIDER model on the eval screen for the
+     accuracy comparison.
+   - [ ] Bonsai-Llama-Jev image + Qwen3-VL Q8_0 timings on the VPS CPU.
 2. **Phase 1 — DECISION engine.** `lib/decision.js` with the `replicate` and
    `content` adapters + golden tests, Settings/Mission UI, fallback-to-provider,
    per-decision pricing, eval matrix support. Verify with

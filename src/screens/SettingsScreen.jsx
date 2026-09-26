@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { IonContent } from '@ionic/react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
-import { PROVIDER_PRESETS, providerForUrl } from '../../lib/providers.js';
+import { PROVIDER_PRESETS, providerForUrl, benchmarkNote } from '../../lib/providers.js';
 import {
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
@@ -456,6 +456,7 @@ export default function SettingsScreen({
                 {fetchingModels ? 'FETCHING…' : 'FETCH VISION MODELS'}
               </button>
             </div>
+            {benchmarkNote(model) && <div className="field-hint">{benchmarkNote(model)}</div>}
             {statusMsg && <p id="provider-status" className="status-msg" role="status">{statusMsg}</p>}
           </>
         )}

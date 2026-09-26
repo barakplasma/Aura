@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   DECISION_MODELS,
   RELAY_PRESETS,
+  relayPresetFor,
   decisionModelKeys,
   defaultDecisionUrl,
   getDecisionModel,
@@ -114,6 +115,7 @@ export default function DecisionSettings({
                 </button>
               ))}
             </div>
+            {relayPresetFor(decisionUrl) && <div className="field-hint">{relayPresetFor(decisionUrl).note}</div>}
             <div className="field-hint">
               A browser can't call Replicate directly (no CORS), so requests go through a relay that
               only adds CORS headers. <code>{'{path}'}</code>, <code>{'{url}'}</code> and <code>{'{url:encoded}'}</code> are
