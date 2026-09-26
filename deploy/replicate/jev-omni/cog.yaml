@@ -1,9 +1,8 @@
 # Jev-Omni (akhilaaa3/Jev-Omni, Apache-2.0) as a public Replicate model:
 # r8.im/barakplasma/jev-omni. Public so every caller pays for their own
 # runs with their own token (BYOK) - see docs/PRD-decision-engine.md.
-# Download the pinned model while building the image. This moves the large
-# Hugging Face transfer out of Replicate's startup path. The build runner needs
-# enough disk for the ~24 GB pinned checkpoint, CUDA base layers, and final image.
+# The ~24 GB checkpoint is not baked in: a layer that size is rejected by
+# r8.im (413 Payload Too Large). setup() fetches it with pget instead.
 build:
   gpu: true
   # Cog 0.23 has no CUDA mapping for torch 2.14; pin it to match the
@@ -12,13 +11,6 @@ build:
   python_version: "3.12"
   python_requirements: requirements.txt
   run:
-    - >-
-      python -c 'from huggingface_hub import snapshot_download;
-      snapshot_download(repo_id="akhilaaa3/Jev-Omni",
-      revision="5addda86ddee081a68fb067477ea100c221b8917",
-      allow_patterns=["config.json", "generation_config.json",
-      "model*.safetensors*", "processor_config.json", "tokenizer.json",
-      "tokenizer_config.json", "chat_template.jinja", "decision_config.json",
-      "head.pt", "jev_omni.py", "verification.json"],
-      local_dir="/opt/jev-omni")'
+    - curl -fsSL -o /usr/local/bin/pget https://github.com/replicate/pget/releases/download/v0.8.2/pget_linux_x86_64
+    - chmod +x /usr/local/bin/pget
 run: "predict.py:Predictor"

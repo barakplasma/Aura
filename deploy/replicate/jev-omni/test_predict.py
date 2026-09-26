@@ -66,5 +66,18 @@ class FormatOutput(unittest.TestCase):
         self.assertAlmostEqual(predict.verification_drift({"a": 0.5, "b": 0.5}, {"a": 0.4, "b": 0.6}), 0.1)
 
 
+class WeightsManifest(unittest.TestCase):
+    def test_one_pinned_line_per_file(self):
+        lines = predict.weights_manifest(pathlib.Path("/w")).splitlines()
+        self.assertEqual(len(lines), len(predict.WEIGHT_FILES))
+        for line, name in zip(lines, predict.WEIGHT_FILES):
+            url, dest = line.split(" ")
+            self.assertEqual(url, f"https://huggingface.co/akhilaaa3/Jev-Omni/resolve/{predict.REVISION}/{name}")
+            self.assertEqual(dest, f"/w/{name}")
+
+    def test_covers_hashed_files(self):
+        self.assertTrue(set(predict.EXPECTED_SHA256) <= set(predict.WEIGHT_FILES))
+
+
 if __name__ == "__main__":
     unittest.main()

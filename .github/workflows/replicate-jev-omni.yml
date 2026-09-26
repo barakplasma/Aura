@@ -1,8 +1,7 @@
 ---
 name: Push Jev-Omni to Replicate
 
-# Builds deploy/replicate/jev-omni with Cog (including the pinned model
-# snapshot in the image) and pushes a new version of the
+# Builds deploy/replicate/jev-omni with Cog and pushes a new version of the
 # public model r8.im/barakplasma/jev-omni. Needs the repository secret
 # REPLICATE_CLI_AUTH_TOKEN, holding either kind of Replicate token: an API
 # token (r8_...) logs in with `docker login r8.im`, a CLI auth token with
@@ -30,9 +29,9 @@ concurrency:
 jobs:
   push:
     runs-on: ubuntu-latest
-    # The first build downloads and pushes the ~24 GB model snapshot as part
-    # of the image. Subsequent builds can reuse cached layers where available.
-    timeout-minutes: 180
+    # The weights are fetched at setup, not baked in, so the image is just
+    # CUDA + torch; the headroom covers a slow first push of those layers.
+    timeout-minutes: 120
     steps:
       - name: Check for the Replicate token
         id: token

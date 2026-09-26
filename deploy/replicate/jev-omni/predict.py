@@ -12,12 +12,22 @@ import hashlib
 import importlib
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 
 from cog import BasePredictor, Input, Path
 
-# From the repo's own sha256.json at the pinned revision. jev_omni.py is imported as
+MODEL_ID = "akhilaaa3/Jev-Omni"
+REVISION = "5addda86ddee081a68fb067477ea100c221b8917"
+# Everything the pinned loader reads; model.safetensors alone is ~24 GB.
+WEIGHT_FILES = [
+    "config.json", "generation_config.json", "model.safetensors", "processor_config.json",
+    "tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
+    "decision_config.json", "head.pt", "jev_omni.py", "verification.json",
+]
+WEIGHTS_DIR = pathlib.Path("/src/weights")
+# From the repo's own sha256.json at REVISION. jev_omni.py is imported as
 # code and head.pt is deserialised, so both are checked before use.
 EXPECTED_SHA256 = {
     "jev_omni.py": "11d761b0b6cefc8aac29757f43af4b2b02af8f9b6c6dad19834c0b14538180f0",
@@ -70,6 +80,12 @@ def format_output(probabilities: dict[str, float], options: list[str]) -> dict:
     return {"answer": best["label"], "confidence": best["probability"], "probabilities": ranked}
 
 
+def weights_manifest(dest: pathlib.Path) -> str:
+    """pget multifile manifest: one "URL DEST" line per file at the pinned revision."""
+    base = f"https://huggingface.co/{MODEL_ID}/resolve/{REVISION}"
+    return "".join(f"{base}/{name} {dest / name}\n" for name in WEIGHT_FILES)
+
+
 def sha256_file(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -88,11 +104,13 @@ class Predictor(BasePredictor):
         import transformers
         from transformers import AutoConfig, AutoProcessor
 
-        # The Cog image build downloads this pinned snapshot into the image;
-        # never wait for the multi-GB Hub transfer during prediction startup.
-        path = pathlib.Path("/opt/jev-omni")
-        if not path.is_dir():
-            raise RuntimeError(f"Baked Jev-Omni snapshot is missing: {path}")
+        # Baking the ~24 GB checkpoint into the image makes one layer too big
+        # for r8.im (413 from its CDN), so setup fetches the pinned files with
+        # pget, Replicate's parallel downloader, which is much faster than
+        # snapshot_download. A warm container that already has them skips it.
+        path = WEIGHTS_DIR
+        if not all((path / name).is_file() for name in WEIGHT_FILES):
+            subprocess.run(["pget", "multifile", "-"], input=weights_manifest(path), text=True, check=True)
         for name, expected in EXPECTED_SHA256.items():
             actual = sha256_file(path / name)
             if actual != expected:
