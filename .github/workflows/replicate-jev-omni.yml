@@ -29,8 +29,7 @@ concurrency:
 jobs:
   push:
     runs-on: ubuntu-latest
-    # The weights are fetched at setup, not baked in, so the image is just
-    # CUDA + torch; the headroom covers a slow first push of those layers.
+    # The weights are fetched at setup, not baked in; headroom covers image push.
     timeout-minutes: 120
     steps:
       - name: Check for the Replicate token

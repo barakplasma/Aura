@@ -722,7 +722,7 @@ users' runs or for idle time.
   (plus an optional `state` text context). The output is `{answer,
   confidence, probabilities: [{label, probability}]}`. So Aura's `replicate`
   adapter serves both; a model row differs only in its version id and price.
-- **Pinned and checked.** The first prediction downloads `akhilaaa3/Jev-Omni` at revision
+- **Pinned and checked.** Each cold worker downloads `akhilaaa3/Jev-Omni` at revision
   `5addda86…`, checks the sha256 of the two files it executes or
   deserialises (`jev_omni.py`, `head.pt`) against the repo's own
   `sha256.json`, and loads the head with `weights_only=True`. The upstream
@@ -731,17 +731,16 @@ users' runs or for idle time.
 - **Refuses to serve a wrong stack.** After loading, it runs the model's own
   `verification.json` cases and fails initialization if any probability drifts
   more than 0.05 from the published reference.
-- **Weights are fetched on first prediction with pget, not baked in.** A ~24 GB
-  image layer is rejected by r8.im (413 Payload Too Large). Cog v0.23 captures
-  `setup()` output separately from per-prediction logs, so fetching during
-  `run()` makes progress visible in the Replicate prediction log. The downloader
-  has bounded concurrency, disables HTTP retries, bounds interrupted-chunk
-  resumes with an eight-minute hard deadline, and relays pget output plus
-  30-second file-growth/disk heartbeats through Loguru. Since this is inside
-  `run()`, a cold prediction can be billed while
-  it downloads and loads the model; the eight-minute pget deadline bounds the
-  download portion. A failed initialization is not automatically retried by
-  the same worker. Inference follows Jev-Omni's bf16 autocast path.
+- **Weights are fetched at setup with pget, not baked in.** A ~24 GB image layer
+  is rejected by r8.im (413 Payload Too Large). Setup is unbilled for public
+  models, so cold downloads no longer inflate the paid prediction time. Cog
+  keeps setup logs separately; the predictor replays the captured Loguru trace
+  into the first prediction log after startup. Pget has bounded concurrency,
+  disables HTTP retries, and stops after an eight-minute deadline, with 30-second
+  file-growth and disk heartbeats. A cold worker still adds about 2–3 minutes of
+  startup latency; Replicate's health-check logs hold live setup output. Signed
+  download query strings are redacted. Inference follows Jev-Omni's bf16 autocast
+  path.
 - **Built by CI.** `.github/workflows/replicate-jev-omni.yml` runs the
   predictor's unit tests, then `cog push` (Cog 0.23.0) whenever
   `deploy/replicate/jev-omni/**` changes. It needs the repository secret

@@ -14,6 +14,7 @@ import importlib
 import json
 import os
 import pathlib
+import re
 import selectors
 import shutil
 import subprocess
@@ -70,7 +71,7 @@ def run_pget(path: pathlib.Path, manifest: str, timeout_seconds: int = PGET_TIME
     path.mkdir(parents=True, exist_ok=True)
     argv = command or PGET_COMMAND
     started = time.monotonic()
-    logger.info("weights: launching pget command={!r}; hard_timeout={}s", argv, timeout_seconds)
+    logger.info("weights: launching pget; hard_timeout={}s", timeout_seconds)
     pget_env = os.environ.copy()
     pget_env["PGET_MAX_CONCURRENT_FILES"] = "1"
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -97,12 +98,12 @@ def run_pget(path: pathlib.Path, manifest: str, timeout_seconds: int = PGET_TIME
                 line = line[:-1]
             message = decoder.decode(line, final=False).strip()
             if message:
-                logger.info("pget: {}", message)
+                logger.info("pget: {}", re.sub(r"(https?://[^?\s]+)\?[^\s]+", r"\1?<query redacted>", message))
         if len(pending) >= 4096 or (final and pending):
             message = decoder.decode(bytes(pending), final=final).strip()
             pending.clear()
             if message:
-                logger.info("pget: {}", message)
+                logger.info("pget: {}", re.sub(r"(https?://[^?\s]+)\?[^\s]+", r"\1?<query redacted>", message))
 
     try:
         try:
@@ -232,13 +233,19 @@ def verification_drift(got: dict[str, float], reference: dict[str, float]) -> fl
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
-        # Cog keeps setup output in health-check data; prediction-page logs are
-        # emitted from run(). Defer expensive work so the first request can
-        # report download/model initialization progress as prediction logs.
+        # Replicate doesn't bill setup time. Keep weight downloads and model
+        # loading out of the billed prediction, then replay their logs in run().
         self.classifier = None
         self._init_error = None
         self._init_lock = threading.Lock()
-        logger.info("setup: lightweight predictor ready; Jev-Omni {}@{}", MODEL_ID, REVISION)
+        self._startup_logs = []
+        sink_id = logger.add(lambda message: self._startup_logs.append(message.record["message"]),
+                             format="{message}", level="INFO")
+        try:
+            self._ensure_ready()
+        finally:
+            logger.remove(sink_id)
+        logger.info("setup: Jev-Omni {}@{} ready; startup details will be included in prediction logs", MODEL_ID, REVISION)
 
     def _ensure_ready(self) -> None:
         if self.classifier is not None:
@@ -357,6 +364,11 @@ class Predictor(BasePredictor):
     ) -> dict:
         run_started = time.monotonic()
         logger.info("prediction: started question_type={}, image={}, state_chars={}", question_type, "file" if image is not None else "base64" if image_base64 else "missing", len(state))
+        if self._startup_logs:
+            logger.info("startup: replaying {} setup log records", len(self._startup_logs))
+            for message in self._startup_logs:
+                logger.info("startup: {}", message)
+            self._startup_logs.clear()
         if not question.strip():
             raise ValueError("question is required.")
         options = resolve_options(question_type, options_json)

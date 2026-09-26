@@ -94,12 +94,14 @@ class PgetLogging(unittest.TestCase):
                     pathlib.Path(tmp),
                     "https://example.com/weight /tmp/weight\n",
                     timeout_seconds=5,
-                    command=[sys.executable, "-c", "import os,sys; sys.stdin.read(); sys.stdout.write('first progress\\rsecond progress\\r\\nmax_files=' + os.getenv('PGET_MAX_CONCURRENT_FILES', 'missing') + '\\n'); sys.stderr.write('stderr detail\\n'); sys.stdout.flush(); sys.stderr.flush()"],
+                    command=[sys.executable, "-c", "import os,sys; sys.stdin.read(); sys.stdout.write('first progress\\rsecond progress\\r\\nmax_files=' + os.getenv('PGET_MAX_CONCURRENT_FILES', 'missing') + '\\nredirect_url=https://cdn.example/weights?signature=secret url=https://hf.example/weights\\n'); sys.stderr.write('stderr detail\\n'); sys.stdout.flush(); sys.stderr.flush()"],
                 )
             self.assertIn("pget: first progress", sink.getvalue())
             self.assertIn("pget: second progress", sink.getvalue())
             self.assertIn("pget: max_files=1", sink.getvalue())
             self.assertIn("pget: stderr detail", sink.getvalue())
+            self.assertIn("?<query redacted>", sink.getvalue())
+            self.assertNotIn("signature=secret", sink.getvalue())
         finally:
             logger.remove(sink_id)
 
@@ -120,14 +122,28 @@ class PgetLogging(unittest.TestCase):
 
     def test_initialization_failure_disables_automatic_retries(self):
         predictor = predict.Predictor()
-        predictor.setup()
+        predictor.classifier = None
         predictor._init_error = RuntimeError("synthetic failure")
         with self.assertRaisesRegex(RuntimeError, "automatic retry disabled"):
             predictor._ensure_ready()
 
-    def test_invalid_image_is_rejected_before_model_download(self):
+    def test_setup_trace_is_replayed_into_prediction_logs(self):
         predictor = predict.Predictor()
-        predictor.setup()
+        with mock.patch.object(predictor, "_ensure_ready", side_effect=lambda: logger.info("weights ready")):
+            predictor.setup()
+        sink = io.StringIO()
+        sink_id = logger.add(sink, format="{message}", level="INFO")
+        try:
+            with self.assertRaisesRegex(ValueError, "question is required"):
+                predictor.run(question="", image_base64="")
+        finally:
+            logger.remove(sink_id)
+        self.assertIn("startup: weights ready", sink.getvalue())
+
+    def test_invalid_image_is_rejected_before_prediction_work(self):
+        predictor = predict.Predictor()
+        with mock.patch.object(predictor, "_ensure_ready"):
+            predictor.setup()
         with mock.patch.object(predictor, "_ensure_ready", side_effect=AssertionError("should not initialize")):
             with self.assertRaisesRegex(ValueError, "valid base64"):
                 predictor.run(question="What is shown?", image_base64="not base64")
