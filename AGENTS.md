@@ -3,6 +3,14 @@
 How to work on Aura: what it is, how to add features, and how to ship them.
 For deeper conventions see **CLAUDE.md**.
 
+## Ponytail
+
+Apply the project-local `ponytail` skill (`.agents/skills/ponytail/SKILL.md`)
+to coding tasks. Read and trace the relevant flow first, then prefer reuse,
+stdlib, native features, and the smallest correct change. Keep validation,
+error handling, security, accessibility, and requested behavior intact. Use
+`ponytail-review` for reviews focused on unnecessary complexity.
+
 ## What the app does
 
 Aura turns a phone/webcam into an **automated visual monitor** — entirely in the browser with no backend. The user provides their own base URL + model from any OpenAI-compatible provider, with an API key if that provider needs one (a local server — Ollama, LM Studio, llama.cpp — does not).

@@ -1,0 +1,84 @@
+---
+name: Push Jev-Omni to Replicate
+
+# Builds deploy/replicate/jev-omni with Cog and pushes a new version of the
+# public model r8.im/barakplasma/jev-omni. Needs the repository secret
+# REPLICATE_CLI_AUTH_TOKEN, holding either kind of Replicate token: an API
+# token (r8_...) logs in with `docker login r8.im`, a CLI auth token with
+# `cog login`. Without it the job reports that and stops green, so a fork
+# or a missing secret never turns CI red. Public model = every caller pays for their own runs
+# (BYOK); see docs/PRD-decision-engine.md.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - claude/benchmarkheaven-aura-integration-10i1b3
+    paths:
+      - deploy/replicate/jev-omni/**
+      - .github/workflows/replicate-jev-omni.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: replicate-jev-omni
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    # The weights are fetched at setup, not baked in; headroom covers image push.
+    timeout-minutes: 120
+    steps:
+      - name: Check for the Replicate token
+        id: token
+        env:
+          REPLICATE_TOKEN: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
+        run: |
+          if [ -z "$REPLICATE_TOKEN" ]; then
+            echo "::notice::REPLICATE_CLI_AUTH_TOKEN is not set; skipping the push."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.token.outputs.present == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Run the predictor's unit tests
+        if: steps.token.outputs.present == 'true'
+        run: |
+          python3 -m pip install loguru==0.7.3
+          python3 -m unittest deploy/replicate/jev-omni/test_predict.py
+
+      # A CUDA + torch image needs more than the runner's default free disk.
+      - uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        if: steps.token.outputs.present == 'true'
+        with:
+          tool-cache: true
+
+      # Login happens in the next step, which handles both token kinds.
+      - uses: replicate/setup-cog@8a5fea3c1818b6950dcf8027285f5a9b447c0c4a # v2.0.3
+        if: steps.token.outputs.present == 'true'
+        with:
+          token: ""
+          cog-version: v0.23.0
+
+      - name: Log in to r8.im
+        if: steps.token.outputs.present == 'true'
+        env:
+          REPLICATE_TOKEN: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
+        run: |
+          case "$REPLICATE_TOKEN" in
+            r8_*) printf '%s' "$REPLICATE_TOKEN" | docker login r8.im --username barakplasma --password-stdin ;;
+            *) printf '%s' "$REPLICATE_TOKEN" | cog login --token-stdin ;;
+          esac
+
+      - name: Push to Replicate
+        if: steps.token.outputs.present == 'true'
+        working-directory: deploy/replicate/jev-omni
+        run: cog push r8.im/barakplasma/jev-omni

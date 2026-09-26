@@ -1,0 +1,3 @@
+# Cog build output and Python bytecode
+.cog/
+__pycache__/
