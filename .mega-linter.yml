@@ -29,7 +29,9 @@ ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
 # package-lock.json embeds npm packages' funding URLs (e.g. Patreon,
 # OpenCollective); those hosts 403 automated requests, which isn't a real
 # dead link. Still JSON/lint-checked — just not link-checked.
-SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: "package-lock\\.json"
+# deploy/aura-relay/chart/values.yaml holds the relay's CORS origin
+# (scheme+host only), not a link — the bare github.io host has no page.
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: "(package-lock\\.json|deploy/aura-relay/chart/values\\.yaml)"
 
 # The repo uses semicolons throughout; Standard's default style forbids them.
 # Prettier keeps the existing convention instead of forcing a repo-wide rewrite.
@@ -65,3 +67,9 @@ LLM_MODEL_NAME: openrouter/pareto-code
 REPORTERS_MARKDOWN_SUMMARY_TYPE: table-sections
 
 PRINT_ALPACA: false
+
+# Scoped, reasoned suppressions live in .trivyignore.yaml; trivy only reads
+# the plain .trivyignore on its own.
+REPOSITORY_TRIVY_ARGUMENTS:
+  - "--ignorefile"
+  - ".trivyignore.yaml"

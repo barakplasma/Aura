@@ -1,0 +1,16 @@
+# Trivy suppressions, each scoped to one file with the reason it's by design.
+misconfigurations:
+  - id: KSV-0037
+    paths:
+      - "deploy/aura-relay/bootstrap/traefik/helmchartconfig.yaml"
+    statement: >-
+      k3s only reads a HelmChartConfig from the namespace of the HelmChart it
+      patches, and the bundled Traefik chart lives in kube-system. It holds a
+      values override, not a workload.
+  - id: KSV-0108
+    paths:
+      - "deploy/aura-relay/chart/templates/services.yaml"
+    statement: >-
+      The relay is config only: Traefik reaches api.replicate.com and its own
+      in-cluster Service through ExternalName, with fixed names set in the
+      chart (no user input). That is the design in docs/PRD-decision-engine.md.
