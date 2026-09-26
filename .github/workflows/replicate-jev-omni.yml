@@ -3,10 +3,10 @@ name: Push Jev-Omni to Replicate
 
 # Builds deploy/replicate/jev-omni with Cog and pushes a new version of the
 # public model r8.im/barakplasma/jev-omni. Needs the repository secret
-# REPLICATE_API_TOKEN (an ordinary Replicate API token, used for `docker
-# login r8.im`; `cog login` only takes a separate CLI token); without it
-# the job reports that and stops green, so a fork or a missing secret
-# never turns CI red. Public model = every caller pays for their own runs
+# REPLICATE_CLI_AUTH_TOKEN, holding either kind of Replicate token: an API
+# token (r8_...) logs in with `docker login r8.im`, a CLI auth token with
+# `cog login`. Without it the job reports that and stops green, so a fork
+# or a missing secret never turns CI red. Public model = every caller pays for their own runs
 # (BYOK); see docs/PRD-decision-engine.md.
 
 on:
@@ -34,10 +34,10 @@ jobs:
       - name: Check for the Replicate token
         id: token
         env:
-          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+          REPLICATE_TOKEN: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
         run: |
-          if [ -z "$REPLICATE_API_TOKEN" ]; then
-            echo "::notice::REPLICATE_API_TOKEN is not set; skipping the push."
+          if [ -z "$REPLICATE_TOKEN" ]; then
+            echo "::notice::REPLICATE_CLI_AUTH_TOKEN is not set; skipping the push."
             echo "present=false" >> "$GITHUB_OUTPUT"
           else
             echo "present=true" >> "$GITHUB_OUTPUT"
@@ -58,7 +58,7 @@ jobs:
         with:
           tool-cache: true
 
-      # No token here: setup-cog's login step only accepts a CLI token.
+      # Login happens in the next step, which handles both token kinds.
       - uses: replicate/setup-cog@8a5fea3c1818b6950dcf8027285f5a9b447c0c4a # v2.0.3
         if: steps.token.outputs.present == 'true'
         with:
@@ -68,8 +68,12 @@ jobs:
       - name: Log in to r8.im
         if: steps.token.outputs.present == 'true'
         env:
-          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
-        run: printf '%s' "$REPLICATE_API_TOKEN" | docker login r8.im --username barakplasma --password-stdin
+          REPLICATE_TOKEN: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
+        run: |
+          case "$REPLICATE_TOKEN" in
+            r8_*) printf '%s' "$REPLICATE_TOKEN" | docker login r8.im --username barakplasma --password-stdin ;;
+            *) printf '%s' "$REPLICATE_TOKEN" | cog login --token-stdin ;;
+          esac
 
       - name: Push to Replicate
         if: steps.token.outputs.present == 'true'

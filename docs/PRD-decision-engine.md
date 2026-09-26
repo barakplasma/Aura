@@ -737,7 +737,7 @@ users' runs or for idle time.
 - **Built by CI.** `.github/workflows/replicate-jev-omni.yml` runs the
   predictor's unit tests, then `cog push` (Cog 0.23.0) whenever
   `deploy/replicate/jev-omni/**` changes. It needs the repository secret
-  `REPLICATE_API_TOKEN` (used for `docker login r8.im`); without it, the job
+  `REPLICATE_CLI_AUTH_TOKEN` (an API token or a CLI token); without it, the job
   stops green with a notice.
 
 ### Cost reality
