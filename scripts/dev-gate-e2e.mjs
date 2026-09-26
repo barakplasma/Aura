@@ -24,6 +24,11 @@
 //   node scripts/dev-gate-e2e.mjs            # gate on, PROVIDER engine
 //   GATE=0 node scripts/dev-gate-e2e.mjs     # control run, gate off
 //   ENGINE=browser node scripts/dev-gate-e2e.mjs
+//       # (see below)
+//   ENGINE=decision node scripts/dev-gate-e2e.mjs
+//       # the DECISION engine against a fake Replicate on the same origin
+//       # (relay template `${origin}{path}`): every prediction answers
+//       # `starting` first, so each scan also exercises the poll
 //       # the in-page VLM (SmolVLM2 256M on WASM) and the detector sharing
 //       # one worker — the case the PROVIDER run never exercises
 //   SECONDS=120 SCENE_S=20 node scripts/dev-gate-e2e.mjs
@@ -44,7 +49,7 @@ const PUBLIC = path.join(ROOT, "public");
 const CHROME =
   process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const GATE = process.env.GATE !== "0";
-const ENGINE = process.env.ENGINE === "browser" ? "browser" : "provider";
+const ENGINE = ["browser", "decision"].includes(process.env.ENGINE) ? process.env.ENGINE : "provider";
 // The in-page VLM runs on WASM here (headless has no GPU adapter) at many
 // seconds a scan, so give it longer.
 const RUN_S = Number(process.env.SECONDS || (ENGINE === "browser" ? 240 : 100));
@@ -153,6 +158,15 @@ const TYPES = {
 };
 
 const scans = []; // { at, promptChars }
+const polls = []; // decision engine: GETs of an unfinished prediction
+const decisionAuth = new Set(); // Authorization headers the fake Replicate saw
+
+// Glance's output shape (untapped/glance-qwen3-vl-4b), always "No".
+const PREDICTION_OUTPUT = {
+  answer: "No",
+  confidence: 0.95,
+  probabilities: [{ label: "Yes", probability: 0.05 }, { label: "No", probability: 0.95 }],
+};
 
 function serve() {
   const server = http.createServer((req, res) => {
@@ -175,6 +189,26 @@ function serve() {
         }));
       });
       return;
+    }
+    if (url.pathname === "/v1/predictions" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const input = JSON.parse(body).input || {};
+        decisionAuth.add(req.headers.authorization || "");
+        scans.push({ at: Date.now(), promptChars: (input.image_base64 || "").length });
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: `p${scans.length}`, status: "starting" }));
+      });
+      return;
+    }
+    if (url.pathname.startsWith("/v1/predictions/") && req.method === "GET") {
+      polls.push(url.pathname);
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({
+        id: url.pathname.split("/").at(-1), status: "succeeded",
+        output: PREDICTION_OUTPUT, metrics: { predict_time: 0.9 },
+      }));
     }
     if (url.pathname === "/__hf") {
       const target = url.searchParams.get("u");
@@ -331,6 +365,9 @@ async function main() {
     "aura.keepScreenOn": false, "aura.speech": false, "aura.haptics": false,
     "aura.objectGate": GATE, "aura.objectModel": "yolo26n-int8",
     "aura.objectGateEveryS": 1, "aura.heartbeatMin": 5,
+    "aura.decisionModel": "glance-qwen3-vl-4b", "aura.decisionUrl": `${origin}{path}`,
+    "aura.decisionKey": "r8_e2e", "aura.decisionAnnouncer": "template",
+    "aura.decisionFallback": false,
   };
   await evaluate(`(() => { ${Object.entries(settings)
     .map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(JSON.stringify(v))});`)
@@ -395,7 +432,13 @@ async function main() {
     ["…and the bus", sawBus],
     ["the empty room reads as empty", sawEmpty],
     ["the VLM ran (at least the baseline scan)", vlmCalls >= 1],
-    ...(ENGINE === "provider"
+    ...(ENGINE === "decision"
+      ? [
+          ["every prediction was polled to completion", polls.length >= scans.length && scans.length >= 1],
+          ["the user's own token was forwarded, nothing else", [...decisionAuth].join() === "Bearer r8_e2e"],
+        ]
+      : []),
+    ...(ENGINE !== "browser"
       ? [
           ["the gate cut VLM calls by at least 5x", vlmCalls * 5 <= noGateTicks],
           ["it still scanned on every scene change (≥ 1 per change)",

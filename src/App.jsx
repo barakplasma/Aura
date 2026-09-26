@@ -4,7 +4,9 @@ import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
 import { DEFAULT_BROWSER_MODEL, DEFAULT_DETECTOR_MODEL } from '../lib/browser-engine.js';
-import { pricingKey, resolvePricing } from '../lib/pricing.js';
+import { pricingKey, resolvePricing, resolveDecisionPricing } from '../lib/pricing.js';
+import { isEngineConfigured } from '../lib/providers.js';
+import { DEFAULT_DECISION_MODEL, DEFAULT_RELAY_URL, getDecisionModel } from '../lib/decision-models.js';
 import { resumeWindowOpen } from '../lib/keepalive.js';
 import TopBar from './components/TopBar.jsx';
 import NavRail from './components/NavRail.jsx';
@@ -49,6 +51,19 @@ export default function App() {
   // Which in-browser runtime answers BROWSER-engine scans: 'auto' |
   // 'transformers' | 'chrome-ai' (resolved in lib/browser-engine.js).
   const [browserRuntime, setBrowserRuntime] = useLocalStorage('aura.browserRuntime', 'auto');
+  // DECISION engine (docs/PRD-decision-engine.md). The key is the user's OWN
+  // (their Replicate token, or their self-hosted server's key) and never
+  // leaves this browser except to the endpoint it's for.
+  const [decisionModel, setDecisionModel] = useLocalStorage('aura.decisionModel', DEFAULT_DECISION_MODEL);
+  const [decisionUrl, setDecisionUrl] = useLocalStorage('aura.decisionUrl', DEFAULT_RELAY_URL);
+  const [decisionKey, setDecisionKey] = useLocalStorage('aura.decisionKey', '');
+  // 'provider' | 'browser' | 'template' — who words a fired alert.
+  const [decisionAnnouncer, setDecisionAnnouncer] = useLocalStorage('aura.decisionAnnouncer', 'provider');
+  // Re-run a failed decision on the PROVIDER engine (only when one is set up).
+  const [decisionFallback, setDecisionFallback] = useLocalStorage('aura.decisionFallback', true);
+  const [decisionQuestion, setDecisionQuestion] = useLocalStorage('aura.decisionQuestion', '');
+  // {question, yes, no, missionHash} compiled once from the mission.
+  const [decisionCompiled, setDecisionCompiled] = useLocalStorage('aura.decisionCompiled', null);
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
@@ -95,23 +110,29 @@ export default function App() {
 
   // "Configured" means a model is selected for BROWSER, or a base URL + model
   // for PROVIDER — never gate on the API key (see CLAUDE.md's provider format).
-  const providerReady = engine === 'browser' ? Boolean(browserModel) : Boolean(baseUrl && model);
+  const providerReady = isEngineConfigured({ engine, browserModel, baseUrl, model, decisionModel, decisionUrl });
   // The optimizer is @ax-llm/ax end to end, and ax only talks to HTTP
   // providers — it cannot drive a model running inside this page. So on the
   // BROWSER engine the screen is not just useless, it would quietly optimize
   // prompts against a provider the operator isn't using. Hide it, and don't
   // apply an artifact trained elsewhere to local scans (see useMonitor).
-  const axAvailable = engine !== 'browser';
+  // Same on DECISION: GEPA tunes chat prompts, and a classifier has none.
+  const axAvailable = engine !== 'browser' && engine !== 'decision';
   // BROWSER and local engines resolve to free pricing, while remote providers
   // use the catalogued model rate or a scoped operator override.
   const pricingOverride = pricingOverrides[pricingKey(baseUrl, model)];
-  const pricing = resolvePricing({ baseUrl, model, engine, override: pricingOverride });
+  const providerPricing = resolvePricing({ baseUrl, model, engine: 'provider', override: pricingOverride });
+  const pricing = engine === 'decision'
+    ? resolveDecisionPricing({ row: getDecisionModel(decisionModel), providerPricing })
+    : resolvePricing({ baseUrl, model, engine, override: pricingOverride });
 
   // Live settings ref — updated every render so tick() sees current values without stale closures
   const settingsRef = useRef({});
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
     engine, browserModel, browserRuntime,
+    decisionModel, decisionUrl, decisionKey, decisionAnnouncer, decisionFallback,
+    decisionQuestion, decisionCompiled,
     threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, pricing,
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
@@ -250,6 +271,10 @@ export default function App() {
               haptics={haptics} setHaptics={setHaptics}
               onDeployAndArm={handleDeployAndArm}
               onNavigateOptimize={() => setScreen('optimize')}
+              engine={engine}
+              decisionQuestion={decisionQuestion} setDecisionQuestion={setDecisionQuestion}
+              decisionCompiled={decisionCompiled} setDecisionCompiled={setDecisionCompiled}
+              baseUrl={baseUrl} apiKey={apiKey} model={model}
             />
           )}
           {screen === 'monitor' && (
@@ -276,7 +301,8 @@ export default function App() {
               <div className="screen">
                 <p className="status-msg">
                   Prompt optimization needs the PROVIDER engine. It runs GEPA against an
-                  OpenAI-compatible endpoint, which the in-browser model isn't one of.
+                  OpenAI-compatible chat endpoint — neither the in-browser model nor a
+                  DECISION classifier is one.
                   Switch engines in SETTINGS to use it.
                 </p>
               </div>
@@ -290,6 +316,7 @@ export default function App() {
                 pricingOverrides={pricingOverrides}
                 configuredModel={model}
                 mission={mission}
+                decision={{ decisionModel, decisionUrl, decisionKey, decisionQuestion, decisionCompiled }}
                 captureFrame={handleCaptureEvalFrame}
                 monitorRunning={running}
               />
@@ -300,6 +327,11 @@ export default function App() {
               engine={engine} setEngine={setEngine}
               browserModel={browserModel} setBrowserModel={setBrowserModel}
               browserRuntime={browserRuntime} setBrowserRuntime={setBrowserRuntime}
+              decisionModel={decisionModel} setDecisionModel={setDecisionModel}
+              decisionUrl={decisionUrl} setDecisionUrl={setDecisionUrl}
+              decisionKey={decisionKey} setDecisionKey={setDecisionKey}
+              decisionAnnouncer={decisionAnnouncer} setDecisionAnnouncer={setDecisionAnnouncer}
+              decisionFallback={decisionFallback} setDecisionFallback={setDecisionFallback}
               baseUrl={baseUrl} setBaseUrl={setBaseUrl}
               apiKey={apiKey} setApiKey={setApiKey}
               model={model} setModel={setModel}
@@ -308,7 +340,9 @@ export default function App() {
               scanEveryUnit={scanEveryUnit} setScanEveryUnit={setScanEveryUnit}
               budgetPerHour={budgetPerHour} setBudgetPerHour={setBudgetPerHour}
               networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
-              pricing={pricing}
+              // On DECISION the token rates shown are the provider's (it
+              // announces and falls back); the decision rate rides along.
+              pricing={engine === 'decision' ? { ...providerPricing, perSecond: pricing.perSecond } : pricing}
               pricingOverride={pricingOverride}
               onSetPricingOverride={(override) => setPricingOverrides((current) => ({ ...current, [pricingKey(baseUrl, model)]: override }))}
               onResetPricingOverride={() => setPricingOverrides((current) => {

@@ -1,6 +1,6 @@
 # PRD — DECISION engine: Image JevBench models as Aura's detector, remote first
 
-Status: **proposed** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
+Status: **Phase 1 implemented** (`replicate` + `content` adapters; relay rollout is Phase 0) · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
 CORS pass-through relay (Traefik config, no secrets); no application server of our own
 Category: **remote inference**
 Sources (read 2026-09-26): [Image JevBench v0.1](https://benchmarkheaven.com/image-jev-bench)

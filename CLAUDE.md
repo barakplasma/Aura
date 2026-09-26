@@ -9,7 +9,13 @@ An **automated visual monitoring PWA** that runs entirely in the browser. A phon
 - **PROVIDER** (default) — an OpenAI-compatible vision model (Cerebras, OpenAI, Groq, a local server, etc.), called with the user's own API key — no backend, no secrets.
 - **BROWSER** — a small vision-language model run entirely client-side via Transformers.js/WebGPU. No key, no server, no CORS; the frame never leaves the device. The model is picked from a table (`lib/browser-models.js`); the reference device is a Pixel 10 in Chrome. See `lib/browser-engine.js` and `src/workers/ml.worker.js`.
 
-Both return the exact same result shape from `scanClient()` / `scanBrowser()`, so `useMonitor`, telemetry, history, and the eval screen don't care which one is active.
+- **DECISION** — a typed-decision classifier (Glance/Qwen3-VL on Replicate by default,
+  Jev-Omni, or a self-hosted `/v1/systemone` server) returns p(yes) from one forward pass.
+  BYOK: the user's own Replicate token goes through a CORS pass-through relay that stores
+  nothing. It writes no text, so a fired alert is worded by the provider, the BROWSER
+  model, or a template. See `lib/decision.js` and docs/PRD-decision-engine.md.
+
+All three return the exact same result shape from `scanClient()` / `scanBrowser()` / `scanDecision()`, so `useMonitor`, telemetry, history, and the eval screen don't care which one is active.
 
 ```text
 camera frame → 640x480 JPEG → detection call (user's provider + model)
@@ -37,7 +43,10 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `src/monitoring.js`               | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                  |
 | `public/index.html`               | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                     |
 | `public/feedback.js`              | Web Speech + Web Vibration                                                                                                            |
-| `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models                                  |
+| `lib/aura.js`                     | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models; `runProviderLeg()` / `compileDecisionQuestion()` for DECISION |
+| `lib/decision.js`                 | DECISION engine: `scanDecision()`, mission → question, one pure `toRequest`/`fromResponse` adapter per wire dialect, relay templates, polling, provider fallback |
+| `lib/decision-models.js`          | `DECISION_MODELS` table (dialect, pinned Replicate version, per-second price) + relay presets — pure                                   |
+| `src/components/DecisionSettings.jsx` | DECISION card in Settings: model row, relay/server URL, the user's own key, announcer, fallback                                    |
 | `lib/monitor.js`                  | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)                      |
 | `lib/browser-engine.js`           | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                                 |
 | `lib/browser-models.js`           | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                           |
@@ -141,6 +150,13 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
   `buildDetectionPrompt()`/`buildActionPrompt()` as the PROVIDER engine; `compact`
   models (SmolVLM2 256M) get the short positional prompts, because handed a JSON
   schema they paraphrase it back rather than answering it.
+- A DECISION model is also a **row, not a branch** (`lib/decision-models.js`); its
+  `dialect` picks the adapter. Confidence is `round(100 × p(yes))`, never the model's
+  reported confidence. The relay forwards the caller's own `Authorization` and must never
+  hold a token — a stored key would bill one account for every user. An announcer failure
+  falls back to the template and never drops a fired alert; a failed decision re-runs on
+  the provider when `aura.decisionFallback` is on. `ENGINE=decision node scripts/dev-gate-e2e.mjs`
+  drives it against a fake Replicate.
 - A row is only `autoSelectable` if `pickBrowserModel()` may hand it to someone who
   never opened Settings. Anything whose download needs a deliberate yes stays
   `false` and is picked manually.
@@ -202,4 +218,4 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Prompt optimization (OPTIMIZE screen) is PROVIDER-only. `@ax-llm/ax` drives HTTP
   providers and cannot reach a model running inside the page, so `App.jsx` hides
   the screen and `useMonitor` withholds the GEPA artifact when `aura.engine` is
-  `browser`. Few-shot examples still apply — `lib/training-store.js` imports no ax.
+  `browser` or `decision`. Few-shot examples still apply — `lib/training-store.js` imports no ax.
