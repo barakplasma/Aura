@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 15419)
-Total output lines: 895
-
 # PRD — DECISION engine: Image JevBench models as Aura's detector, remote first
 
 Status: **proposed** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
@@ -329,7 +326,7 @@ benchmark didn't rank.
 | **Mapika decider-2b-vision (#2)**     | **Yes, most likely.** 2B; community GGUF at Q8_0 is 2.0 GB + 0.36 GB projector; upstream `llama-server` builds on arm64 and has CORS + API keys built in. Latency on ARM cores unmeasured | not published; would fit a T4 as a Cog push                                                          | **self-hosted**             |
 | Bonsai-2-27B v2 (#7)                  | server runs on CPU, but a 27B model on ARM cores is likely far too slow (its 0.8 s p50 was on a GPU); ~7.6 GB of weights                                                                  | not published; ~10 GB VRAM with llama.cpp CUDA fits a T4/L4 Cog image                                | Replicate, if pushed        |
 | Reflex 4B (#3)                        | no — CUDA-only server (16 GB GPU), Triton kernels                                                                                                                                         | not published; already ships a Dockerfile + FastAPI server, the easiest GPU model to port to Cog     | Replicate, if pushed        |
-| Jev-Omni (#1)                         | no — CUDA-only, 24 GB bf16                                                                                                                                                                | **being published** as public `barakplasma/jev-omni` (A100 80 GB), from `deploy/replicate/jev-omni/` | **Replicate**               |
+| Jev-Omni (#1)                         | no — CUDA-only; plan for ~50 GB GPU memory for FP32 weights before runtime overhead                                                                                                         | public `barakplasma/jev-omni` (A100 80 GB), from `deploy/replicate/jev-omni/` | **Replicate**               |
 | djev-spark / djev-dev (#4, #6)        | no — 26B DiffusionGemma custom runtime                                                                                                                                                    | not published; its own hosted API is paused                                                          | neither today               |
 | OpenJev 4B NLI v2 (#12)               | not useful — no probabilities for the threshold                                                                                                                                           | —                                                                                                    | neither                     |
 | Gemma 4 31B, GPT, Gemini (#5, #8–#11) | —                                                                                                                                                                                         | — (already hosted APIs)                                                                              | PROVIDER engine, BYOK today |
@@ -376,7 +373,12 @@ a free bandwidth relay** — which is what the configs below address.
 
 |                            | Aura's operator: Traefik pass-through (default)                                               | Hosted plain CORS proxy (Corsfix, cors.sh, corsproxy.io — no secrets stored)                                                                                                        | The user's own relay (bring your own proxy URL)            |
 |----------------------------|-----------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
-| What runs                  | two routes + three middlewares on the Traefik k3s already runs; no secrets at all             | nothing for the operator; a vendor account                                                                                                                          …419 tokens truncated…                 | the vendor's                                                                                                                                                                        | the user's                                                 |
+| What runs                  | two routes + three middlewares on the Traefik k3s already runs; no secrets at all             | nothing for the operator; a vendor account                                                                                                                                          | whatever the user chooses (the same Traefik snippet works) |
+| Who sees each user's token | the operator — **who already serves the JavaScript that reads localStorage**, so no new party | a new third party, for every user                                                                                                                                                   | the user                                                   |
+| Who pays for the relay     | the operator: bandwidth only (~50–100 KB per scan)                                            | the operator, priced by users/requests: Corsfix Hobby allows 3 concurrent users (Scale: 100 for $19/month); cors.sh Pro 500,000 requests; corsproxy.io Hobby 250,000 requests/month | the user                                                   |
+| Who pays for inference     | each user, on their own Replicate account                                                     | same                                                                                                                                                                                | same                                                       |
+| Abuse control              | exact `Origin` match, prediction paths only, `Bearer r8_…` shape, 4 MB cap, per-IP rate limit | the vendor's origin allowlist and plan limits                                                                                                                                       | the user's                                                 |
+| Availability               | the operator's VPS                                                                            | the vendor's                                                                                                                                                                        | the user's                                                 |
 
 **Default: the operator's Traefik pass-through**, with a **proxy URL field in
 Settings** so any user can switch to a hosted proxy or their own relay (or to
@@ -744,6 +746,91 @@ users' runs or for idle time.
   `deploy/replicate/jev-omni/**` changes. It needs the repository secret
   `REPLICATE_CLI_AUTH_TOKEN` (an API token or a CLI token); without it, the job
   stops green with a notice.
+
+#### Use the hosted Replicate endpoint
+
+The model is public, but the caller still needs their own Replicate API token;
+each caller is billed for their prediction. Find the current model version ID
+on the model page's **API** tab. Use the full version ID so requests stay pinned
+to that published version. Keep the token in an environment variable or secret
+manager, not in source code or a shared URL.
+
+This example sends a local image as base64. `options_json` is a JSON-encoded
+string because it is one of the model's string inputs:
+
+```sh
+export REPLICATE_API_TOKEN="r8_…"
+export JEV_OMNI_VERSION="<full-version-id-from-the-API-tab>"
+export IMAGE_BASE64="$(base64 < ./image.jpg | tr -d '\r\n')"
+
+jq -n \
+  --arg version "barakplasma/jev-omni:${JEV_OMNI_VERSION}" \
+  --arg image "$IMAGE_BASE64" \
+  '{version: $version, input: {
+    question: "Which animal is shown?",
+    question_type: "choice",
+    options_json: "[\"Cat\",\"Dog\",\"Bird\",\"Horse\"]",
+    image_base64: $image
+  }}' |
+curl -sS https://api.replicate.com/v1/predictions \
+  -X POST \
+  -H "Authorization: Bearer ${REPLICATE_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H 'Prefer: wait=15' \
+  --data-binary @-
+```
+
+The inputs are `question`, `question_type` (`yes_no` or `choice`),
+`options_json`, and either `image_base64` (raw base64 or a data URI) or an
+`image` URL. `state` is optional text context. The result is under `output`:
+`answer`, `confidence`, and a `probabilities` array. `Prefer: wait=15` waits up
+to 15 seconds; if the response is still `starting` or `processing`, poll the
+returned `urls.get` URL with the same bearer token until the status is terminal.
+Direct API clients do not need the Aura CORS relay. A browser calling Replicate
+directly does; see [Who runs the relay](#who-runs-the-relay).
+
+#### Run the same Jev-Omni predictor yourself
+
+The same Cog project can serve locally. This is the closest self-hosted
+equivalent: it runs the Jev-Omni checkpoint and exposes the same input and
+output fields without Replicate billing. It requires Linux, Docker with NVIDIA
+Container Toolkit, a CUDA-capable NVIDIA GPU, and enough disk for the image and
+checkpoint. Plan for about 50 GB of GPU memory for FP32 weights before runtime
+overhead; inference uses BF16 autocast, and an 80 GB GPU gives useful headroom.
+The 16 GB Radeon workstation GPU is not compatible with this CUDA Cog image and
+would not have enough memory for this model. The first worker start downloads
+the checkpoint from Hugging Face. Keep the machine on a trusted private
+network; Cog's local server does not add bearer-key authentication.
+
+From the repository root:
+
+```sh
+cd deploy/replicate/jev-omni
+cog serve -p 8393
+```
+
+Cog builds the image and serves the predictor on `http://127.0.0.1:8393`.
+Send the same inputs under an `input` object, without the Replicate `version`
+field:
+
+```sh
+curl -sS http://127.0.0.1:8393/predictions \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"input": {
+    "question": "Which animal is shown?",
+    "question_type": "choice",
+    "options_json": "[\"Cat\",\"Dog\",\"Bird\",\"Horse\"]",
+    "image_base64": "<base64-image-data>"
+  }}'
+```
+
+To make it reachable outside localhost, put it behind an authenticated TLS
+proxy and add an explicit CORS allowlist for Aura's origin; do not expose the
+unauthenticated Cog port directly to the internet. For smaller self-hosted
+hardware, see [Self-hosted, config only: Bonsai-Llama-Jev on the VPS](#self-hosted-config-only-bonsai-llama-jev-on-the-vps)
+and the `decider-2b-vision` option above. Those use different model runtimes and
+may have different accuracy and latency.
 
 ### Cost reality
 
