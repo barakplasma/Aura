@@ -22,6 +22,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Aura probe</title>
+    <meta name="description" content="Diagnostic page for Aura's in-browser vision engine: load a model and run one scan against the camera." />
     <style>
       body { font: 13px/1.45 ui-monospace, monospace; margin: 0; padding: 12px; background: #0b0d10; color: #dfe3e8; }
       h1 { font-size: 14px; margin: 0 0 10px; letter-spacing: 0.08em; }
@@ -39,7 +40,7 @@
     <select id="model"></select>
     <label>MISSION</label>
     <textarea id="mission" rows="2">a person sitting on a bench</textarea>
-    <button id="go">LOAD + SCAN</button>
+    <button id="go" type="button">LOAD + SCAN</button>
     <video id="video" autoplay playsinline muted></video>
     <pre id="summary">idle</pre>
     <pre id="out"></pre>
