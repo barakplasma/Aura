@@ -1,0 +1,39 @@
+# BYOK relay for Aura's DECISION engine (Aura docs/PRD-decision-engine.md).
+# Every Aura user sends their OWN Replicate token; this chart forwards it
+# unchanged and holds no credential. Never add a token here - a stored or
+# injected key would bill one account for every Aura user.
+#
+# No Deployment: Traefik (k3s-bundled, kube-system) does all the work.
+# Needs allowExternalNameServices on Traefik's kubernetesCRD provider -
+# see ../bootstrap/traefik/helmchartconfig.yaml.
+namespaceOverride: aura-relay
+
+host: aura-relay.526462738.xyz
+# Aura is served from GitHub Pages; the Origin header is scheme+host only.
+auraOrigin: https://barakplasma.github.io
+
+rateLimit:
+  average: 2 # requests/second per end-user IP
+  burst: 10
+
+maxRequestBodyBytes: 4000000 # a 640x480 JPEG as base64 is ~100 KB
+
+upstream:
+  host: api.replicate.com
+  # Only prediction create / get / cancel, and only with a Replicate-shaped
+  # bearer token - everything else is a 404 from the router.
+  tokenPattern: "^Bearer r8_[A-Za-z0-9]+$"
+
+# Traefik's in-cluster Service, fronted by the cloudflare-tunnel Ingress
+# (same pattern as convertx/babybuddy).
+traefik:
+  service: traefik.kube-system.svc.cluster.local
+  port: 80
+
+# Public entry: STRRL cloudflare-tunnel Ingress (manages DNS + TLS).
+# NO Cloudflare Access on this host - the browser calls it cross-origin
+# with fetch(), which can't complete an Access login; the per-user
+# Replicate token is the authentication. Likewise no WAF challenge: see
+# ../README.md ("Cloudflare challenge").
+ingress:
+  className: cloudflare-tunnel

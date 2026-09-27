@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { IonContent } from '@ionic/react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
-import { PROVIDER_PRESETS, providerForUrl } from '../../lib/providers.js';
+import { PROVIDER_PRESETS, providerForUrl, benchmarkNote } from '../../lib/providers.js';
 import {
   BROWSER_MODELS,
   DEFAULT_BROWSER_MODEL,
@@ -27,6 +27,7 @@ import { suggestClasses } from '../../lib/detector-models.js';
 import { parseWakeOn } from '../../lib/object-gate.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 import ProgressBar from '../components/ProgressBar.jsx';
+import DecisionSettings from '../components/DecisionSettings.jsx';
 import { reportHandledError } from '../monitoring.js';
 
 const SCAN_MODES = [
@@ -45,6 +46,11 @@ export default function SettingsScreen({
   engine, setEngine,
   browserModel, setBrowserModel,
   browserRuntime, setBrowserRuntime,
+  decisionModel, setDecisionModel,
+  decisionUrl, setDecisionUrl,
+  decisionKey, setDecisionKey,
+  decisionAnnouncer, setDecisionAnnouncer,
+  decisionFallback, setDecisionFallback,
   baseUrl, setBaseUrl,
   apiKey, setApiKey,
   model, setModel,
@@ -321,11 +327,18 @@ export default function SettingsScreen({
           <label className="field-label">ENGINE</label>
           <div className="mode-segments" role="radiogroup" aria-label="Inference engine">
             <button
-              className={`mode-segment ${engine !== 'browser' ? 'active' : ''}`}
-              role="radio" aria-checked={engine !== 'browser'}
+              className={`mode-segment ${engine !== 'browser' && engine !== 'decision' ? 'active' : ''}`}
+              role="radio" aria-checked={engine !== 'browser' && engine !== 'decision'}
               onClick={() => setEngine('provider')}
             >
               PROVIDER
+            </button>
+            <button
+              className={`mode-segment ${engine === 'decision' ? 'active' : ''}`}
+              role="radio" aria-checked={engine === 'decision'}
+              onClick={() => setEngine('decision')}
+            >
+              DECISION
             </button>
             <button
               className={`mode-segment ${engine === 'browser' ? 'active' : ''}`}
@@ -338,9 +351,26 @@ export default function SettingsScreen({
           <div className="field-hint">
             {engine === 'browser'
               ? 'Runs a small vision model on this device via WebGPU — no key, no server, and the frame never leaves the browser.'
-              : 'Calls an OpenAI-compatible vision model from a cloud provider or local server you configure below.'}
+              : engine === 'decision'
+                ? 'Asks a typed-decision classifier for the probability that the mission is met — faster and cheaper than a chat model, and its confidence is a real probability. It writes no words: the provider below (optional) announces alerts and catches failures.'
+                : 'Calls an OpenAI-compatible vision model from a cloud provider or local server you configure below.'}
           </div>
         </div>
+
+        {engine === 'decision' && (
+          <DecisionSettings
+            decisionModel={decisionModel} setDecisionModel={setDecisionModel}
+            decisionUrl={decisionUrl} setDecisionUrl={setDecisionUrl}
+            decisionKey={decisionKey} setDecisionKey={setDecisionKey}
+            decisionAnnouncer={decisionAnnouncer} setDecisionAnnouncer={setDecisionAnnouncer}
+            decisionFallback={decisionFallback} setDecisionFallback={setDecisionFallback}
+            providerConfigured={Boolean(baseUrl && model)}
+            mission={mission}
+            captureFrame={captureFrame}
+            onStatusMsg={onStatusMsg}
+          />
+        )}
+        {engine === 'decision' && <div className="section-label">ANNOUNCER / FALLBACK PROVIDER (OPTIONAL)</div>}
 
         {engine !== 'browser' && (
           <>
@@ -426,6 +456,7 @@ export default function SettingsScreen({
                 {fetchingModels ? 'FETCHING…' : 'FETCH VISION MODELS'}
               </button>
             </div>
+            {benchmarkNote(model) && <div className="field-hint">{benchmarkNote(model)}</div>}
             {statusMsg && <p id="provider-status" className="status-msg" role="status">{statusMsg}</p>}
           </>
         )}
@@ -650,6 +681,14 @@ export default function SettingsScreen({
         )}
         {(scanMode === 'interval' || scanMode === 'budget') && (
           <div className="form-group">
+            {engine === 'decision' && Number.isFinite(pricing?.perSecond) && (
+              <div className="field-hint">
+                Decision model: {pricing.perSecond > 0
+                  ? `$${pricing.perSecond} per second of predict time (Replicate's public hardware rate), billed to your own account.`
+                  : 'free — your own server.'}
+                {' '}The token rates below price the provider's announcements and fallbacks.
+              </div>
+            )}
             <label className="field-label">MODEL PRICING ($/1M TOKENS)</label>
             {pricing?.source === 'unavailable' ? (
               <div className="field-hint">No catalogue price found. Enter both rates to enable the dollar budget cap.</div>

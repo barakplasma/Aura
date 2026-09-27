@@ -1,0 +1,11 @@
+torch==2.14.0
+transformers==5.17.0
+accelerate==1.15.0
+huggingface_hub==1.33.0
+Pillow==12.3.0
+numpy==1.26.4
+loguru==0.7.3
+# Transitive (huggingface_hub -> httpx), pinned past known advisories
+# on osv.dev (checked 2026-09-27), same as deploy/replicate/jev-omni.
+anyio==4.15.1
+idna==3.20

@@ -1,8 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { scanClient, isLocalBaseUrl } from "../../lib/aura.js";
+import { scanClient, runProviderLeg, isLocalBaseUrl } from "../../lib/aura.js";
+import { scanDecision, missionToQuestion } from "../../lib/decision.js";
+import { isEngineConfigured } from "../../lib/providers.js";
 import { demoScan } from "../../lib/demo.js";
 import {
   scanBrowser,
+  runBrowserLeg,
   BROWSER_MODELS,
   detectObjects,
   detectorDeviceName,
@@ -197,6 +200,39 @@ function releaseStream(internalRef, videoRef) {
   if (videoRef.current) videoRef.current.srcObject = null;
 }
 
+// The DECISION engine's announcer: the classifier writes no text, so a fired
+// alert is worded by the configured provider, the in-page BROWSER model, or —
+// `template`, or no provider to ask — the action text itself (lib/decision.js).
+function decisionAnnouncer(s, { examples, webhookSchema, onProgress }) {
+  const legArgs = (leg, { reason, image, signal }) => ({
+    leg,
+    action: s.action,
+    webhookAction: s.webhookAction || undefined,
+    webhookSchema,
+    reason,
+    image,
+    examples: examples.length > 0 ? examples : undefined,
+    signal,
+  });
+  if (s.decisionAnnouncer === "browser") {
+    return (leg, ctx) =>
+      runBrowserLeg({ ...legArgs(leg, ctx), model: s.browserModel || undefined, runtime: s.browserRuntime || undefined, onProgress });
+  }
+  if (s.decisionAnnouncer === "provider" && s.baseUrl && s.model) {
+    return (leg, ctx) =>
+      runProviderLeg({ ...legArgs(leg, ctx), baseUrl: s.baseUrl, model: s.model, apiKey: s.apiKey || undefined });
+  }
+  return null;
+}
+
+// A DECISION scan that fell back to the provider, or whose announcer failed,
+// says so on the status line — degraded, but never silently.
+function engineNote(result) {
+  if (result.fallbackReason) return ` · decision model failed (${result.fallbackReason}); the provider answered`;
+  if (result.announceError) return ` · announcer failed (${result.announceError})`;
+  return "";
+}
+
 export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn }) {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("Configure a provider and press Start.");
@@ -236,6 +272,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     totalTokens: 0,
     totalPromptTokens: 0,
     totalCompletionTokens: 0,
+    // DECISION engine: billed per decision / predict-second, not per token.
+    totalDecisions: 0,
+    totalPredictS: 0,
     running: false,
     abort: null,
     // latency samples + current scan-cycle phase, read by the progress ticker.
@@ -252,6 +291,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     emaCompletionTokens: null,
     emaBytes: null,
     emaDuration: null,
+    // $ per scan, measured directly — the DECISION engine's budget signal.
+    emaScanCost: null,
     budgetWarned: false,
     // Keepalive: when the last scan completed (for the visibility catch-up
     // check), the gap it was scheduled with, and the current camera track's
@@ -753,6 +794,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       // ceiling involved.
       const isMaxMode = s.scanMode === "max";
       const isBrowserEngine = s.engine === "browser";
+      const isDecisionEngine = s.engine === "decision";
       const timeoutFloorMs = isBrowserEngine
         ? TIMEOUT_FLOOR_MS_BROWSER
         : TIMEOUT_FLOOR_MS_PROVIDER;
@@ -771,7 +813,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         // Model-download progress (first arm, or a model switch) is surfaced
         // as the monitor status so the operator sees "Loading LFM2.5-VL 450M
         // — 61%" instead of a blank screen while the weights fetch.
-        const onProgress = isBrowserEngine
+        const onProgress = isBrowserEngine || (isDecisionEngine && s.decisionAnnouncer === "browser")
           ? (msg) => {
               if (!internalRef.current.running || msg.pct == null) return;
               const label =
@@ -781,6 +823,23 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           : undefined;
         const onStage = (stage) => {
           if (internalRef.current.running) internalRef.current.stage = stage;
+        };
+        const providerArgs = {
+          baseUrl: s.baseUrl || undefined,
+          model: s.model || undefined,
+          apiKey: s.apiKey || undefined,
+          mission: s.mission,
+          action: s.action,
+          image: frame,
+          threshold: s.threshold ?? 0,
+          webhookAction: s.webhookAction || undefined,
+          webhookSchema: parseWebhookSchema() || undefined,
+          examples: examples.length > 0 ? examples : undefined,
+          optimizedInstruction: optimizedInstruction || undefined,
+          sceneHint: internalRef.current.gateHint || undefined,
+          requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
+          signal: abort.signal,
+          onStage,
         };
         const result = s.demo
           ? demoScan({
@@ -810,23 +869,38 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
                 onProgress,
                 onStage,
               })
-            : await scanClient({
-                baseUrl: s.baseUrl || undefined,
-                model: s.model || undefined,
-                apiKey: s.apiKey || undefined,
-                mission: s.mission,
-                action: s.action,
-                image: frame,
-                threshold: s.threshold ?? 0,
-                webhookAction: s.webhookAction || undefined,
-                webhookSchema: parseWebhookSchema() || undefined,
-                examples: examples.length > 0 ? examples : undefined,
-                optimizedInstruction: optimizedInstruction || undefined,
-                sceneHint: internalRef.current.gateHint || undefined,
-                requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
-                signal: abort.signal,
-                onStage,
-              });
+            : isDecisionEngine
+              ? await scanDecision({
+                  modelId: s.decisionModel,
+                  url: s.decisionUrl,
+                  apiKey: s.decisionKey || undefined,
+                  mission: s.mission,
+                  question: missionToQuestion({
+                    mission: s.mission,
+                    explicit: s.decisionQuestion,
+                    compiled: s.decisionCompiled,
+                  }),
+                  image: frame,
+                  threshold: s.threshold ?? 0,
+                  action: s.action,
+                  webhookAction: s.webhookAction || undefined,
+                  sceneHint: internalRef.current.gateHint || undefined,
+                  announce: decisionAnnouncer(s, {
+                    examples,
+                    webhookSchema: parseWebhookSchema() || undefined,
+                    onProgress,
+                  }),
+                  // Re-run a failed decision on the provider — only when one
+                  // is actually configured.
+                  fallback:
+                    s.decisionFallback && s.baseUrl && s.model
+                      ? () => scanClient(providerArgs)
+                      : undefined,
+                  requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
+                  signal: abort.signal,
+                  onStage,
+                })
+              : await scanClient(providerArgs);
         if (!internalRef.current.running) return;
         const rtt = Math.round(performance.now() - started);
         // Record the per-frame latency and refresh the percentile stats.
@@ -866,6 +940,9 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           : 0;
         st.emaBytes = emaUpdate(st.emaBytes, frameBytes);
         st.emaDuration = emaUpdate(st.emaDuration, measured);
+        if (isDecisionEngine) {
+          st.emaScanCost = emaUpdate(st.emaScanCost, costForUsage(result.usage, s.pricing) ?? NaN);
+        }
         setDotClass((prev) => {
           const next =
             result.mode === "live"
@@ -886,16 +963,24 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           internalRef.current.totalTokens = totalTokens;
           internalRef.current.totalPromptTokens += result.usage?.reported ? result.usage.prompt_tokens : 0;
           internalRef.current.totalCompletionTokens += result.usage?.reported ? result.usage.completion_tokens : 0;
+          internalRef.current.totalDecisions += Number(result.usage?.decisions) || 0;
+          internalRef.current.totalPredictS += Number(result.usage?.predict_s) || 0;
           const cost = costForUsage({
             prompt_tokens: internalRef.current.totalPromptTokens,
             completion_tokens: internalRef.current.totalCompletionTokens,
+            decisions: internalRef.current.totalDecisions,
+            predict_s: internalRef.current.totalPredictS,
           }, s.pricing);
           // Spread prev: this update only owns the per-scan fields. Replacing
           // the whole object wiped everything else after every scan — the
           // object gate's rows and the muted-track SKIPPED counter included.
           return {
             ...prev,
-            latency: String(result.latencyMs ?? rtt),
+            // A decision backend's own predict time, when it reports one,
+            // tells network + queueing apart from the model itself.
+            latency: Number.isFinite(result.timing?.predict)
+              ? `${result.latencyMs ?? rtt} (model ${result.timing.predict})`
+              : String(result.latencyMs ?? rtt),
             confidence: Number.isFinite(result.confidence)
               ? String(Math.round(result.confidence))
               : "—",
@@ -911,7 +996,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           };
         });
         if (result.triggered) {
-          setStatus(`⚠ ALERT — ${result.message || result.reason}`);
+          setStatus(`⚠ ALERT — ${result.message || result.reason}${engineNote(result)}`);
           flashAlert();
           logAlert(
             result.message || result.reason,
@@ -932,7 +1017,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           );
           if (!s.demo && webhookBody) sendWebhook(webhookBody, frame);
         } else {
-          setStatus(`Watching — ${result.reason}`);
+          setStatus(`Watching — ${result.reason}${engineNote(result)}`);
           recordMissed(frame, result.reason, result.confidence);
         }
         // Budget mode can't cost-cap a provider that returns no token usage —
@@ -940,6 +1025,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         if (
           s.scanMode === "budget" &&
           usageTokens == null &&
+          !Number.isFinite(st.emaScanCost) &&
           !st.budgetWarned
         ) {
           st.budgetWarned = true;
@@ -954,9 +1040,10 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           reportHandledError,
           {
             area: "live-monitor",
-            engine: isBrowserEngine ? "browser" : "provider",
+            engine: isBrowserEngine ? "browser" : isDecisionEngine ? "decision" : "provider",
             inference: isBrowserEngine
               ? "in-browser"
+              : isDecisionEngine ? "decision-endpoint"
               : isLocalBaseUrl(s.baseUrl) ? "local-provider" : "cloud-provider",
             ...(isBrowserEngine ? {
               model: s.browserModel || "default",
@@ -990,6 +1077,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           completionTokens: st.emaCompletionTokens,
           bytes: st.emaBytes,
           durationMs: st.emaDuration,
+          scanCost: st.emaScanCost,
         },
       );
       // Remembered for the visibilitychange catch-up check — "how far behind
@@ -999,10 +1087,12 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       const cyclePeriodMs = (st.emaDuration || 0) + gapMs;
       const scansPerHr =
         cyclePeriodMs > 0 ? Math.round(3600e3 / cyclePeriodMs) : 0;
-      const scanCost = costForUsage({
-        prompt_tokens: st.emaPromptTokens,
-        completion_tokens: st.emaCompletionTokens,
-      }, s.pricing);
+      const scanCost = Number.isFinite(st.emaScanCost)
+        ? st.emaScanCost
+        : costForUsage({
+            prompt_tokens: st.emaPromptTokens,
+            completion_tokens: st.emaCompletionTokens,
+          }, s.pricing);
       const costPerHr = (scanCost || 0) * scansPerHr;
       setTelemetry((prev) => {
         const nextScans = String(scansPerHr);
@@ -1194,13 +1284,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     // Studio, llama.cpp) needs none. Base URL + model are what "configured"
     // means for the PROVIDER engine; the BROWSER engine only needs a model
     // selection (base URL/API key are irrelevant to it).
-    const providerReady =
-      s.engine === "browser" ? Boolean(s.browserModel) : Boolean(s.baseUrl && s.model);
+    const providerReady = isEngineConfigured(s);
     if (!s.demo && !providerReady) {
       setStatus(
         s.engine === "browser"
           ? "Pick a BROWSER MODEL in Settings, or use Demo Mode."
-          : "Set a provider Base URL and model in Settings, or use Demo Mode.",
+          : s.engine === "decision"
+            ? "Pick a DECISION model (and its server URL, if self-hosted) in Settings, or use Demo Mode."
+            : "Set a provider Base URL and model in Settings, or use Demo Mode.",
       );
       return false;
     }
@@ -1235,6 +1326,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     internalRef.current.totalTokens = 0;
     internalRef.current.totalPromptTokens = 0;
     internalRef.current.totalCompletionTokens = 0;
+    internalRef.current.totalDecisions = 0;
+    internalRef.current.totalPredictS = 0;
     // Fresh latency history each session — a new provider/model has its own
     // performance profile.
     internalRef.current.samples = [];
@@ -1245,6 +1338,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     internalRef.current.emaCompletionTokens = null;
     internalRef.current.emaBytes = null;
     internalRef.current.emaDuration = null;
+    internalRef.current.emaScanCost = null;
     internalRef.current.budgetWarned = false;
     // Fresh keepalive state each session too.
     internalRef.current.lastScanAt = null;

@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { fetchModels, scanClient, isLocalBaseUrl } from '../../lib/aura.js';
 import { expandMatrix, comboKey, runEvalMatrix, summarizeResults } from '../../lib/eval.js';
-import { pricingKey, resolvePricing } from '../../lib/pricing.js';
+import { pricingKey, resolvePricing, resolveDecisionPricing } from '../../lib/pricing.js';
+import { scanDecision, missionToQuestion } from '../../lib/decision.js';
+import { DECISION_MODELS, getDecisionModel, isDecisionConfigured } from '../../lib/decision-models.js';
 import { createEvalStore, makeId } from '../../lib/eval-store.js';
 import { scanBrowser, probeChromeAI, DEFAULT_BROWSER_MODEL, BROWSER_MODELS } from '../../lib/browser-engine.js';
 import { reportUnexpectedError } from '../../lib/handled-errors.js';
@@ -21,6 +23,9 @@ const BROWSER_MODEL_PREFIX = 'browser:';
 // Chrome's built-in Prompt API (Gemini Nano). Gated on its own feature probe,
 // not on WebGPU: it uses neither transformers.js nor the GPU pipeline.
 const CHROME_AI_MODEL_ID = 'chrome-ai:builtin';
+// "decision:<row>" — a DECISION-engine classifier (lib/decision-models.js),
+// run through the same relay/server and key as the live monitor.
+const DECISION_MODEL_PREFIX = 'decision:';
 const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
 
 // Friendly label + provenance sub-line for the models column.
@@ -32,14 +37,36 @@ function evalModelLabel(m) {
   if (m === CHROME_AI_MODEL_ID) {
     return { name: 'Chrome built-in AI', sub: 'Gemini Nano · JSON-constrained' };
   }
+  if (m.startsWith(DECISION_MODEL_PREFIX)) {
+    const row = getDecisionModel(m.slice(DECISION_MODEL_PREFIX.length));
+    return { name: row?.label || m, sub: 'decision · p(yes)' };
+  }
   return { name: m, sub: null };
 }
 
-// Routes a cell's scan to the BROWSER engine (either runtime) or the
-// configured provider, depending on which kind of model id it carries —
-// everything else about the call (mission, image, threshold, signal) is the
-// same either way.
-async function scanForEval(params) {
+// Routes a cell's scan to the BROWSER engine (either runtime), a DECISION
+// model, or the configured provider, depending on which kind of model id it
+// carries — everything else about the call (mission, image, threshold,
+// signal) is the same either way. A variant whose mission is the live one
+// asks the live decision question; any other variant gets its template.
+async function scanForEval(params, decision) {
+  if (params.model.startsWith(DECISION_MODEL_PREFIX)) {
+    const live = params.mission === decision.mission;
+    return scanDecision({
+      modelId: params.model.slice(DECISION_MODEL_PREFIX.length),
+      url: decision.decisionUrl,
+      apiKey: decision.decisionKey || undefined,
+      question: missionToQuestion({
+        mission: params.mission,
+        explicit: live ? decision.decisionQuestion : '',
+        compiled: decision.decisionCompiled,
+      }),
+      image: params.image,
+      threshold: 0,
+      requestTimeout: params.requestTimeout,
+      signal: params.signal,
+    });
+  }
   if (params.model.startsWith(BROWSER_MODEL_PREFIX)) {
     return scanBrowser({
       ...params,
@@ -102,7 +129,7 @@ function downloadJson(obj, filename) {
 }
 
 export default function EvalScreen({
-  baseUrl, apiKey, pricingOverrides, configuredModel, mission, captureFrame, monitorRunning,
+  baseUrl, apiKey, pricingOverrides, configuredModel, mission, captureFrame, monitorRunning, decision = {},
 }) {
   const [images, setImages] = useState([]);
   const [variants, setVariants] = useLocalStorage('aura.eval.variants', []);
@@ -136,6 +163,13 @@ export default function EvalScreen({
           .map((k) => `${BROWSER_MODEL_PREFIX}${k}`)
       : []),
     ...(chromeAICapable ? [CHROME_AI_MODEL_ID] : []),
+    // Decision rows that share the configured one's endpoint — so the same
+    // relay/server URL and the same key are valid for each of them.
+    ...(isDecisionConfigured(decision)
+      ? Object.keys(DECISION_MODELS)
+          .filter((k) => DECISION_MODELS[k].upstream === getDecisionModel(decision.decisionModel).upstream)
+          .map((k) => `${DECISION_MODEL_PREFIX}${k}`)
+      : []),
   ];
 
   // Pull the current state of the module-level run (or the persisted last
@@ -265,8 +299,9 @@ export default function EvalScreen({
   const usableVariants = variants.filter((v) => (v.mission || '').trim());
   const totalCalls = images.length * selectedModels.length * usableVariants.length;
   const running = Boolean(activeRun);
-  // A run made up entirely of in-browser models needs no provider at all.
-  const isLocalModelId = (m) => m.startsWith(BROWSER_MODEL_PREFIX) || m === CHROME_AI_MODEL_ID;
+  // A run made up entirely of in-browser or decision models needs no provider.
+  const isLocalModelId = (m) =>
+    m.startsWith(BROWSER_MODEL_PREFIX) || m === CHROME_AI_MODEL_ID || m.startsWith(DECISION_MODEL_PREFIX);
   const needsProvider = selectedModels.some((m) => !isLocalModelId(m));
   const blockers = [];
   // No API key blocker — a local provider needs none.
@@ -311,7 +346,7 @@ export default function EvalScreen({
       concurrency,
       requestTimeout: 60,
       signal: controller.signal,
-      scanFn: scanForEval,
+      scanFn: (params) => scanForEval(params, { ...decision, mission }),
       onResult: (result, done) => {
         if (result.status === 'error') {
           reportUnexpectedError(new Error(result.error), reportHandledError, {
@@ -319,6 +354,7 @@ export default function EvalScreen({
             model: result.model,
             inference: result.model.startsWith(BROWSER_MODEL_PREFIX)
               ? 'in-browser'
+              : result.model.startsWith(DECISION_MODEL_PREFIX) ? 'decision-endpoint'
               : isLocalBaseUrl(baseUrl) ? 'local-provider' : 'cloud-provider',
           });
         }
@@ -361,11 +397,15 @@ export default function EvalScreen({
     }
   }
   const summary = runView
-    ? summarizeResults(runView.results, runView.expectedByImage, (evalModel) => resolvePricing({
-        baseUrl,
-        model: evalModel,
-        override: pricingOverrides?.[pricingKey(baseUrl, evalModel)],
-      }))
+    ? summarizeResults(runView.results, runView.expectedByImage, (evalModel) => (
+        evalModel.startsWith(DECISION_MODEL_PREFIX)
+          ? resolveDecisionPricing({ row: getDecisionModel(evalModel.slice(DECISION_MODEL_PREFIX.length)) })
+          : resolvePricing({
+              baseUrl,
+              model: evalModel,
+              override: pricingOverrides?.[pricingKey(baseUrl, evalModel)],
+            })
+      ))
     : null;
   const imageById = Object.fromEntries(images.map((i) => [i.id, i]));
 

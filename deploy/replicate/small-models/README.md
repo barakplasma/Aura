@@ -21,12 +21,22 @@ decider readout. Qwen3-VL-2B is loaded from the official Q4_K_M GGUF plus its
 Q8 vision projector, about 1.56 GB of weights; it is the stronger CPU-fit
 candidate.
 
-## Push
+## Layout and push
 
-Create the public Replicate models `barakplasma/decider-2b-vision` and
-`barakplasma/qwen3-vl-2b`, then run `cog push` from each model directory.
-Replicate's public-model CPU hardware is selected when the model is created.
-The current Jev-Omni workflow does not push these models automatically.
+One Cog project, two models: `predict_decider.py` and `predict_qwen.py` share
+Aura's input contract and its validation through `aura_io.py`, and each has its
+own config (`cog.decider.yaml`, `cog.qwen.yaml`) and requirements file.
+
+```sh
+cd deploy/replicate/small-models
+cog push -f cog.decider.yaml r8.im/barakplasma/decider-2b-vision
+cog push -f cog.qwen.yaml r8.im/barakplasma/qwen3-vl-2b
+```
+
+`.github/workflows/replicate-small-models.yml` runs exactly that when this
+directory changes. It first creates `barakplasma/decider-2b-vision` and
+`barakplasma/qwen3-vl-2b` as public CPU models if they don't exist:
+Replicate's hardware is fixed when a model is created.
 
 ## Evaluation for Aura
 

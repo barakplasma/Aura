@@ -82,10 +82,10 @@ jobs:
 
       - name: Push decider-2b-vision
         if: steps.token.outputs.present == 'true'
-        working-directory: deploy/replicate/small-models/decider-2b-vision
-        run: cog push r8.im/barakplasma/decider-2b-vision
+        working-directory: deploy/replicate/small-models
+        run: cog push -f cog.decider.yaml r8.im/barakplasma/decider-2b-vision
 
       - name: Push Qwen3-VL-2B
         if: steps.token.outputs.present == 'true'
-        working-directory: deploy/replicate/small-models/qwen3-vl-2b
-        run: cog push r8.im/barakplasma/qwen3-vl-2b
+        working-directory: deploy/replicate/small-models
+        run: cog push -f cog.qwen.yaml r8.im/barakplasma/qwen3-vl-2b

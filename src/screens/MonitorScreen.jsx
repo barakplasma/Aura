@@ -14,7 +14,9 @@ export default function MonitorScreen({
       <strong>Finish setup to monitor</strong>
       <p>{engine === 'browser'
         ? 'Download a browser model in Settings.'
-        : 'Choose a provider and vision model in Settings, or try the demo.'}</p>
+        : engine === 'decision'
+          ? 'Choose a decision model in Settings (and your self-hosted server URL, if you use one), or try the demo.'
+          : 'Choose a provider and vision model in Settings, or try the demo.'}</p>
       <IonButton fill="outline" onClick={onOpenSettings}>Open settings</IonButton>
       <IonButton fill="clear" onClick={onStartDemo}>Try demo</IonButton>
     </IonCardContent></IonCard>}

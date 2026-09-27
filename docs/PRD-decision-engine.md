@@ -1,6 +1,6 @@
 # PRD — DECISION engine: Image JevBench models as Aura's detector, remote first
 
-Status: **proposed** · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
+Status: **Phase 1 implemented** (`replicate` + `content` adapters; relay rollout is Phase 0) · Owner: barakplasma · Scope: `lib/` + `src/` + `test/` + a
 CORS pass-through relay (Traefik config, no secrets); no application server of our own
 Category: **remote inference**
 Sources (read 2026-09-26): [Image JevBench v0.1](https://benchmarkheaven.com/image-jev-bench)
@@ -321,16 +321,16 @@ twelve ranked systems is published there.** The only typed-decision image
 model on Replicate is Glance's `untapped/glance-qwen3-vl-4b`, which the
 benchmark didn't rank.
 
-| System (rank)                         | On the ARM k3s (CPU)                                                                                                                                                                      | On Replicate                                                                                         | Likely home                 |
-|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|-----------------------------|
-| **Mapika decider-2b-vision (#2)**     | **Yes, most likely.** 2B; community GGUF at Q8_0 is 2.0 GB + 0.36 GB projector; upstream `llama-server` builds on arm64 and has CORS + API keys built in. Latency on ARM cores unmeasured | not published; would fit a T4 as a Cog push                                                          | **self-hosted**             |
-| Bonsai-2-27B v2 (#7)                  | server runs on CPU, but a 27B model on ARM cores is likely far too slow (its 0.8 s p50 was on a GPU); ~7.6 GB of weights                                                                  | not published; ~10 GB VRAM with llama.cpp CUDA fits a T4/L4 Cog image                                | Replicate, if pushed        |
-| Reflex 4B (#3)                        | no — CUDA-only server (16 GB GPU), Triton kernels                                                                                                                                         | not published; already ships a Dockerfile + FastAPI server, the easiest GPU model to port to Cog     | Replicate, if pushed        |
-| Jev-Omni (#1)                         | no — CUDA-only; plan for ~50 GB GPU memory for FP32 weights before runtime overhead                                                                                                         | public `barakplasma/jev-omni` (A100 80 GB), from `deploy/replicate/jev-omni/` | **Replicate**               |
-| djev-spark / djev-dev (#4, #6)        | no — 26B DiffusionGemma custom runtime                                                                                                                                                    | not published; its own hosted API is paused                                                          | neither today               |
-| OpenJev 4B NLI v2 (#12)               | not useful — no probabilities for the threshold                                                                                                                                           | —                                                                                                    | neither                     |
-| Gemma 4 31B, GPT, Gemini (#5, #8–#11) | —                                                                                                                                                                                         | — (already hosted APIs)                                                                              | PROVIDER engine, BYOK today |
-| *Glance Qwen3-VL-4B (unranked)*       | no — Glance's VLM path needs CUDA or Apple silicon                                                                                                                                        | **published**: T4, ~1 s, $0.00022/run                                                                | **Replicate, today**        |
+| System (rank)                         | On the ARM k3s (CPU)                                                                                                                                                                      | On Replicate                                                                                     | Likely home                 |
+|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|-----------------------------|
+| **Mapika decider-2b-vision (#2)**     | **Yes, most likely.** 2B; community GGUF at Q8_0 is 2.0 GB + 0.36 GB projector; upstream `llama-server` builds on arm64 and has CORS + API keys built in. Latency on ARM cores unmeasured | not published; would fit a T4 as a Cog push                                                      | **self-hosted**             |
+| Bonsai-2-27B v2 (#7)                  | server runs on CPU, but a 27B model on ARM cores is likely far too slow (its 0.8 s p50 was on a GPU); ~7.6 GB of weights                                                                  | not published; ~10 GB VRAM with llama.cpp CUDA fits a T4/L4 Cog image                            | Replicate, if pushed        |
+| Reflex 4B (#3)                        | no — CUDA-only server (16 GB GPU), Triton kernels                                                                                                                                         | not published; already ships a Dockerfile + FastAPI server, the easiest GPU model to port to Cog | Replicate, if pushed        |
+| Jev-Omni (#1)                         | no — CUDA-only; plan for ~50 GB GPU memory for FP32 weights before runtime overhead                                                                                                       | public `barakplasma/jev-omni` (A100 80 GB), from `deploy/replicate/jev-omni/`                    | **Replicate**               |
+| djev-spark / djev-dev (#4, #6)        | no — 26B DiffusionGemma custom runtime                                                                                                                                                    | not published; its own hosted API is paused                                                      | neither today               |
+| OpenJev 4B NLI v2 (#12)               | not useful — no probabilities for the threshold                                                                                                                                           | —                                                                                                | neither                     |
+| Gemma 4 31B, GPT, Gemini (#5, #8–#11) | —                                                                                                                                                                                         | — (already hosted APIs)                                                                          | PROVIDER engine, BYOK today |
+| *Glance Qwen3-VL-4B (unranked)*       | no — Glance's VLM path needs CUDA or Apple silicon                                                                                                                                        | **published**: T4, ~1 s, $0.00022/run                                                            | **Replicate, today**        |
 
 So: **decider-2b-vision is the benchmarked model most likely to run
 self-hosted**, and it is the only one that plausibly runs on the ARM node at
@@ -927,6 +927,38 @@ The protocol already allows what chat VLMs do badly:
    of the current provider on a user's own frames.** Also add benchmark
    notes to `PROVIDER_PRESETS` for the hosted chat VLMs Image JevBench
    measured (Gemma 4 31B, Gemini 3.1 Flash-Lite).
+
+   Status, 2026-09-26. The relay chart now lives in Aura as
+   `deploy/aura-relay/` (self-contained, `helm lint` clean), with a conformance
+   probe (`scripts/relay-probe.mjs`) and a no-cluster harness
+   (`scripts/dev-relay-local.mjs`).
+   - [x] Chart + HelmChartConfig written. They render the 7 objects above.
+   - [x] Routing and middlewares verified on Traefik 3.5.3 against a fake
+     upstream: every check passes (preflight, token forwarded, CORS on the
+     answer, `404`s, `413`, per-IP `429`).
+   - [x] Benchmark notes on `PROVIDER_PRESETS` (`benchmarkNote()`, shown
+     under MODEL in Settings; Cerebras now suggests `gemma-4-31b`).
+   - [x] Hosted proxies probed:
+     - Corsfix passes the preflight but needs the origin registered
+       (`403 domain_not_registered`).
+     - corsproxy.io answers the anonymous preflight `401`.
+     - `proxy.cors.sh` doesn't resolve.
+
+     Settings now shows these notes next to the relay presets.
+   - [ ] **Blocker:** `aura-relay.526462738.xyz` answers with a Cloudflare
+     managed challenge (`cf-mitigated: challenge`) even on the preflight, so
+     no `fetch()` can use it. It needs a WAF skip rule, or Bot Fight Mode
+     off, for this host (`deploy/aura-relay/README.md`).
+   - [ ] Copy the chart into homelab-manifests `apps/aura-relay/`, apply the
+     HelmChartConfig, and create the namespace and Argo CD `Application`.
+     This is the operator's step: that repo isn't reachable from the
+     implementing session.
+   - [ ] Measure with a personal token:
+     `REPLICATE_API_TOKEN=… node scripts/relay-probe.mjs <relay> --measure 100`
+     prints cold-start, warm p50/p95 and the go/no-go. Then run the same
+     frames against the current PROVIDER model on the eval screen for the
+     accuracy comparison.
+   - [ ] Bonsai-Llama-Jev image + Qwen3-VL Q8_0 timings on the VPS CPU.
 2. **Phase 1 — DECISION engine.** `lib/decision.js` with the `replicate` and
    `content` adapters + golden tests, Settings/Mission UI, fallback-to-provider,
    per-decision pricing, eval matrix support. Verify with

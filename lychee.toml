@@ -1,0 +1,4 @@
+# lychee (MegaLinter SPELL_LYCHEE) reads this from the repository root.
+# API endpoints are called with a token, not browsed: without one they
+# answer 401, which isn't a dead link.
+exclude = ["^https://api\\.replicate\\.com/"]
