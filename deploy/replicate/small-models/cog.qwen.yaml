@@ -1,0 +1,6 @@
+# Push from this directory: cog push -f cog.qwen.yaml r8.im/barakplasma/qwen3-vl-2b
+build:
+  gpu: false
+  python_version: "3.12"
+  python_requirements: requirements-qwen.txt
+run: "predict_qwen.py:Predictor"

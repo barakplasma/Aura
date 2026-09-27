@@ -68,6 +68,11 @@ REPORTERS_MARKDOWN_SUMMARY_TYPE: table-sections
 
 PRINT_ALPACA: false
 
+# .agents/skills/ holds third-party skills installed verbatim (see commit
+# c539d4e); reinstalling them would undo local lint fixes, so they're not
+# ours to restyle.
+MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: "\\.agents/skills/"
+
 # Scoped, reasoned suppressions live in .trivyignore.yaml; trivy only reads
 # the plain .trivyignore on its own.
 REPOSITORY_TRIVY_ARGUMENTS:
