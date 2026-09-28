@@ -378,12 +378,15 @@ async function main() {
   // A real pointer press, not element.click(): #toggle is an Ionic web
   // component, and a synthetic click on its host doesn't reliably reach the
   // React handler the way a user's tap does.
-  const box = await evaluate(`(() => {
-    const r = document.querySelector('#toggle').getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  })()`);
-  for (const type of ["mousePressed", "mouseReleased"])
-    await page("Input.dispatchMouseEvent", { type, x: box.x, y: box.y, button: "left", clickCount: 1 });
+  const press = async (selector) => {
+    const box = await evaluate(`(() => {
+      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+    for (const type of ["mousePressed", "mouseReleased"])
+      await page("Input.dispatchMouseEvent", { type, x: box.x, y: box.y, button: "left", clickCount: 1 });
+  };
+  await press("#toggle");
   const armedAt = Date.now();
   if (process.env.DEBUG) {
     await sleep(4000);
@@ -405,6 +408,20 @@ async function main() {
       : "";
     samples.push({ t: Number(t), card, scans: n, status });
     console.log(`  t=${t.padStart(3)}s  scans=${String(n).padStart(3)}  ${card || "(no gate card)"}${status ? "  | " + status : ""}`);
+  }
+
+  // The gate's own Settings block renders only while the gate is on, so a
+  // render error there never shows up in the scan loop above — it blanks the
+  // whole app the moment the operator opens Settings (a missing WAKE_KINDS
+  // import once did exactly that, and the stored toggle kept it blank).
+  let settingsRender = null;
+  if (GATE) {
+    await press('ion-tab-button[tab="settings"]');
+    await sleep(1000);
+    settingsRender = await evaluate(`(() => ({
+      toggle: document.querySelector('#object-gate-toggle')?.checked === true,
+      wakeOn: /WAKE ON/.test(document.body.innerText) && /MOVED/.test(document.body.innerText),
+    }))()`);
   }
 
   cdp.close();
@@ -432,6 +449,8 @@ async function main() {
     ["…and the bus", sawBus],
     ["the empty room reads as empty", sawEmpty],
     ["the VLM ran (at least the baseline scan)", vlmCalls >= 1],
+    ["Settings renders the gate block (toggle on, WAKE ON kinds listed)",
+      Boolean(settingsRender?.toggle && settingsRender?.wakeOn)],
     ...(ENGINE === "decision"
       ? [
           ["every prediction was polled to completion", polls.length >= scans.length && scans.length >= 1],

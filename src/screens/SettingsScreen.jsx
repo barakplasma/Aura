@@ -24,7 +24,7 @@ import {
   detectorModelKeys,
 } from '../../lib/browser-engine.js';
 import { suggestClasses } from '../../lib/detector-models.js';
-import { parseWakeOn } from '../../lib/object-gate.js';
+import { parseWakeOn, WAKE_KINDS } from '../../lib/object-gate.js';
 import { testVibration, canVibrate } from '../../public/feedback.js';
 import ProgressBar from '../components/ProgressBar.jsx';
 import DecisionSettings from '../components/DecisionSettings.jsx';

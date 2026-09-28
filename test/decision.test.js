@@ -290,6 +290,18 @@ test("scanDecision: a CORS failure names the relay, not 'Failed to fetch'", asyn
     }),
     /through a CORS relay/,
   );
+  // Through a relay the template is usually right; the relay isn't answering.
+  await assert.rejects(
+    scanDecision({
+      modelId: "glance-qwen3-vl-4b",
+      url: "https://relay.example{path}",
+      question: QUESTION,
+      image: IMAGE,
+      fetchImpl: fakeFetch([new TypeError("Failed to fetch")]),
+      sleep: noSleep,
+    }),
+    /Could not reach https:\/\/relay\.example: it sent no CORS answer.*Cloudflare challenge/,
+  );
   assert.match(decisionHttpError(404, "", "k").message, /no such route/);
 });
 
