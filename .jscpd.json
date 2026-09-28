@@ -11,6 +11,7 @@
     "**/*.md",
     "**/*.svg",
     "public/aura.css",
-    "public/sw.js"
+    "public/sw.js",
+    "public/assets/**"
   ]
 }

@@ -133,6 +133,7 @@ ion-tab-button {
 
 .status-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   width: 100%;
   gap: 8px;
@@ -161,6 +162,15 @@ ion-tab-button {
   text-overflow: clip;
   white-space: normal;
   line-height: 1.35;
+  /* white-space: normal wraps between words, but a long unbroken token — a
+     URL, a relay hostname, a hash in an error message — has no word breaks
+     to wrap at, so it overflows past .monitor-stage's overflow: hidden and
+     is clipped: reads as "not displayed at all". */
+  overflow-wrap: anywhere;
+  /* That same text (a URL, a hash, JSON) is exactly what someone needs to
+     copy off a phone to file a bug — never let it be unselectable. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .preview-toggle,

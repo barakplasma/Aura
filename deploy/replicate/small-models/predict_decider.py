@@ -1,6 +1,7 @@
 """CPU prototype for Mapika/decider-2b-vision."""
 
 import time
+from typing import Optional
 
 import torch
 from cog import BasePredictor, Input, Path
@@ -27,7 +28,7 @@ class Predictor(BasePredictor):
     def run(
         self,
         question: str = Input(description="Question about the image"),
-        image: Path = Input(description="JPEG, PNG, or WebP image", default=None),
+        image: Optional[Path] = Input(description="JPEG, PNG, or WebP image", default=None),
         image_base64: str = Input(description="Base64 image for API clients", default=""),
         question_type: str = Input(choices=["yes_no", "choice"], default="yes_no"),
         options_json: str = Input(description="JSON array of answer choices", default="[]"),

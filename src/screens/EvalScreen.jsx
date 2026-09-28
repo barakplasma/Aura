@@ -47,20 +47,14 @@ function evalModelLabel(m) {
 // Routes a cell's scan to the BROWSER engine (either runtime), a DECISION
 // model, or the configured provider, depending on which kind of model id it
 // carries — everything else about the call (mission, image, threshold,
-// signal) is the same either way. A variant whose mission is the live one
-// asks the live decision question; any other variant gets its template.
+// signal) is the same either way.
 async function scanForEval(params, decision) {
   if (params.model.startsWith(DECISION_MODEL_PREFIX)) {
-    const live = params.mission === decision.mission;
     return scanDecision({
       modelId: params.model.slice(DECISION_MODEL_PREFIX.length),
       url: decision.decisionUrl,
       apiKey: decision.decisionKey || undefined,
-      question: missionToQuestion({
-        mission: params.mission,
-        explicit: live ? decision.decisionQuestion : '',
-        compiled: decision.decisionCompiled,
-      }),
+      question: missionToQuestion({ mission: params.mission }),
       image: params.image,
       threshold: 0,
       requestTimeout: params.requestTimeout,
