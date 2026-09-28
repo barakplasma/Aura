@@ -8,9 +8,7 @@ import {
   answerToDetection,
   expandRelayUrl,
   missionToQuestion,
-  missionHash,
   templateQuestion,
-  parseCompiledQuestion,
   decisionHttpError,
 } from "../lib/decision.js";
 import {
@@ -90,22 +88,10 @@ test("every row names a known dialect and pins what it calls", () => {
 
 // --- mission → question ------------------------------------------------------
 
-test("explicit question wins, then a compiled one for the same mission, then the template", () => {
+test("missionToQuestion is always the mission's own yes/no template", () => {
   const mission = "Tell me when a parcel is left at the door";
-  const compiled = { question: "Is a parcel at the door?", yes: "parcel", no: "none", missionHash: missionHash(mission) };
-  assert.equal(missionToQuestion({ mission, explicit: "  Is the door open?  ", compiled }).question, "Is the door open?");
-  assert.equal(missionToQuestion({ mission, explicit: "", compiled }).source, "compiled");
-  // A mission edit invalidates the compiled question.
-  const stale = missionToQuestion({ mission: `${mission}!`, compiled });
-  assert.equal(stale.source, "template");
-  assert.equal(stale.question, `Does the image show the following? ${mission}!`);
   assert.deepEqual(missionToQuestion({ mission }), templateQuestion(mission));
-});
-
-test("parseCompiledQuestion digs JSON out of prose and stamps the mission hash", () => {
-  const out = parseCompiledQuestion('Sure:\n```json\n{"question":"Is a parcel visible?","yes":"a parcel","no":""}\n```', "m");
-  assert.deepEqual(out, { question: "Is a parcel visible?", yes: "a parcel", no: "No", missionHash: missionHash("m") });
-  assert.throws(() => parseCompiledQuestion("no json here", "m"), /did not return a question/);
+  assert.equal(missionToQuestion({ mission }).question, `Does the image show the following? ${mission}`);
 });
 
 // --- adapters: golden request/response fixtures --------------------------------

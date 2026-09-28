@@ -61,9 +61,6 @@ export default function App() {
   const [decisionAnnouncer, setDecisionAnnouncer] = useLocalStorage('aura.decisionAnnouncer', 'provider');
   // Re-run a failed decision on the PROVIDER engine (only when one is set up).
   const [decisionFallback, setDecisionFallback] = useLocalStorage('aura.decisionFallback', true);
-  const [decisionQuestion, setDecisionQuestion] = useLocalStorage('aura.decisionQuestion', '');
-  // {question, yes, no, missionHash} compiled once from the mission.
-  const [decisionCompiled, setDecisionCompiled] = useLocalStorage('aura.decisionCompiled', null);
   const [mission, setMission] = useLocalStorage('aura.mission', '');
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
@@ -132,7 +129,6 @@ export default function App() {
     baseUrl, apiKey, model, mission, action,
     engine, browserModel, browserRuntime,
     decisionModel, decisionUrl, decisionKey, decisionAnnouncer, decisionFallback,
-    decisionQuestion, decisionCompiled,
     threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, pricing,
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
@@ -272,9 +268,6 @@ export default function App() {
               onDeployAndArm={handleDeployAndArm}
               onNavigateOptimize={() => setScreen('optimize')}
               engine={engine}
-              decisionQuestion={decisionQuestion} setDecisionQuestion={setDecisionQuestion}
-              decisionCompiled={decisionCompiled} setDecisionCompiled={setDecisionCompiled}
-              baseUrl={baseUrl} apiKey={apiKey} model={model}
             />
           )}
           {screen === 'monitor' && (
@@ -316,7 +309,7 @@ export default function App() {
                 pricingOverrides={pricingOverrides}
                 configuredModel={model}
                 mission={mission}
-                decision={{ decisionModel, decisionUrl, decisionKey, decisionQuestion, decisionCompiled }}
+                decision={{ decisionModel, decisionUrl, decisionKey }}
                 captureFrame={handleCaptureEvalFrame}
                 monitorRunning={running}
               />

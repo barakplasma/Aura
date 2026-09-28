@@ -875,11 +875,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
                   url: s.decisionUrl,
                   apiKey: s.decisionKey || undefined,
                   mission: s.mission,
-                  question: missionToQuestion({
-                    mission: s.mission,
-                    explicit: s.decisionQuestion,
-                    compiled: s.decisionCompiled,
-                  }),
+                  question: missionToQuestion({ mission: s.mission }),
                   image: frame,
                   threshold: s.threshold ?? 0,
                   action: s.action,

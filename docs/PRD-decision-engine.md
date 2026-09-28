@@ -265,20 +265,17 @@ Choices:
 
 A mission is free text ("tell me when the delivery guy leaves something"). A
 decision model wants one crisp yes/no question plus two option descriptions.
-Three layers, first hit wins:
-
-1. **Explicit.** A new optional `aura.decisionQuestion` field on the Mission
-   screen, shown only when the engine is DECISION.
-2. **Compiled once.** If a PROVIDER is configured, one chat call turns the
-   mission into `{question, yes, no}` JSON; cached in localStorage keyed by a
-   hash of the mission text, editable in the same field, never re-run per scan.
-   Cost: one call per mission edit.
-3. **Template.** `"Does the image show the following? " + mission`, with
-   `yes`/`no` criteria. Always available, no network.
+Aura used to offer three layers here (an explicit override field, a question
+compiled once by a PROVIDER, then this template) — the override and compile
+step added a field and a step without changing what a mission-shaped question
+actually asks, so they're gone. `missionToQuestion()` is now always the
+template: `"Does the image show the following? " + mission`, with `yes`/`no`
+criteria. Always available, no network, nothing to keep in sync with the
+mission.
 
 `lib/decision.js` exposes `buildDecisionRequest()` and
-`parseDecisionResponse()` as pure functions so all three paths and the
-response parsing are unit-tested under `node --test`.
+`parseDecisionResponse()` as pure functions so the template and the response
+parsing are unit-tested under `node --test`.
 
 ## Serving: BYOK, config not code
 
@@ -865,7 +862,7 @@ configured) re-runs that scan on the PROVIDER engine.
 | `lib/eval.js`                                          | Accept `engine: 'decision'` in the matrix — decision models run beside chat VLMs on the same images.                                                                                                                                                           |
 | `src/hooks/useMonitor.js`                              | Dispatch on `engine === 'decision'`; fallback-to-provider on transport error when enabled.                                                                                                                                                                     |
 | `src/screens/SettingsScreen.jsx`                       | DECISION card: the user's own key (Replicate token or self-hosted server key), relay URL template (defaults to the operator's), model row, announcer, fallback toggle, and a notice that the key and frames pass through the relay.                            |
-| `src/screens/MissionScreen.jsx`                        | Decision question field + "Compile from mission" button.                                                                                                                                                                                                       |
+| `src/screens/MissionScreen.jsx`                        | Shows the active question, built from "Watch for" alone — no separate field.                                                                                                                                                                                   |
 | `src/App.jsx`                                          | `providerReady` for DECISION = endpoint URL + model row; OPTIMIZE hidden (GEPA drives chat prompts, not classifiers).                                                                                                                                          |
 | `src/screens/HistoryScreen.jsx`                        | Show backend timing (`timing_ms` or Replicate `metrics`) next to latency when present.                                                                                                                                                                         |
 | `deploy/replicate/jev-omni/` (new)                     | Cog predictor for the public `barakplasma/jev-omni` model (pinned revision, hash checks, self-verification), its unit tests, and `.github/workflows/replicate-jev-omni.yml` that pushes it.                                                                    |
@@ -878,7 +875,7 @@ Settings keys, following the existing `aura.*` localStorage pattern:
 relay), `aura.decisionKey` (the **user's own** key: their Replicate token, or
 their self-hosted server's key; blank allowed for an unauthenticated local
 server), `aura.decisionModel` (a row id, which fixes the dialect), `aura.decisionAnnouncer` (`provider` | `browser` |
-`template`), `aura.decisionFallback`, `aura.decisionQuestion`.
+`template`), `aura.decisionFallback`.
 
 Invariants carried over from `CLAUDE.md`: no silent mock (an unreachable
 endpoint throws), blank key is valid, the service worker never intercepts the
