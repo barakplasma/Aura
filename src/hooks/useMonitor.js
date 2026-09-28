@@ -902,6 +902,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
                 })
               : await scanClient(providerArgs);
         if (!internalRef.current.running) return;
+        // A DECISION scan degrades in place (fallbackReason, announceError)
+        // rather than throwing — the status line already says so
+        // (engineNote), but that text is easy to lose, so send it to
+        // Bugsink too, same as any other handled failure.
+        if (result.fallbackReason)
+          reportHandledError(new Error(result.fallbackReason), { area: "decision-fallback" });
+        if (result.announceError)
+          reportHandledError(new Error(result.announceError), { area: "decision-announce" });
         const rtt = Math.round(performance.now() - started);
         // Record the per-frame latency and refresh the percentile stats.
         const measured = Number.isFinite(result.latencyMs)

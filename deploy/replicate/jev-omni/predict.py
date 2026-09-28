@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+from typing import Optional
 
 from loguru import logger
 
@@ -356,7 +357,7 @@ class Predictor(BasePredictor):
     def run(
         self,
         question: str = Input(description="Question about the image, e.g. 'Is a package on the doormat?'"),
-        image: Path = Input(description="JPEG, PNG, or WebP image", default=None),
+        image: Optional[Path] = Input(description="JPEG, PNG, or WebP image", default=None),
         image_base64: str = Input(description="Base64-encoded image (plain or data: URI) for API clients", default=""),
         question_type: str = Input(description="yes_no or choice", choices=["yes_no", "choice"], default="yes_no"),
         options_json: str = Input(description="JSON array of choice labels (choice only)", default="[]"),

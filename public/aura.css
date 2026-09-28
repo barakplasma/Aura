@@ -554,8 +554,15 @@ textarea {
   flex: 1;
 }
 
+/* Default (row) axis — desktop and any landscape width. 40px was only ever
+   readable on the portrait/column axis below, where this sets height, not
+   width: at row axis it squeezed the status text (errors included) into an
+   unreadable sliver, which read as "not shown at all". Wide enough for a
+   wrapped error line; the portrait media query below overrides this back to
+   a slim 40px *height* strip, where the full device width is still free for
+   text. */
 .stage-collapsed {
-  flex: 0 0 40px;
+  flex: 0 0 clamp(140px, 35vw, 220px);
 }
 
 /* Floating mini preview while armed on another tab; tap returns to Monitor. */
@@ -648,6 +655,7 @@ textarea {
 
 .status-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -682,7 +690,12 @@ textarea {
   font-size: 11px;
   color: var(--c-text);
   flex: 1;
-  min-width: 0;
+  min-width: 100px;
+  overflow-wrap: anywhere;
+  /* An error's own text (a URL, a hash, JSON) is the thing operators need
+     to copy off a phone to file a bug — never let it be unselectable. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Screen wake lock indicator — visible while the phone is held awake. */
@@ -1232,8 +1245,10 @@ textarea {
     flex: 0 0 clamp(120px, 30vw, 260px);
   }
 
+  /* Row axis here too (a rotated phone), so this stays readable-width, not
+     the portrait breakpoint's 40px — that one sets height. */
   .stage-collapsed {
-    flex: 0 0 40px;
+    flex: 0 0 clamp(120px, 35vw, 180px);
   }
 
   .screen-monitor {
