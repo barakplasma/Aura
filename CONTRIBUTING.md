@@ -37,7 +37,7 @@ and installs djlint at the start of every cloud session.
 
 | Command          | What it does                                                                                                                            |
 |------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies ONNX Runtime's WASM files, generates the service worker |
+| `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies ONNX Runtime's WASM files, generates the service worker                    |
 | `npm run dev`    | Serves `public/` (rebuilds first via `predev`)                                                                                          |
 | `npm test`       | Unit tests for the pure `lib/` helpers — no DOM, no network                                                                             |
 | `npm run lint`   | Stylelint, jscpd and djlint — the same checks MegaLinter runs on every PR                                                               |
