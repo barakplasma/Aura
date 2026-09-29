@@ -45,8 +45,8 @@ components carry `data-ui`, which scopes the few base rules they need.
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `src/App.jsx`                         | Screen routing (`watch`/`alerts`/`setup`/`lab`), settings (localStorage), demo-mode state, camera stage mode                                                        |
 | `src/components/Stage.jsx`            | Always-mounted `<video>`/`<canvas>`, first child of `<main>` — full / collapsed / PiP / parked modes so scanning survives tab switches                              |
-| `src/components/AppShell.jsx`         | Header, tab bar (phone) / rail (≥1100 px), and the `<main>` grid that lays stage and panel side by side from 700 px                                                  |
-| `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                  |
+| `src/components/AppShell.jsx`         | Header, tab bar (phone) / rail (≥1100 px), and the `<main>` grid that lays stage and panel side by side from 700 px                                                 |
+| `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                 |
 | `src/screens/`                        | WatchScreen (verdict + mission + arm bar), LabScreen (Examples/Evaluate wrapper), HistoryScreen, SettingsScreen, OptimizeScreen + EvalScreen (lazy-loaded)          |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
 | `src/legacy.css`                      | Page base + the old `dc-*` form vocabulary, for screens not yet redesigned                                                                                          |
