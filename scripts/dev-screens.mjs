@@ -31,9 +31,9 @@ const LAYOUTS = [
   { name: "landscape", width: 915, height: 412, mobile: true },
   { name: "desktop", width: 1440, height: 900, mobile: false },
 ];
-// Tab ids as NavRail names them; the redesign renames these, so the list is
-// the one place to update.
-const SCREENS = ["monitor", "mission", "history", "settings", "optimize", "eval"];
+// data-nav ids as AppShell names them (docs/PRD-ux-redesign.md): four
+// destinations. Lab has no phone tab, so it is reached from Setup there.
+const SCREENS = ["watch", "alerts", "setup", "lab"];
 
 function serve() {
   const server = http.createServer((req, res) => sendStatic(res, PUBLIC, new URL(req.url, "http://x").pathname));
@@ -83,24 +83,57 @@ async function main() {
       await page("Page.navigate", { url: origin + "/index.html" });
       await sleep(2500);
       for (const screen of SCREENS) {
-        // OPTIMIZE is hidden on engines that can't run it; skip what isn't there.
+        // Both navs exist in the DOM; click the one that is on screen (Lab is
+        // rail-only, so at phone widths it is reached through Setup's link).
         const present = await evaluate(
-          `(() => { const b = document.querySelector('ion-tab-button[tab="${screen}"]'); if (!b) return false; b.click(); return true; })()`,
+          `(() => { const b = [...document.querySelectorAll('[data-nav="${screen}"]')].find((n) => n.offsetParent);
+             if (!b) return false; b.click(); return true; })()`,
         );
-        if (!present) { console.log(`${layout.name}/${screen}: no tab, skipped`); continue; }
+        let viaSetup = false;
+        if (!present && screen === "lab") {
+          // No phone tab for Lab: Setup carries a link to it.
+          await evaluate(`[...document.querySelectorAll('[data-nav="setup"]')].find((n) => n.offsetParent)?.click()`);
+          await sleep(500);
+          viaSetup = await evaluate(
+            `(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim().startsWith('Lab') && x.offsetParent); if (!b) return false; b.click(); return true; })()`,
+          );
+        }
+        if (!present && !viaSetup) { console.log(`${layout.name}/${screen}: not reachable`); failures.push(`${layout.name}: ${screen} not reachable`); continue; }
         await sleep(900);
         const { data } = await page("Page.captureScreenshot", { format: "png" });
         writeFileSync(path.join(OUT, `${layout.name}-${screen}.png`), Buffer.from(data, "base64"));
-        if (screen === "monitor") {
+        if (screen === "watch") {
           const box = await evaluate(
             `(() => { const b = document.querySelector('#toggle'); if (!b) return null;
                const r = b.getBoundingClientRect();
                return { top: r.top, bottom: r.bottom, vh: window.innerHeight }; })()`,
           );
           const ok = box && box.top >= 0 && box.bottom <= box.vh;
-          console.log(`${layout.name}/monitor: ARM ${box ? (ok ? "on screen" : `OFF SCREEN (bottom ${Math.round(box.bottom)} > ${box.vh})`) : "not found"}`);
+          console.log(`${layout.name}/watch: ARM ${box ? (ok ? "on screen" : `OFF SCREEN (bottom ${Math.round(box.bottom)} > ${box.vh})`) : "not found"}`);
           if (!ok) failures.push(`${layout.name}: ARM button not visible without scrolling`);
         }
+      }
+      // Armed, through the demo path (no camera or network needed): the
+      // verdict card must show a real scan result and ARM must stay on screen.
+      await evaluate(`[...document.querySelectorAll('[data-nav="watch"]')].find((n) => n.offsetParent)?.click()`);
+      await sleep(400);
+      const started = await evaluate(
+        `(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Try demo' && x.offsetParent); if (!b) return false; b.click(); return true; })()`,
+      );
+      if (started) {
+        await sleep(7000);
+        const { data } = await page("Page.captureScreenshot", { format: "png" });
+        writeFileSync(path.join(OUT, `${layout.name}-watch-armed.png`), Buffer.from(data, "base64"));
+        const armed = await evaluate(
+          `(() => { const v = document.querySelector('[data-verdict]'); const b = document.querySelector('#toggle'); const r = b.getBoundingClientRect();
+             return { state: v && v.dataset.verdict, text: v && v.innerText.replace(/\\s+/g, ' ').slice(0, 120), pressed: b.getAttribute('aria-pressed'), onScreen: r.top >= 0 && r.bottom <= window.innerHeight }; })()`,
+        );
+        console.log(`${layout.name}/watch (armed): ${armed.state} · ${armed.text}`);
+        if (armed.pressed !== "true") failures.push(`${layout.name}: demo did not arm`);
+        if (!armed.onScreen) failures.push(`${layout.name}: ARM off screen while armed`);
+        if (!["watching", "alert", "degraded"].includes(armed.state)) failures.push(`${layout.name}: verdict is "${armed.state}" after a demo scan`);
+      } else {
+        failures.push(`${layout.name}: no Try demo button on Watch`);
       }
     }
     cdp.close();

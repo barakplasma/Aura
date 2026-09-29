@@ -50,6 +50,7 @@ import { processingProgress } from "../../lib/progress.js";
 import { reportUnexpectedError } from "../../lib/handled-errors.js";
 import { encodeNtfyHeader, isHostedNtfyTopicUrl } from "../../lib/ntfy.js";
 import { reportHandledError } from "../monitoring.js";
+import { fromScan, verdicts } from "../../lib/verdict.js";
 
 // One store per page load — its IndexedDB adapter is lazy (never touches the
 // indexedDB global until an operation runs), so creating it here is safe even
@@ -227,15 +228,16 @@ function decisionAnnouncer(s, { examples, webhookSchema, onProgress }) {
 
 // A DECISION scan that fell back to the provider, or whose announcer failed,
 // says so on the status line — degraded, but never silently.
-function engineNote(result) {
-  if (result.fallbackReason) return ` · decision model failed (${result.fallbackReason}); the provider answered`;
-  if (result.announceError) return ` · announcer failed (${result.announceError})`;
-  return "";
-}
-
 export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn }) {
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState("Configure a provider and press Start.");
+  const [verdict, setVerdict] = useState(() => verdicts.idle());
+  const [status, setStatus] = useState(verdict.text);
+  // One entry point for "the monitor has something to say": the structured
+  // verdict for the UI, and its text for the aria-live region.
+  const say = useCallback((v) => {
+    setVerdict(v);
+    setStatus(v.text);
+  }, []);
   const [dotClass, setDotClass] = useState("off");
   const [flashActive, setFlashActive] = useState(false);
   const [telemetry, setTelemetry] = useState({
@@ -818,7 +820,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               if (!internalRef.current.running || msg.pct == null) return;
               const label =
                 BROWSER_MODELS[s.browserModel]?.label || "browser model";
-              setStatus(`Loading ${label} — ${msg.pct}%`);
+              say(verdicts.loading(label, msg.pct));
             }
           : undefined;
         const onStage = (stage) => {
@@ -1000,7 +1002,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           };
         });
         if (result.triggered) {
-          setStatus(`⚠ ALERT — ${result.message || result.reason}${engineNote(result)}`);
+          say(fromScan(result, { engine: s.engine, threshold: s.threshold ?? 0 }));
           flashAlert();
           logAlert(
             result.message || result.reason,
@@ -1021,7 +1023,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           );
           if (!s.demo && webhookBody) sendWebhook(webhookBody, frame);
         } else {
-          setStatus(`Watching — ${result.reason}${engineNote(result)}`);
+          say(fromScan(result, { engine: s.engine, threshold: s.threshold ?? 0 }));
           recordMissed(frame, result.reason, result.confidence);
         }
         // Budget mode can't cost-cap a provider that returns no token usage —
@@ -1033,9 +1035,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           !st.budgetWarned
         ) {
           st.budgetWarned = true;
-          setStatus(
-            "Budget mode: provider returns no token usage — using interval cadence. Set a MB/HOUR cap to throttle by data instead.",
-          );
+          say(verdicts.budgetFallback(s.engine));
         }
       } catch (err) {
         // A Stop mid-scan aborts the request; that's expected, not an error.
@@ -1055,7 +1055,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
             } : {}),
           },
         )) {
-          setStatus(`Error: ${err.message}`);
+          say(verdicts.scanError(err.message));
         }
       } finally {
         internalRef.current.inFlight = false;
@@ -1144,7 +1144,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     releaseStream(internalRef, videoRef);
     resetFeedback();
     setRunning(false);
-    setStatus("Stopped.");
+    say(verdicts.stopped());
     setDotClass("off");
     setProgress(IDLE_PROGRESS);
   }, [videoRef]);
@@ -1230,11 +1230,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       // A hidden tab cannot get the camera back no matter how we ask (Android
       // refuses background getUserMedia), so the honest message there is
       // "paused", not "lost" — the session resumes on return to visible.
-      setStatus(
-        hidden
-          ? "Camera paused in background — resumes on return."
-          : `Camera lost — reconnecting (${attempt}/${RECONNECT_ATTEMPTS})…`,
-      );
+      say(verdicts.reconnecting({ hidden, attempt, total: RECONNECT_ATTEMPTS }));
       if (st.stream) {
         st.stream.getTracks().forEach((t) => t.stop());
         st.stream = null;
@@ -1255,7 +1251,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         st.trackMuted = false;
         st.mutedSince = 0;
         st.reconnecting = false;
-        setStatus("Monitoring…");
+        say(verdicts.monitoring(settingsRef.current.engine, settingsRef.current.threshold ?? 0));
       } catch (err) {
         if (st.reconnectSeq !== seq || !internalRef.current.running) return;
         const delay = nextReconnectDelayMs(attempt, hidden);
@@ -1264,7 +1260,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           // and can act on this; giving up silently here is the failure mode.
           st.reconnecting = false;
           stop();
-          setStatus(`Camera lost — tap ARM to retry. (${err.message})`);
+          say(verdicts.cameraLost(err.message));
           return;
         }
         st.reconnectTimer = setTimeout(
@@ -1290,25 +1286,15 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     // selection (base URL/API key are irrelevant to it).
     const providerReady = isEngineConfigured(s);
     if (!s.demo && !providerReady) {
-      setStatus(
-        s.engine === "browser"
-          ? "Pick a BROWSER MODEL in Settings, or use Demo Mode."
-          : s.engine === "decision"
-            ? "Pick a DECISION model (and its server URL, if self-hosted) in Settings, or use Demo Mode."
-            : "Set a provider Base URL and model in Settings, or use Demo Mode.",
-      );
+      say(verdicts.notConfigured(s.engine));
       return false;
     }
     if (!s.demo && !s.mission.trim()) {
-      setStatus("Describe the mission (what to watch for) first.");
+      say(verdicts.needMission());
       return false;
     }
     try {
-      setStatus(
-        s.videoSource === "screen"
-          ? "Requesting screen share…"
-          : "Starting camera…",
-      );
+      say(verdicts.starting(s.videoSource));
       const stream = await acquireStream();
       internalRef.current.stream = stream;
       const video = videoRef.current;
@@ -1320,9 +1306,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       releaseStream(internalRef, videoRef);
       // Demo doesn't capture frames, so run without a preview.
       if (!s.demo) {
-        setStatus(
-          `${s.videoSource === "screen" ? "Screen share" : "Camera"} unavailable: ${err.message}`,
-        );
+        say(verdicts.sourceUnavailable(s.videoSource, err.message));
         return false;
       }
     }
@@ -1367,7 +1351,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     setStats(EMPTY_STATS);
     setProgress(IDLE_PROGRESS);
     setRunning(true);
-    setStatus("Monitoring…");
+    say(verdicts.monitoring(s.engine, s.threshold ?? 0));
     resetFeedback();
     clearInterval(internalRef.current.progressTimer);
     internalRef.current.progressTimer = setInterval(
@@ -1405,7 +1389,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
       // cleanly instead of spinning. stop() first so this status wins over
       // its own "Stopped."
       stop();
-      setStatus(`Camera switch failed: ${err.message}`);
+      say(verdicts.cameraSwitchFailed(err.message));
     } finally {
       st.switching = false;
     }
@@ -1434,7 +1418,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           tick();
         }
       } else {
-        setStatus("Background — scans throttled by the browser.");
+        say(verdicts.background());
       }
     }
     document.addEventListener("visibilitychange", onVisibility);
@@ -1448,6 +1432,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
   return {
     running,
     status,
+    verdict,
     dotClass,
     flashActive,
     telemetry,

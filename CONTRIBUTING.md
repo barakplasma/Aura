@@ -67,7 +67,7 @@ requirements the provider has to meet:
 
 ### No key at all: demo mode
 
-Press **TRY DEMO** on the Monitor screen for deterministic simulated scans. It
+Press **Try demo** on the Watch screen for deterministic simulated scans. It
 exercises the camera, speech, vibration and alert log with no provider configured,
 never fires webhooks, and is bannered while active. It is the only simulated path in
 the app — a misconfigured real provider throws rather than pretending.
@@ -197,8 +197,9 @@ src/
   App.jsx                 Screen routing, settings, demo mode, camera stage mode
   ionic.css               The one stylesheet (bundled to assets/app.css)
   monitoring.js           Bugsink (Sentry-compatible) error tracking
-  components/             MonitorStage (always-mounted video/canvas), NavRail, ...
-  screens/                Mission, Monitor, History, Optimize, Eval, Settings
+  components/             Stage (always-mounted video/canvas), AppShell, VerdictCard, ...
+  ui/                     shadcn-style primitives (Tailwind + Radix)
+  screens/                Watch, Lab, History, Optimize, Eval, Settings
   hooks/useMonitor.js     Camera capture + scan loop + alert delivery + telemetry
   workers/ml.worker.js    Runs the in-browser VLM — the ONLY file importing
                           @huggingface/transformers (kept out of the main bundle)

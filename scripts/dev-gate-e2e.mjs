@@ -316,12 +316,12 @@ async function main() {
   await page("Page.navigate", { url: `${origin}/` });
   for (let i = 0; i < 50 && !(await evaluate(`!!document.querySelector('#toggle')`)); i++) await sleep(200);
 
-  // A real pointer press, not element.click(): #toggle is an Ionic web
-  // component, and a synthetic click on its host doesn't reliably reach the
-  // React handler the way a user's tap does.
+  // A real pointer press, not element.click(), the way a user's tap arrives.
+  // Both navs (rail and tab bar) are in the DOM; press the one on screen.
   const press = async (selector) => {
     const box = await evaluate(`(() => {
-      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.offsetParent);
+      const r = el.getBoundingClientRect();
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
     })()`);
     for (const type of ["mousePressed", "mouseReleased"])
@@ -339,7 +339,7 @@ async function main() {
   while (Date.now() - armedAt < RUN_S * 1000) {
     await sleep(2000);
     const card = await evaluate(`(() => {
-      const c = [...document.querySelectorAll('.notice')].find(n => n.innerText.includes('Object gate'));
+      const c = [...document.querySelectorAll('[data-gate-notice]')].find(n => n.innerText.includes('Object gate'));
       return c ? c.innerText.replace(/\\s+/g, ' ').trim() : '';
     })()`);
     const t = ((Date.now() - armedAt) / 1000).toFixed(0);
@@ -357,7 +357,7 @@ async function main() {
   // import once did exactly that, and the stored toggle kept it blank).
   let settingsRender = null;
   if (GATE) {
-    await press('ion-tab-button[tab="settings"]');
+    await press('[data-nav="setup"]');
     await sleep(1000);
     settingsRender = await evaluate(`(() => ({
       toggle: document.querySelector('#object-gate-toggle')?.checked === true,

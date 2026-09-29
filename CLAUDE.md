@@ -32,14 +32,21 @@ camera frame → 640x480 JPEG → detection call (user's provider + model)
 React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → minified,
 code-split ESM bundles in `public/assets/` (with linked sourcemaps). The one live
 stylesheet is `src/ionic.css` (imported from `main.jsx`, bundled to `assets/app.css`);
-the old `aura.css` "tactical" theme is gone. `docs/PRD-ux-redesign.md` is the plan
-for replacing what remains of the Ionic/`dc-*` vocabulary.
+the old `aura.css` "tactical" theme is gone. The redesign (`docs/PRD-ux-redesign.md`)
+is under way: the shell and Watch screen are Tailwind v4 + shadcn-style components
+(`src/tailwind.css` → `assets/ui.css`, primitives in `src/ui/`); Setup, Alerts and Lab
+are still Ionic + `dc-*` until their phases. Tailwind's own reset is not imported —
+a reset would restyle the Ionic screens — and its utilities are deliberately
+unlayered so they beat Ionic's unlayered rules. New components carry `data-ui`, which
+scopes the few base rules they need.
 
 | Path                                  | Role                                                                                                                                                                |
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/App.jsx`                         | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                                                                         |
-| `src/components/MonitorStage.jsx`     | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches                                                 |
-| `src/screens/`                        | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen                                             |
+| `src/App.jsx`                         | Screen routing (`watch`/`alerts`/`setup`/`lab`), settings (localStorage), demo-mode state, camera stage mode                                                        |
+| `src/components/Stage.jsx`            | Always-mounted `<video>`/`<canvas>`, first child of `<main>` — full / collapsed / PiP / parked modes so scanning survives tab switches                              |
+| `src/components/AppShell.jsx`         | Header, tab bar (phone) / rail (≥1100 px), and the `<main>` grid that lays stage and panel side by side from 700 px                                                  |
+| `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                  |
+| `src/screens/`                        | WatchScreen (verdict + mission + arm bar), LabScreen (Examples/Evaluate wrapper), HistoryScreen, SettingsScreen, OptimizeScreen + EvalScreen (lazy-loaded)          |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
 | `src/ionic.css`                       | The only stylesheet: Ionic overrides + the `dc-*` form vocabulary + monitor layout                                                                                  |
 | `src/monitoring.js`                   | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                                                |
@@ -49,6 +56,7 @@ for replacing what remains of the Ionic/`dc-*` vocabulary.
 | `lib/decision.js`                     | DECISION engine: `scanDecision()`, mission → question, one pure `toRequest`/`fromResponse` adapter per wire dialect, relay templates, polling, provider fallback    |
 | `lib/decision-models.js`              | `DECISION_MODELS` table (dialect, pinned Replicate version, per-second price) + relay presets — pure                                                                |
 | `src/components/DecisionSettings.jsx` | DECISION card in Settings: model row, relay/server URL, the user's own key, announcer, fallback                                                                     |
+| `lib/verdict.js`                      | Pure result model: `fromScan()` + `verdicts.*` build every status the monitor shows, as a structured verdict plus its legacy one-line text                          |
 | `lib/monitor.js`                      | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)                                                    |
 | `lib/browser-engine.js`               | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                                                               |
 | `lib/browser-models.js`               | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                                                         |
@@ -174,7 +182,7 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - There is no silent mock: a misconfigured or unreachable provider throws. A blank
   API key is *not* misconfiguration — it's the normal local-server setup, and the
   request goes out for real. Demo mode is the only simulated path: explicit opt-in
-  (TRY DEMO on the Monitor screen), isolated in `lib/demo.js`, clearly bannered
+  (TRY DEMO on the Watch screen), isolated in `lib/demo.js`, clearly bannered
   while active, and never fires webhooks.
 - Don't commit secrets. The API key stays in the user's localStorage.
 - `public/sw.js` is **generated** by `npm run build` (and gitignored — it isn't in
