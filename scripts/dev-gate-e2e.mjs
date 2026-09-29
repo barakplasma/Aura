@@ -36,18 +36,14 @@
 // Exits non-zero when the gate run fails its own acceptance checks.
 
 import http from "node:http";
-import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import WebSocket from "ws";
-import { settleReply } from "./cdp-request.mjs";
+import { cdpConnect, launchChrome, openPage, sendStatic, sleep } from "./dev-browser.mjs";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
-const CHROME =
-  process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const GATE = process.env.GATE !== "0";
 const ENGINE = ["browser", "decision"].includes(process.env.ENGINE) ? process.env.ENGINE : "provider";
 // The in-page VLM runs on WASM here (headless has no GPU adapter) at many
@@ -59,7 +55,6 @@ const W = 640;
 const H = 480;
 const BUS_URL = "https://ultralytics.com/images/bus.jpg";
 const MIRROR = process.env.MIRROR_DIR || path.join(tmpdir(), "aura-gate-e2e-mirror");
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const work = mkdtempSync(path.join(tmpdir(), "aura-gate-e2e-"));
 
 // --- the Hub, mirrored on demand ---------------------------------------------
@@ -150,13 +145,6 @@ async function makeVideo() {
 
 // --- the app, plus a fake vision model on the same origin -------------------
 
-const TYPES = {
-  ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
-  ".css": "text/css", ".json": "application/json", ".wasm": "application/wasm",
-  ".webmanifest": "application/manifest+json", ".png": "image/png",
-  ".svg": "image/svg+xml", ".map": "application/json",
-};
-
 const scans = []; // { at, promptChars }
 const polls = []; // decision engine: GETs of an unfinished prediction
 const decisionAuth = new Set(); // Authorization headers the fake Replicate saw
@@ -225,43 +213,9 @@ function serve() {
       });
       return res.end(bytes);
     }
-    let file = path.join(PUBLIC, decodeURIComponent(url.pathname));
-    if (!file.startsWith(PUBLIC)) return res.writeHead(403).end();
-    if (!existsSync(file) || statSync(file).isDirectory()) file = path.join(PUBLIC, "index.html");
-    res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream" });
-    res.end(readFileSync(file));
+    sendStatic(res, PUBLIC, url.pathname);
   });
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r(server)));
-}
-
-// --- a minimal CDP client ----------------------------------------------------
-
-async function cdpConnect(port) {
-  let info;
-  for (let i = 0; i < 50 && !info; i++) {
-    try {
-      info = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-    } catch {
-      await sleep(200);
-    }
-  }
-  if (!info) throw new Error("Chromium never opened its DevTools port");
-  const ws = new WebSocket(info.webSocketDebuggerUrl);
-  await new Promise((r, j) => { ws.once("open", r); ws.once("error", j); });
-  let id = 0;
-  const waiting = new Map();
-  const listeners = [];
-  ws.on("message", (raw) => {
-    const msg = JSON.parse(raw);
-    if (!settleReply(waiting, msg)) for (const fn of listeners) fn(msg);
-  });
-  const send = (method, params = {}, sessionId) =>
-    new Promise((resolve, reject) => {
-      const mid = ++id;
-      waiting.set(mid, { ok: resolve, fail: reject });
-      ws.send(JSON.stringify({ id: mid, method, params, sessionId }));
-    });
-  return { send, on: (fn) => listeners.push(fn), close: () => ws.close() };
 }
 
 // --- the run -------------------------------------------------------------------
@@ -271,23 +225,10 @@ async function main() {
   const video = await makeVideo();
   const server = await serve();
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const port = 9300 + Math.floor(Math.random() * 500);
-  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
-  const chrome = spawn(CHROME, [
-    "--headless=new", "--no-sandbox", "--disable-gpu-sandbox",
-    `--remote-debugging-port=${port}`, `--user-data-dir=${path.join(work, "profile")}`,
-    "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
-    `--use-file-for-fake-video-capture=${video}`,
-    ...(proxy ? [`--proxy-server=${proxy}`, "--proxy-bypass-list=127.0.0.1;localhost"] : []),
-    "about:blank",
-  ], { stdio: "ignore" });
+  const { chrome, port } = launchChrome({ profile: path.join(work, "profile"), video });
 
   const cdp = await cdpConnect(port);
-  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
-  const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
-  const page = (method, params) => cdp.send(method, params, sessionId);
-  const evaluate = async (expression) =>
-    (await page("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })).result.value;
+  const { page, evaluate } = await openPage(cdp);
 
   const problems = [];
   cdp.on((msg) => {

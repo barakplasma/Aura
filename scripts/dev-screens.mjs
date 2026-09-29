@@ -16,19 +16,15 @@
 //   OUT=/some/dir node scripts/dev-screens.mjs
 
 import http from "node:http";
-import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import WebSocket from "ws";
-import { settleReply } from "./cdp-request.mjs";
+import { cdpConnect, launchChrome, openPage, sendStatic, sleep } from "./dev-browser.mjs";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
 const OUT = process.env.OUT || path.join(ROOT, "docs", "screens");
-const CHROME = process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const STRICT = process.env.STRICT === "1";
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const LAYOUTS = [
   { name: "phone", width: 412, height: 915, mobile: true },
@@ -39,24 +35,8 @@ const LAYOUTS = [
 // the one place to update.
 const SCREENS = ["monitor", "mission", "history", "settings", "optimize", "eval"];
 
-const TYPES = {
-  ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
-  ".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json",
-  ".png": "image/png", ".wasm": "application/wasm", ".map": "application/json",
-};
-
 function serve() {
-  const server = http.createServer((req, res) => {
-    let rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    if (rel.endsWith("/")) rel += "index.html";
-    const file = path.join(PUBLIC, rel);
-    if (!file.startsWith(PUBLIC) || !existsSync(file)) {
-      res.writeHead(404).end();
-      return;
-    }
-    res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream" });
-    res.end(readFileSync(file));
-  });
+  const server = http.createServer((req, res) => sendStatic(res, PUBLIC, new URL(req.url, "http://x").pathname));
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r(server)));
 }
 
@@ -74,53 +54,18 @@ function fakeVideo(dir) {
   return file;
 }
 
-async function cdpConnect(port) {
-  let info;
-  for (let i = 0; i < 50 && !info; i++) {
-    try {
-      info = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-    } catch {
-      await sleep(200);
-    }
-  }
-  if (!info) throw new Error("Chromium never opened its DevTools port");
-  const ws = new WebSocket(info.webSocketDebuggerUrl);
-  await new Promise((r, j) => { ws.once("open", r); ws.once("error", j); });
-  let id = 0;
-  const waiting = new Map();
-  ws.on("message", (raw) => settleReply(waiting, JSON.parse(raw)));
-  const send = (method, params = {}, sessionId) =>
-    new Promise((resolve, reject) => {
-      const mid = ++id;
-      waiting.set(mid, { ok: resolve, fail: reject });
-      ws.send(JSON.stringify({ id: mid, method, params, sessionId }));
-    });
-  return { send, close: () => ws.close() };
-}
-
 async function main() {
   if (!existsSync(path.join(PUBLIC, "assets", "app.js"))) throw new Error("run `npm run build` first");
   mkdirSync(OUT, { recursive: true });
   const work = mkdtempSync(path.join(tmpdir(), "aura-screens-"));
   const server = await serve();
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const port = 9300 + Math.floor(Math.random() * 500);
-  const chrome = spawn(CHROME, [
-    "--headless=new", "--no-sandbox", `--remote-debugging-port=${port}`,
-    `--user-data-dir=${path.join(work, "profile")}`,
-    "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
-    `--use-file-for-fake-video-capture=${fakeVideo(work)}`,
-    "about:blank",
-  ], { stdio: "ignore" });
+  const { chrome, port } = launchChrome({ profile: path.join(work, "profile"), video: fakeVideo(work) });
 
   const failures = [];
   try {
     const cdp = await cdpConnect(port);
-    const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
-    const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
-    const page = (method, params) => cdp.send(method, params, sessionId);
-    const evaluate = async (expression) =>
-      (await page("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })).result.value;
+    const { page, evaluate } = await openPage(cdp);
     await page("Page.enable");
     await page("Runtime.enable");
     // Configured enough that the app doesn't show a first-run state, without
