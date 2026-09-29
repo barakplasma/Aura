@@ -220,8 +220,9 @@ stateDiagram-v2
 
 What the card shows, top to bottom:
 
-1. **State line** — a coloured dot + word (Watching / Alert / Degraded / Error)
-   + relative time ("4 s ago") + engine chip (Provider · gemma-4-31b).
+1. **State line** — a coloured dot, the state word (Watching / Alert /
+   Degraded / Error), a relative time ("4 s ago") and an engine chip
+   (Provider · gemma-4-31b).
 2. **Headline** — the message. Full width, wraps, selectable. Never an
    11 px strip inside the video.
 3. **Confidence bar** with the threshold marker, so "62 % vs. your 60 %" is a
