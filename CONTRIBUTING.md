@@ -37,7 +37,7 @@ and installs djlint at the start of every cloud session.
 
 | Command          | What it does                                                                                                                            |
 |------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies `src/aura.css` and ONNX Runtime's WASM files, generates the service worker |
+| `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies ONNX Runtime's WASM files, generates the service worker |
 | `npm run dev`    | Serves `public/` (rebuilds first via `predev`)                                                                                          |
 | `npm test`       | Unit tests for the pure `lib/` helpers — no DOM, no network                                                                             |
 | `npm run lint`   | Stylelint, jscpd and djlint — the same checks MegaLinter runs on every PR                                                               |
@@ -195,7 +195,7 @@ usual interruptions. What it recovers from depends on the platform:
 src/
   main.jsx                Entry point (imports monitoring.js first)
   App.jsx                 Screen routing, settings, demo mode, camera stage mode
-  aura.css                Dark "tactical" theme (edit this copy, not public/aura.css)
+  ionic.css               The one stylesheet (bundled to assets/app.css)
   monitoring.js           Bugsink (Sentry-compatible) error tracking
   components/             MonitorStage (always-mounted video/canvas), NavRail, ...
   screens/                Mission, Monitor, History, Optimize, Eval, Settings
@@ -213,7 +213,7 @@ lib/
   eval.js / eval-store.js Prompt evaluation matrix + IndexedDB persistence
   training.js             ax/GEPA optimization (only ever dynamically imported)
   ...                     demo, scheduler, stats, alert-store, frame, keepalive
-public/                   Deployed as-is: index.html, aura.css, icons, assets/
+public/                   Deployed as-is: index.html, icons, assets/
 scripts/
   build-react.js          esbuild build + service worker generation
   sw-template.js          Source of the generated public/sw.js
@@ -242,8 +242,8 @@ Full details are in [CLAUDE.md](./CLAUDE.md) — the short version:
   model needs an `if (modelId.includes(...))` in `ml.worker.js`, the descriptor is
   missing a field.
 - After changing an engine, add or extend a test in `test/`.
-- Edit `src/aura.css` and `scripts/sw-template.js` — `public/aura.css` and
-  `public/sw.js` are generated.
+- Edit `src/ionic.css` and `scripts/sw-template.js` — `public/sw.js` and
+  `public/assets/` are generated.
 - Don't commit secrets. API keys stay in the user's `localStorage`.
 
 ## Tests and linting

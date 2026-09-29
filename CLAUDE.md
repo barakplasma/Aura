@@ -30,8 +30,10 @@ camera frame → 640x480 JPEG → detection call (user's provider + model)
 ## Architecture
 
 React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → minified,
-code-split ESM bundles in `public/assets/` (with linked sourcemaps). `src/aura.css`
-is copied to `public/aura.css` by the build — edit the `src/` copy only.
+code-split ESM bundles in `public/assets/` (with linked sourcemaps). The one live
+stylesheet is `src/ionic.css` (imported from `main.jsx`, bundled to `assets/app.css`);
+the old `aura.css` "tactical" theme is gone. `docs/PRD-ux-redesign.md` is the plan
+for replacing what remains of the Ionic/`dc-*` vocabulary.
 
 | Path                                  | Role                                                                                                                                                                |
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -39,7 +41,7 @@ is copied to `public/aura.css` by the build — edit the `src/` copy only.
 | `src/components/MonitorStage.jsx`     | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches                                                 |
 | `src/screens/`                        | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen                                             |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
-| `src/aura.css`                        | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                                                                          |
+| `src/ionic.css`                       | The only stylesheet: Ionic overrides + the `dc-*` form vocabulary + monitor layout                                                                                  |
 | `src/monitoring.js`                   | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                                                |
 | `public/index.html`                   | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                                                   |
 | `public/feedback.js`                  | Web Speech + Web Vibration                                                                                                                                          |
@@ -98,6 +100,7 @@ npm run dev               # npx serve public → http://localhost:3000
 npm test                  # node --test
 npm run lint              # stylelint + jscpd + djlint (MegaLinter's checks)
 npm run deploy            # Build + gh-pages -d public
+node scripts/dev-screens.mjs   # screenshots of every screen × 3 layouts → docs/screens/
 ```
 
 ## Provider format

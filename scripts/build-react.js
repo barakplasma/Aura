@@ -43,10 +43,6 @@ await Promise.all([
     minify: true,
     sourcemap: "linked",
   }),
-  copyFile(
-    path.join(root, "src", "aura.css"),
-    path.join(root, "public", "aura.css"),
-  ),
   copyOnnxRuntimeFiles(),
 ]);
 
@@ -149,7 +145,6 @@ async function buildServiceWorker() {
     .map((f) => `icons/${f}`);
   const precache = [
     "index.html",
-    "aura.css",
     "manifest.webmanifest",
     ...icons,
     ...bundles,
