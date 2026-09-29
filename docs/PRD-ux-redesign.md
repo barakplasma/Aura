@@ -286,13 +286,13 @@ pre-attached.
 One stylesheet, `src/app.css`, tokens first. `aura.css` and the `dc-*`
 vocabulary are deleted, not ported.
 
-| Token group | Values                                                                              |
-|-------------|-------------------------------------------------------------------------------------|
-| Colour      | `bg-0/1/2`, `text`, `text-dim`, `border`, `accent`, `ok`, `warn`, `danger`, `info`  |
-| Type        | 13 / 14 / 16 / 20 / 28 px; weights 400 / 600; `tabular-nums` for numbers            |
-| Space       | 4 · 8 · 12 · 16 · 24 · 32                                                           |
-| Radius      | 8 (controls) · 16 (cards) · 999 (chips)                                             |
-| Motion      | 150 ms ease-out; respects `prefers-reduced-motion`                                  |
+| Token group | Values                                                                             |
+|-------------|------------------------------------------------------------------------------------|
+| Colour      | `bg-0/1/2`, `text`, `text-dim`, `border`, `accent`, `ok`, `warn`, `danger`, `info` |
+| Type        | 13 / 14 / 16 / 20 / 28 px; weights 400 / 600; `tabular-nums` for numbers           |
+| Space       | 4 · 8 · 12 · 16 · 24 · 32                                                          |
+| Radius      | 8 (controls) · 16 (cards) · 999 (chips)                                            |
+| Motion      | 150 ms ease-out; respects `prefers-reduced-motion`                                 |
 
 Components (each a file under `src/components/`): `AppShell` (tab bar or
 rail by breakpoint), `Stage`, `VerdictCard`, `MissionCard`, `ArmBar`,
@@ -311,33 +311,33 @@ owner makes at Phase 0, and the phases below work either way.
 
 Every control today and where it lives after. Keys (`aura.*`) do not change.
 
-| Today (screen · control)                                 | After                                                 |
-|----------------------------------------------------------|-------------------------------------------------------|
-| Monitor · Arm / Disarm                                   | Watch · Arm bar (sticky, always on screen)            |
-| Monitor · Try demo                                       | Watch · Verdict card empty state + Arm bar overflow   |
-| Monitor · Flip camera, Hide cam                          | Watch · Stage overflow menu                           |
-| Monitor · Object gate notice                             | Watch · Verdict card note chip + Session stats        |
-| Monitor · status line                                    | Watch · Verdict card (structured)                     |
-| Mission · Watch for, On alert announce                   | Watch · Mission card                                  |
-| Mission · Speak alerts, Vibrate                          | Watch · Mission card toggles (also Setup › Delivery)  |
-| Mission · Deploy & arm                                   | Watch · Arm bar                                       |
-| Settings · Engine, Provider preset, Base URL, Key, Model | Setup · Engine wizard step 1–2                        |
-| Settings · Fetch vision models                           | Setup · Engine wizard step 2 (populates the picker)   |
-| Settings · Browser model, Runtime                        | Setup · Engine wizard step 2 (In-browser)             |
-| Settings · Decision model, relay, token, announcer, fallback, Test | Setup · Engine wizard step 2–3 (Decision)   |
-| Settings · Sensitivity                                   | Watch · Mission card slider                           |
-| Settings · Mode, Scan every, Max $/hour, Max MB/hour     | Setup · Cadence & cost                                |
-| Settings · Model pricing override                        | Setup · Advanced                                      |
-| Settings · Object gate (all ten controls)                | Setup · Advanced › Object gate                        |
-| Settings · Source, Device, Facing                        | Setup · Camera & device                               |
-| Settings · Scan image size, Custom size                  | Setup · Advanced                                      |
-| Settings · Keep screen on, Unload model when idle        | Setup · Advanced                                      |
-| Settings · Vibration                                     | Setup · Delivery                                      |
-| Settings · Webhook URL, method, headers, action, schema, include image, ntfy | Setup · Delivery › Webhook        |
-| Alerts · list, False positive, Missed, Export, Clear     | Alerts · Timeline, row actions, header overflow       |
-| Tune (all)                                               | Lab · Examples                                        |
-| Eval (all)                                               | Lab · Evaluate                                        |
-| Toasts: demo, resume, update                             | Unchanged (Sheet component on phone)                  |
+| Today (screen · control)                                                     | After                                                |
+|------------------------------------------------------------------------------|------------------------------------------------------|
+| Monitor · Arm / Disarm                                                       | Watch · Arm bar (sticky, always on screen)           |
+| Monitor · Try demo                                                           | Watch · Verdict card empty state + Arm bar overflow  |
+| Monitor · Flip camera, Hide cam                                              | Watch · Stage overflow menu                          |
+| Monitor · Object gate notice                                                 | Watch · Verdict card note chip + Session stats       |
+| Monitor · status line                                                        | Watch · Verdict card (structured)                    |
+| Mission · Watch for, On alert announce                                       | Watch · Mission card                                 |
+| Mission · Speak alerts, Vibrate                                              | Watch · Mission card toggles (also Setup › Delivery) |
+| Mission · Deploy & arm                                                       | Watch · Arm bar                                      |
+| Settings · Engine, Provider preset, Base URL, Key, Model                     | Setup · Engine wizard step 1–2                       |
+| Settings · Fetch vision models                                               | Setup · Engine wizard step 2 (populates the picker)  |
+| Settings · Browser model, Runtime                                            | Setup · Engine wizard step 2 (In-browser)            |
+| Settings · Decision model, relay, token, announcer, fallback, Test           | Setup · Engine wizard step 2–3 (Decision)            |
+| Settings · Sensitivity                                                       | Watch · Mission card slider                          |
+| Settings · Mode, Scan every, Max $/hour, Max MB/hour                         | Setup · Cadence & cost                               |
+| Settings · Model pricing override                                            | Setup · Advanced                                     |
+| Settings · Object gate (all ten controls)                                    | Setup · Advanced › Object gate                       |
+| Settings · Source, Device, Facing                                            | Setup · Camera & device                              |
+| Settings · Scan image size, Custom size                                      | Setup · Advanced                                     |
+| Settings · Keep screen on, Unload model when idle                            | Setup · Advanced                                     |
+| Settings · Vibration                                                         | Setup · Delivery                                     |
+| Settings · Webhook URL, method, headers, action, schema, include image, ntfy | Setup · Delivery › Webhook                           |
+| Alerts · list, False positive, Missed, Export, Clear                         | Alerts · Timeline, row actions, header overflow      |
+| Tune (all)                                                                   | Lab · Examples                                       |
+| Eval (all)                                                                   | Lab · Evaluate                                       |
+| Toasts: demo, resume, update                                                 | Unchanged (Sheet component on phone)                 |
 
 ## Phases
 
