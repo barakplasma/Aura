@@ -413,3 +413,12 @@ test("every relay preset carries a note, and lookups are by exact URL", async ()
   assert.equal(relayPresetFor(DEFAULT_RELAY_URL).id, "operator");
   assert.equal(relayPresetFor("https://my.relay{path}"), null);
 });
+
+test("a 422 'image is required' names the stale version pin, not the operator's settings", () => {
+  const stale = decisionHttpError(422, '{"detail":"- input: image is required\\n","status":422}', "r8_k");
+  assert.match(stale.message, /stale/);
+  assert.match(stale.message, /decision-models\.js/);
+  const other = decisionHttpError(422, '{"detail":"- input.question: field required"}', "r8_k");
+  assert.match(other.message, /rejected the input/);
+  assert.doesNotMatch(other.message, /stale/);
+});
