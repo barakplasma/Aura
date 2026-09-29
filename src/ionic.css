@@ -156,20 +156,28 @@ ion-tab-button {
 }
 
 .monitor-status-text {
-  flex: 1;
+  /* A 60 % basis, not 0: in this wrapping row the text must always own most
+     of the line. With `flex: 1` (basis 0) a wrapped ALERT line on iOS Safari
+     rendered as a one-word-per-line column beside the HIDE CAM button; now
+     the button wraps under the text instead of squeezing it. */
+  flex: 1 1 60%;
   min-width: 0;
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
   line-height: 1.35;
+
   /* white-space: normal wraps between words, but a long unbroken token — a
      URL, a relay hostname, a hash in an error message — has no word breaks
      to wrap at, so it overflows past .monitor-stage's overflow: hidden and
      is clipped: reads as "not displayed at all". */
   overflow-wrap: anywhere;
+
   /* That same text (a URL, a hash, JSON) is exactly what someone needs to
-     copy off a phone to file a bug — never let it be unselectable. */
+     copy off a phone to file a bug — never let it be unselectable. iOS
+     Safari still needs the prefixed form. */
   user-select: text;
+  /* stylelint-disable-next-line property-no-vendor-prefix */
   -webkit-user-select: text;
 }
 
