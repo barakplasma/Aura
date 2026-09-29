@@ -195,7 +195,8 @@ usual interruptions. What it recovers from depends on the platform:
 src/
   main.jsx                Entry point (imports monitoring.js first)
   App.jsx                 Screen routing, settings, demo mode, camera stage mode
-  ionic.css               The one stylesheet (bundled to assets/app.css)
+  tailwind.css            Design tokens + utilities (built to assets/ui.css)
+  legacy.css              Old `dc-*` styles for screens not yet redesigned
   monitoring.js           Bugsink (Sentry-compatible) error tracking
   components/             Stage (always-mounted video/canvas), AppShell, VerdictCard, ...
   ui/                     shadcn-style primitives (Tailwind + Radix)
@@ -243,7 +244,7 @@ Full details are in [CLAUDE.md](./CLAUDE.md) — the short version:
   model needs an `if (modelId.includes(...))` in `ml.worker.js`, the descriptor is
   missing a field.
 - After changing an engine, add or extend a test in `test/`.
-- Edit `src/ionic.css` and `scripts/sw-template.js` — `public/sw.js` and
+- Edit `src/tailwind.css`, `src/legacy.css` and `scripts/sw-template.js` — `public/sw.js` and
   `public/assets/` are generated.
 - Don't commit secrets. API keys stay in the user's `localStorage`.
 

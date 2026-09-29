@@ -1,5 +1,4 @@
 import { useState, useRef, lazy, Suspense } from 'react';
-import { IonApp, IonToast } from '@ionic/react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
@@ -14,6 +13,7 @@ import Stage from './components/Stage.jsx';
 import WatchScreen from './screens/WatchScreen.jsx';
 import LabScreen from './screens/LabScreen.jsx';
 import { Button } from './ui/button.jsx';
+import { Toast } from './ui/toast.jsx';
 import HistoryScreen from './screens/HistoryScreen.jsx';
 import SettingsScreen from './screens/SettingsScreen.jsx';
 
@@ -259,10 +259,10 @@ export default function App() {
   const showUpdateBanner = updateAvailable && !updateDismissed;
 
   return (
-    <IonApp>
-      <IonToast position="top" isOpen={demoMode} message="Demo mode — simulated alerts, no API calls." color="warning" buttons={[{ text: 'Exit', handler: handleExitDemo }]} />
-      <IonToast position="top" isOpen={showResumeBanner} message="Monitoring was interrupted by a reload." buttons={[{ text: 'Resume', handler: handleResume }, { text: 'Dismiss', role: 'cancel', handler: handleDismissResume }]} />
-      <IonToast position="top" isOpen={showUpdateBanner} message="A new version is ready." buttons={[{ text: 'Update', handler: reloadToUpdate }, { text: 'Later', role: 'cancel', handler: handleDismissUpdate }]} />
+    <div className="flex h-dvh flex-col">
+      <Toast open={demoMode} tone="warn" message="Demo mode — simulated alerts, no API calls." actions={[{ text: 'Exit', onClick: handleExitDemo }]} />
+      <Toast open={showResumeBanner} message="Monitoring was interrupted by a reload." actions={[{ text: 'Resume', onClick: handleResume }, { text: 'Dismiss', onClick: handleDismissResume }]} />
+      <Toast open={showUpdateBanner} message="A new version is ready." actions={[{ text: 'Update', onClick: reloadToUpdate }, { text: 'Later', onClick: handleDismissUpdate }]} />
       <AppShell screen={screen} onNavigate={setScreen} dotClass={dotClass}>
         <Stage
           videoRef={videoRef} canvasRef={canvasRef}
@@ -383,6 +383,6 @@ export default function App() {
           </div>
         )}
       </AppShell>
-    </IonApp>
+    </div>
   );
 }

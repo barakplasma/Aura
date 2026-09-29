@@ -300,12 +300,10 @@ rail by breakpoint), `Stage`, `VerdictCard`, `MissionCard`, `ArmBar`,
 control is rendered), `Segmented`, `Sheet` (bottom sheet on phone, dialog on
 desktop), `Timeline`, `Chip`, `ProgressRing`.
 
-Ionic decision: the app uses Ionic for a header, a tab bar, toggles, toasts, a
-textarea and cards. Every one of those is under 40 lines as a native element
-with the tokens above, and the tab bar is the thing the redesign replaces.
-Recommendation: drop `@ionic/react` and `ionicons` (one dependency, one
-stylesheet, smaller `app.js`), using inline SVG icons. This is a decision the
-owner makes at Phase 0, and the phases below work either way.
+Ionic decision (made): `@ionic/react` and `ionicons` are gone. The component
+layer is Tailwind v4 + shadcn-style primitives (Radix for dialog, switch,
+slider, collapsible and menu; `class-variance-authority`; `lucide-react`
+icons), in `src/ui/`. The main bundle went from 625 KB to 434 KB.
 
 ## Capability map
 
@@ -351,7 +349,7 @@ Each phase is one PR, ships on its own, and leaves the app working.
   at the three layouts, with the fake camera. Run it in CI and commit the
   images under `docs/screens/` so a UI PR shows its before/after.
 - Update CLAUDE.md's architecture table (live stylesheet, screens).
-- Decide the Ionic question.
+- Decide the Ionic question (decided: dropped).
 - Acceptance: `npm run build` produces no `public/aura.css`; screenshots exist
   for 3 layouts × 6 screens; `npm test` and `dev-gate-e2e.mjs` unchanged.
 
@@ -396,9 +394,8 @@ Each phase is one PR, ships on its own, and leaves the app working.
 
 ## Open questions for the owner
 
-1. Drop Ionic (recommended) or keep it for primitives?
+1. ~~Drop Ionic?~~ Decided: dropped, on Tailwind + shadcn-style components.
 2. Desktop secondary screens: replace the stage + panel (proposed, keeps the
    PiP) or open in the panel only, keeping the stage full size?
 3. Light theme in Phase 4, or dark only?
-4. Should `Lab` stay in the phone tab bar, or live behind Setup on phones and
-   be a rail item only on desktop?
+4. ~~Lab on phones?~~ Decided: behind Setup on phones, a rail item on desktop.

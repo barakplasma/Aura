@@ -30,15 +30,16 @@ camera frame → 640x480 JPEG → detection call (user's provider + model)
 ## Architecture
 
 React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → minified,
-code-split ESM bundles in `public/assets/` (with linked sourcemaps). The one live
-stylesheet is `src/ionic.css` (imported from `main.jsx`, bundled to `assets/app.css`);
-the old `aura.css` "tactical" theme is gone. The redesign (`docs/PRD-ux-redesign.md`)
-is under way: the shell and Watch screen are Tailwind v4 + shadcn-style components
-(`src/tailwind.css` → `assets/ui.css`, primitives in `src/ui/`); Setup, Alerts and Lab
-are still Ionic + `dc-*` until their phases. Tailwind's own reset is not imported —
-a reset would restyle the Ionic screens — and its utilities are deliberately
-unlayered so they beat Ionic's unlayered rules. New components carry `data-ui`, which
-scopes the few base rules they need.
+code-split ESM bundles in `public/assets/` (with linked sourcemaps). There is no
+component framework: new UI is Tailwind v4 + shadcn-style components (Radix
+primitives, `class-variance-authority`, `lucide-react`) in `src/ui/` and
+`src/components/`. Two stylesheets: `src/tailwind.css` (tokens + utilities, built by
+the Tailwind CLI to `assets/ui.css`) and `src/legacy.css` (esbuild → `assets/app.css`),
+which only serves the `dc-*` / `section-label` / `form-group` vocabulary that
+Setup, Alerts and Lab still use until their phases in `docs/PRD-ux-redesign.md`, plus
+the page base. Tailwind's reset is not imported (it would restyle those screens);
+its utilities are deliberately unlayered so they beat any unlayered legacy rule. New
+components carry `data-ui`, which scopes the few base rules they need.
 
 | Path                                  | Role                                                                                                                                                                |
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -48,7 +49,8 @@ scopes the few base rules they need.
 | `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                  |
 | `src/screens/`                        | WatchScreen (verdict + mission + arm bar), LabScreen (Examples/Evaluate wrapper), HistoryScreen, SettingsScreen, OptimizeScreen + EvalScreen (lazy-loaded)          |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
-| `src/ionic.css`                       | The only stylesheet: Ionic overrides + the `dc-*` form vocabulary + monitor layout                                                                                  |
+| `src/legacy.css`                      | Page base + the old `dc-*` form vocabulary, for screens not yet redesigned                                                                                          |
+| `src/tailwind.css`                    | Design tokens (`@theme`) + Tailwind utilities; scoped base rules under `[data-ui]`                                                                                  |
 | `src/monitoring.js`                   | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                                                |
 | `public/index.html`                   | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                                                   |
 | `public/feedback.js`                  | Web Speech + Web Vibration                                                                                                                                          |

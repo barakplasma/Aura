@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { IonContent } from '@ionic/react';
 import { fetchModels, isLocalBaseUrl, sameOrigin } from '../../lib/aura.js';
 import { PROVIDER_PRESETS, providerForUrl, benchmarkNote } from '../../lib/providers.js';
 import {
@@ -316,7 +315,7 @@ export default function SettingsScreen({
   }
 
   return (
-    <IonContent className="aura-page screen screen-settings">
+    <div className="aura-page screen screen-settings">
       <div className="screen-header">
         <span className="screen-title">SYSTEM SETTINGS</span>
       </div>
@@ -1051,6 +1050,6 @@ export default function SettingsScreen({
         </label>
         <p className="field-hint">For hosted ntfy topic URLs (https://ntfy.sh/topic). Aura uploads the alert JPEG with the generated alert text.</p>
       </div>
-    </IonContent>
+    </div>
   );
 }
