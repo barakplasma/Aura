@@ -1,13 +1,15 @@
-import { useState, useRef, lazy, Suspense } from 'react';
+import { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
-import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
+import { useServiceWorkerUpdate, UPDATED_FLAG } from './hooks/useServiceWorkerUpdate.js';
+import { useInstallPrompt } from './hooks/useInstallPrompt.js';
 import { useRecentVerdicts } from './hooks/useRecentVerdicts.js';
 import { BROWSER_MODELS, DEFAULT_BROWSER_MODEL, DEFAULT_DETECTOR_MODEL } from '../lib/browser-engine.js';
 import { pricingKey, resolvePricing, resolveDecisionPricing } from '../lib/pricing.js';
 import { isEngineConfigured } from '../lib/providers.js';
 import { DEFAULT_DECISION_MODEL, DEFAULT_RELAY_URL, getDecisionModel } from '../lib/decision-models.js';
 import { resumeWindowOpen } from '../lib/keepalive.js';
+import { shortcutAction, describeTarget } from '../lib/shortcuts.js';
 import AppShell from './components/AppShell.jsx';
 import Stage from './components/Stage.jsx';
 import WatchScreen from './screens/WatchScreen.jsx';
@@ -48,10 +50,6 @@ export default function App() {
   // nagging for the rest of this page load; aura.armed itself is cleared so a
   // later reload within the window doesn't bring it back.
   const [resumeDismissed, setResumeDismissed] = useState(false);
-  // Same idea for the update banner: dismissing just stops it nagging for
-  // this page load. The waiting worker itself isn't going anywhere, so the
-  // next reload (or the next visit) offers it again.
-  const [updateDismissed, setUpdateDismissed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useLocalStorage('aura.previewCollapsed', false);
 
   // Settings — persisted via localStorage (JSON-serialized by @uidotdev/usehooks)
@@ -157,7 +155,8 @@ export default function App() {
 
   const { running, verdict, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, clearHistory, captureFrame, start, stop, switchCamera, wakeLockHeld } = useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn });
   const recent = useRecentVerdicts(verdict);
-  const { updateAvailable, reloadToUpdate } = useServiceWorkerUpdate();
+  useServiceWorkerUpdate();
+  const install = useInstallPrompt();
 
   // Wraps the hook's start()/stop() so an ordinary ARM/DISARM also persists
   // the armed flag a reload needs to offer RESUME. Demo mode bypasses this
@@ -193,9 +192,36 @@ export default function App() {
     setArmed(false);
   }
 
-  function handleDismissUpdate() {
-    setUpdateDismissed(true);
-  }
+  // An update reloads the page by itself (useServiceWorkerUpdate); an armed
+  // monitor carries straight on instead of waiting for a RESUME tap. Runs once.
+  useEffect(() => {
+    let updated = false;
+    try {
+      updated = sessionStorage.getItem(UPDATED_FLAG) === '1';
+      sessionStorage.removeItem(UPDATED_FLAG);
+    } catch { /* private mode */ }
+    if (updated && armed && resumeWindowOpen(armedAt, Date.now(), RESUME_WINDOW_MS)) {
+      setResumeDismissed(true);
+      handleStart();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keyboard: Space arms/disarms, 1–4 switch destinations (lib/shortcuts.js).
+  // Re-bound each render so the handlers see current state.
+  const keyHandler = useRef(null);
+  keyHandler.current = (e) => {
+    const act = shortcutAction(e, describeTarget(e.target));
+    if (!act) return;
+    e.preventDefault();
+    if (act.type === 'toggle') handleToggle();
+    else setScreen(act.screen);
+  };
+  useEffect(() => {
+    const onKey = (e) => keyHandler.current(e);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   function handleStartDemo() {
     setDemoMode(true);
@@ -265,8 +291,6 @@ export default function App() {
   // while the window is still open and only until the operator has answered.
   const showResumeBanner = !running && !demoMode && !resumeDismissed
     && armed && resumeWindowOpen(armedAt, Date.now(), RESUME_WINDOW_MS);
-
-  const showUpdateBanner = updateAvailable && !updateDismissed;
 
   // What the Setup cards read and write, in one place instead of a hundred props.
   const settingsView = {
@@ -362,7 +386,6 @@ export default function App() {
     <div className="flex h-dvh flex-col">
       <Toast open={demoMode} tone="warn" message="Demo mode — simulated alerts, no API calls." actions={[{ text: 'Exit', onClick: handleExitDemo }]} />
       <Toast open={showResumeBanner} message="Monitoring was interrupted by a reload." actions={[{ text: 'Resume', onClick: handleResume }, { text: 'Dismiss', onClick: handleDismissResume }]} />
-      <Toast open={showUpdateBanner} message="A new version is ready." actions={[{ text: 'Update', onClick: reloadToUpdate }, { text: 'Later', onClick: handleDismissUpdate }]} />
       <AppShell screen={screen} onNavigate={setScreen} dotClass={dotClass}>
         <Stage
           videoRef={videoRef} canvasRef={canvasRef}
@@ -378,7 +401,7 @@ export default function App() {
           <WatchScreen
             verdict={verdict} recent={recent} running={running} progress={progress} telemetry={telemetry}
             engine={engine} modelLabel={modelLabel} providerReady={providerReady} demoMode={demoMode}
-            onToggle={handleToggle} onDemo={handleStartDemo}
+            onToggle={handleToggle} onDemo={handleStartDemo} onInstall={install}
             onOpenSetup={() => setScreen('setup')}
             onOpenLab={() => { setLabTab('tune'); setScreen('lab'); }}
             onOpenEntry={handleOpenEntry}

@@ -38,7 +38,7 @@ one stylesheet: `src/tailwind.css` — design tokens (`@theme`), Tailwind's rese
 its utilities — which the Tailwind CLI builds to `assets/ui.css` (esbuild can't scan
 class names, so it is its own build step). Utilities are unlayered on purpose so they
 always beat the reset. `docs/PRD-ux-redesign.md` is the plan this UI follows; Phases
-0–3 are done, Phase 4 (polish) is not.
+0–4 are done.
 
 | Path                                  | Role                                                                                                                                                                |
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -48,6 +48,8 @@ always beat the reset. `docs/PRD-ux-redesign.md` is the plan this UI follows; Ph
 | `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                 |
 | `src/screens/`                        | WatchScreen, SetupScreen, AlertsScreen (timeline), LabScreen wrapping OptimizeScreen (Examples) + EvalScreen (Evaluate), both lazy-loaded                           |
 | `src/alerts/`, `src/lab/`             | Alerts timeline parts (EntryRow, FramePreview, EntryActions); Lab Evaluate parts (SampleImages, PromptVariants, ModelPicker, ResultsTable)                          |
+| `src/hooks/useServiceWorkerUpdate.js` | Automatic updates: reload when a new worker takes over; check on focus + every 10 min; App resumes an armed monitor                                                 |
+| `lib/shortcuts.js`                    | Keyboard shortcuts (Space arms, 1–4 switch screens), pure — skips text fields, buttons and dialogs                                                                  |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
 | `src/tailwind.css`                    | The only stylesheet: design tokens (`@theme`), Tailwind reset, utilities → `assets/ui.css`                                                                          |
 | `src/monitoring.js`                   | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                                                |
@@ -187,6 +189,11 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
   (TRY DEMO on the Watch screen), isolated in `lib/demo.js`, clearly bannered
   while active, and never fires webhooks.
 - Don't commit secrets. The API key stays in the user's localStorage.
+- Updates are automatic and must stay so: `sw.js` calls `skipWaiting()` on
+  install and `useServiceWorkerUpdate` reloads on `controllerchange` — no prompt.
+  The Dockerfile's nginx serves `sw.js`/`index.html` with `no-cache` so a new build is
+  seen at once; the homelab (`homelab-manifests/apps/aura`) runs that image and
+  bumps its pin to each successful `image.yml` run.
 - `public/sw.js` is **generated** by `npm run build` (and gitignored — it isn't in
   a fresh clone until you build) — edit `scripts/sw-template.js`.
   It caches the app shell only, so the PWA boots offline against a local model. It

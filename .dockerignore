@@ -1,0 +1,6 @@
+node_modules
+.git
+public/assets/ml.worker.js*
+public/ort
+public/sw.js
+docs/screens
