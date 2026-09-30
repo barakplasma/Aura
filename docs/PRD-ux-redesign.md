@@ -397,6 +397,30 @@ Status: built. Where it differs from the plan above:
 - Acceptance: marking an alert from the timeline creates the same training
   example as today; Eval runs unchanged against the fake provider.
 
+Status: built. Where it differs from the plan above:
+
+- Training examples are text-only (a scene description, no image), so "Send to
+  Lab with the frame pre-attached" can't store the frame. It opens Examples with
+  the form pre-filled from the entry (mission, scene, what the model answered)
+  and shows the frame beside it for reference; nothing is saved until the
+  operator adds it. "False positive" / "Missed" still save immediately, via the
+  same `exampleFromReview()` (now in `lib/training-store.js`, with a golden
+  test), so the example is byte-for-byte what it was.
+- The last-five dots on Watch now open their Alerts entry (the verdict carries
+  the history entry's id), deferred from Phase 1.
+- Evaluate's model list is grouped by engine (`groupEvalModels`, tested) and
+  always offers the monitor's configured model; before, that model was listed
+  only when nothing else was.
+- Alerts keeps at most 20 alerts and 4 recent frames in memory, so a dot for an
+  entry that has rotated out opens Alerts without selecting anything.
+- legacy.css is gone; Tailwind's real reset (preflight) replaced the scoped
+  base rules, and the `data-ui` scoping attribute with it.
+- Verified: the harness fires demo alerts and checks the timeline, the desktop
+  preview, marking, Send to Lab, the grouped model list and a dot opening its
+  entry; the gate e2e runs a real Evaluate matrix (capture a frame, add a
+  variant, pick the fake provider's model, run, read the table) against the
+  fake camera and provider.
+
 ### Phase 4 — Polish
 
 - Keyboard: Space arms/disarms, `1–4` switch destinations, `Esc` closes a

@@ -1,14 +1,10 @@
-/* Aura's new UI layer (docs/PRD-ux-redesign.md). Utilities and tokens only —
-   Tailwind's global reset is deliberately not imported: the Settings, Alerts
-   and Lab screens are still Ionic until their phases, and a reset would
-   restyle them. The few base rules the utilities depend on are scoped to
-   [data-ui] below, and only the new components carry that attribute. */
+/* Aura's stylesheet (docs/PRD-ux-redesign.md): design tokens, Tailwind's reset,
+   and its utilities. Built by the Tailwind CLI to assets/ui.css. The utilities
+   are unlayered so they always beat the reset and any third-party rule. */
 @layer theme, base;
 
 @import "tailwindcss/theme.css" layer(theme);
-
-/* Unlayered on purpose: Ionic's own unlayered rules (e.g. `button`) would beat
-   layered utilities, and this sheet loads after theirs. */
+@import "tailwindcss/preflight.css" layer(base);
 @import "tailwindcss/utilities.css" source(none);
 
 @source "./";
@@ -45,50 +41,50 @@
   --breakpoint-*: initial;
   --breakpoint-md: 700px;
   --breakpoint-xl: 1100px;
+  --animate-sweep: sweep 1.2s ease-in-out infinite;
+
+  @keyframes sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+
+    100% {
+      transform: translateX(250%);
+    }
+  }
 }
 
 @layer base {
-  [data-ui],
-  [data-ui] *,
-  [data-ui] *::before,
-  [data-ui] *::after {
-    box-sizing: border-box;
-    border: 0 solid var(--color-border);
+  html,
+  body,
+  #root {
+    height: 100%;
   }
 
-  [data-ui] {
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: var(--color-bg-0);
+    color: var(--color-text);
     font-family: var(--font-sans);
     font-size: var(--text-sm);
-    color: var(--color-text);
     font-variant-numeric: tabular-nums;
     color-scheme: dark;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
   }
 
-  [data-ui] input,
-  [data-ui] select,
-  [data-ui] textarea {
-    font: inherit;
-    color: inherit;
-  }
-
-  [data-ui] :is(h1, h2, h3, h4, p, pre) {
-    margin: 0;
-  }
-
-  [data-ui] button {
-    font: inherit;
-    color: inherit;
-    background: none;
+  button {
     cursor: pointer;
   }
 
-  [data-ui] :focus-visible {
+  :focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    [data-ui] * {
+    * {
       transition-duration: 0s !important;
       animation-duration: 0s !important;
     }

@@ -1,7 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { fetchModels, scanClient, isLocalBaseUrl } from '../../lib/aura.js';
-import { expandMatrix, comboKey, runEvalMatrix, summarizeResults } from '../../lib/eval.js';
+import {
+  expandMatrix, runEvalMatrix, summarizeResults,
+  BROWSER_MODEL_PREFIX, CHROME_AI_MODEL_ID, DECISION_MODEL_PREFIX,
+} from '../../lib/eval.js';
 import { pricingKey, resolvePricing, resolveDecisionPricing } from '../../lib/pricing.js';
 import { scanDecision, missionToQuestion } from '../../lib/decision.js';
 import { DECISION_MODELS, getDecisionModel, isDecisionConfigured } from '../../lib/decision-models.js';
@@ -10,39 +13,23 @@ import { scanBrowser, probeChromeAI, DEFAULT_BROWSER_MODEL, BROWSER_MODELS } fro
 import { reportUnexpectedError } from '../../lib/handled-errors.js';
 import ProgressBar from '../components/ProgressBar.jsx';
 import { reportHandledError } from '../monitoring.js';
+import { Button } from '../ui/button.jsx';
+import { Card } from '../ui/card.jsx';
+import { Field } from '../ui/field.jsx';
+import { Select } from '../ui/input.jsx';
+import { Status } from '../ui/status.jsx';
+import ModelPicker from '../lab/ModelPicker.jsx';
+import PromptVariants from '../lab/PromptVariants.jsx';
+import ResultsTable from '../lab/ResultsTable.jsx';
+import SampleImages from '../lab/SampleImages.jsx';
 
 const store = createEvalStore();
 
-// "browser:<key>" model ids (into BROWSER_MODELS) let the eval matrix compare
-// the in-page BROWSER engine against cloud/local models side by side. Only
-// offered when WebGPU is present — the eval screen's own way of measuring
-// "is the on-device model good enough for my mission" without ever running it
-// on a phone with no GPU.
-const BROWSER_MODEL_PREFIX = 'browser:';
-// "chrome-ai:builtin" — the same comparison for the other in-browser runtime,
-// Chrome's built-in Prompt API (Gemini Nano). Gated on its own feature probe,
-// not on WebGPU: it uses neither transformers.js nor the GPU pipeline.
-const CHROME_AI_MODEL_ID = 'chrome-ai:builtin';
-// "decision:<row>" — a DECISION-engine classifier (lib/decision-models.js),
-// run through the same relay/server and key as the live monitor.
-const DECISION_MODEL_PREFIX = 'decision:';
+// In-browser rows are only offered when WebGPU is present — the eval screen's
+// own way of measuring "is the on-device model good enough for my mission"
+// without ever running it on a phone with no GPU. (The model-id prefixes live
+// in lib/eval.js.)
 const hasWebGpu = typeof navigator !== 'undefined' && Boolean(navigator.gpu);
-
-// Friendly label + provenance sub-line for the models column.
-function evalModelLabel(m) {
-  if (m.startsWith(BROWSER_MODEL_PREFIX)) {
-    const cfg = BROWSER_MODELS[m.slice(BROWSER_MODEL_PREFIX.length)];
-    return { name: cfg?.label || m, sub: `transformers.js · ${cfg?.sizeLabel || ''}` };
-  }
-  if (m === CHROME_AI_MODEL_ID) {
-    return { name: 'Chrome built-in AI', sub: 'Gemini Nano · JSON-constrained' };
-  }
-  if (m.startsWith(DECISION_MODEL_PREFIX)) {
-    const row = getDecisionModel(m.slice(DECISION_MODEL_PREFIX.length));
-    return { name: row?.label || m, sub: 'decision · p(yes)' };
-  }
-  return { name: m, sub: null };
-}
 
 // Routes a cell's scan to the BROWSER engine (either runtime), a DECISION
 // model, or the configured provider, depending on which kind of model id it
@@ -129,13 +116,11 @@ export default function EvalScreen({
   const [variants, setVariants] = useLocalStorage('aura.eval.variants', []);
   const [selectedModels, setSelectedModels] = useLocalStorage('aura.eval.models', []);
   const [modelList, setModelList] = useState([]);
-  const [manualModel, setManualModel] = useState('');
   const [fetchingModels, setFetchingModels] = useState(false);
   const [concurrency, setConcurrency] = useState(2);
   const [statusMsg, setStatusMsg] = useState('');
   const [runView, setRunView] = useState(null);   // displayed run record
   const [progress, setProgress] = useState(null); // { done, total } while running
-  const fileInputRef = useRef(null);
 
   // In-browser model rows offered in the matrix. Transformers.js rows need
   // WebGPU; the Chrome built-in AI row appears only when the feature probe
@@ -275,18 +260,18 @@ export default function EvalScreen({
     );
   }
 
-  function handleAddManualModel() {
-    const m = manualModel.trim();
-    if (!m) return;
-    if (!selectedModels.includes(m)) setSelectedModels([...selectedModels, m]);
-    setManualModel('');
-  }
-
-  // The checkbox list shows fetched models plus anything already selected
+  // The list shows fetched models plus anything already selected
   // (manual entries, or models the provider no longer lists) plus the
   // BROWSER engine's own model(s), when WebGPU is available.
-  const visibleModels = [...new Set([...modelList, ...selectedModels, ...browserEvalModelIds])];
-  if (visibleModels.length === 0 && configuredModel) visibleModels.push(configuredModel);
+  const visibleModels = [
+    ...new Set([
+      ...modelList,
+      ...selectedModels,
+      // The model the monitor runs on is always on offer, whatever else is listed.
+      ...(configuredModel ? [configuredModel] : []),
+      ...browserEvalModelIds,
+    ]),
+  ];
 
   // ----- Run -----
 
@@ -381,15 +366,6 @@ export default function EvalScreen({
 
   // ----- Results table data -----
 
-  const runCombos = runView
-    ? runView.models.flatMap((m) => runView.variants.map((v) => ({ model: m, variant: v, key: comboKey(m, v.id) })))
-    : [];
-  const cellByKey = new Map();
-  if (runView) {
-    for (const r of runView.results) {
-      cellByKey.set(`${r.imageId}|${comboKey(r.model, r.variantId)}`, r);
-    }
-  }
   const summary = runView
     ? summarizeResults(runView.results, runView.expectedByImage, (evalModel) => (
         evalModel.startsWith(DECISION_MODEL_PREFIX)
@@ -403,257 +379,63 @@ export default function EvalScreen({
     : null;
   const imageById = Object.fromEntries(images.map((i) => [i.id, i]));
 
-  // One footer row per metric — the combo lookup is shared so the three
-  // aggregate rows don't repeat it.
-  function renderAggRow(label, renderAgg) {
-    return (
-      <tr className="eval-agg-row">
-        <td className="eval-row-head">{label}</td>
-        {runCombos.map((c) => {
-          const agg = summary.combos.find((x) => x.model === c.model && x.variantId === c.variant.id);
-          return <td key={c.key} className="eval-cell">{renderAgg(agg)}</td>;
-        })}
-      </tr>
-    );
-  }
-
-  function expectedBadge(expected) {
-    if (expected === true) return <span className="eval-expected trig">EXPECT TRIG</span>;
-    if (expected === false) return <span className="eval-expected clear">EXPECT CLEAR</span>;
-    return <span className="eval-expected none">UNLABELED</span>;
-  }
-
-  function renderCell(imageId, combo) {
-    const r = cellByKey.get(`${imageId}|${combo.key}`);
-    if (!r) return <td key={combo.key} className="eval-cell">—</td>;
-    if (r.status === 'error') {
-      return <td key={combo.key} className="eval-cell eval-cell-error" title={r.error}>ERR</td>;
-    }
-    if (r.status === 'cancelled') {
-      return <td key={combo.key} className="eval-cell">—</td>;
-    }
-    const expected = runView.expectedByImage?.[imageId];
-    const labeled = expected === true || expected === false;
-    const match = labeled ? Boolean(r.triggered) === expected : null;
-    const cls = match === null ? '' : match ? ' eval-cell-match' : ' eval-cell-mismatch';
-    // Provenance in the hover: which runtime answered, on what device, and
-    // what the one-time model load cost (browser cells only).
-    const provenance = [
-      r.reason,
-      r.runtime && `runtime: ${r.runtime}`,
-      r.device && `device: ${r.device}`,
-      r.modelLoadMs != null && `model load: ${(r.modelLoadMs / 1000).toFixed(1)}s`,
-    ].filter(Boolean).join(' · ');
-    return (
-      <td key={combo.key} className={`eval-cell${cls}`} title={provenance || undefined}>
-        <span className={r.triggered ? 'eval-trig' : 'eval-clear'}>
-          {r.triggered ? 'TRIG' : 'clear'} {Math.round(r.confidence)}
-        </span>
-        <span className="eval-latency">{(r.latencyMs / 1000).toFixed(1)}s</span>
-      </td>
-    );
-  }
-
   return (
-    <div className="screen screen-eval">
-      <div className="screen-header">
-        <span className="screen-title">PROMPT EVALUATION</span>
-      </div>
+    <div className="min-h-0 flex-1 overflow-y-auto bg-bg-0 p-3">
+      <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        <h1 className="px-1 text-3xl font-semibold">Evaluate</h1>
 
-      <div className="settings-section">
-        <div className="section-label">SAMPLE IMAGES ({images.length})</div>
-        <div className="btn-row">
-          <button className="dc-btn" onClick={() => fileInputRef.current?.click()}>+ UPLOAD</button>
-          <button className="dc-btn outline" onClick={handleCapture} title={monitorRunning ? '' : 'Start monitoring to capture from the camera'}>
-            ⦿ CAPTURE FRAME
-          </button>
-          <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={handleFiles} />
-        </div>
-        <div className="eval-thumb-grid">
-          {images.map((img) => (
-            <div key={img.id} className="eval-thumb">
-              <img src={img.dataUrl} alt={`sample ${img.source}`} />
-              <button className="eval-thumb-label" onClick={() => handleCycleExpected(img)} title="Cycle expected outcome: unlabeled → trigger → clear">
-                {expectedBadge(img.expected)}
-              </button>
-              <button className="eval-thumb-del" onClick={() => handleRemoveImage(img.id)} title="Remove image">×</button>
-            </div>
-          ))}
-          {images.length === 0 && <p className="status-msg">No sample images yet. Upload photos or capture frames of the scenes you want to test.</p>}
-        </div>
-      </div>
+        <SampleImages
+          images={images}
+          monitorRunning={monitorRunning}
+          onFiles={handleFiles}
+          onCapture={handleCapture}
+          onCycleExpected={handleCycleExpected}
+          onRemove={handleRemoveImage}
+        />
+        <PromptVariants
+          variants={variants}
+          usableCount={usableVariants.length}
+          onAdd={handleAddVariant}
+          onChange={handleVariantChange}
+          onRemove={handleRemoveVariant}
+        />
+        <ModelPicker
+          models={visibleModels}
+          selected={selectedModels}
+          onToggle={toggleModel}
+          onAddManual={(m) => { if (!selectedModels.includes(m)) setSelectedModels([...selectedModels, m]); }}
+          onFetch={handleFetchModels}
+          fetching={fetchingModels}
+        />
 
-      <div className="settings-section">
-        <div className="section-label">PROMPT VARIANTS ({usableVariants.length})</div>
-        {variants.map((v, idx) => (
-          <div key={v.id} className="eval-variant">
-            <div className="inline-row">
-              <input
-                className="dc-input eval-variant-name"
-                value={v.name}
-                onChange={(e) => handleVariantChange(v.id, 'name', e.target.value)}
-                placeholder={`Variant ${idx + 1}`}
-              />
-              <button className="train-del-btn" onClick={() => handleRemoveVariant(v.id)} title="Remove variant">×</button>
-            </div>
-            <textarea
-              className="dc-textarea"
-              rows={2}
-              value={v.mission}
-              onChange={(e) => handleVariantChange(v.id, 'mission', e.target.value)}
-              placeholder="Mission — what to watch for"
+        <Card className="flex flex-col gap-3">
+          <h2 className="text-xl font-semibold">Run</h2>
+          <p className="text-sm text-text-dim">
+            {images.length} images × {usableVariants.length} prompts × {selectedModels.length} models = {totalCalls} detection calls
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Concurrency" htmlFor="eval-concurrency">
+              <Select id="eval-concurrency" className="w-24" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))}>
+                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+              </Select>
+            </Field>
+            {!running && <Button id="eval-run-btn" disabled={blockers.length > 0} onClick={handleRun}>Run eval</Button>}
+            {running && <Button variant="outline" onClick={handleCancel}>Cancel</Button>}
+          </div>
+          {blockers.length > 0 && !running && <Status>Missing: {blockers.join(', ')}.</Status>}
+          {running && progress && (
+            <ProgressBar
+              phase="processing"
+              pct={progress.total ? (progress.done / progress.total) * 100 : null}
+              label={`Scanning ${progress.done}/${progress.total}`}
             />
-            <textarea
-              className="dc-textarea"
-              rows={1}
-              value={v.instruction}
-              onChange={(e) => handleVariantChange(v.id, 'instruction', e.target.value)}
-              placeholder="Optional extra instruction (advanced)"
-            />
-          </div>
-        ))}
-        <div className="btn-row">
-          <button className="dc-btn" onClick={handleAddVariant}>+ ADD VARIANT</button>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="section-label">MODELS ({selectedModels.length} SELECTED)</div>
-        <div className="btn-row">
-          <button className="dc-btn" disabled={fetchingModels} onClick={handleFetchModels}>
-            {fetchingModels ? 'FETCHING…' : 'FETCH MODELS'}
-          </button>
-        </div>
-        <div className="eval-model-list">
-          {visibleModels.map((m) => {
-            const { name, sub } = evalModelLabel(m);
-            return (
-              <label key={m} className="toggle-label eval-model-item">
-                <input
-                  type="checkbox"
-                  className="dc-checkbox"
-                  checked={selectedModels.includes(m)}
-                  onChange={() => toggleModel(m)}
-                />
-                <span>
-                  {name}
-                  {sub && <span className="eval-model-sub"> — {sub}</span>}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-        <div className="inline-row">
-          <input
-            className="dc-input"
-            value={manualModel}
-            onChange={(e) => setManualModel(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleAddManualModel(); }}
-            placeholder="Add model name manually"
-          />
-          <button className="dc-btn outline" onClick={handleAddManualModel}>ADD</button>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="section-label">RUN</div>
-        <p className="status-msg">
-          {images.length} images × {usableVariants.length} prompts × {selectedModels.length} models = {totalCalls} detection calls
-        </p>
-        <div className="inline-row">
-          <div className="form-group">
-            <label className="field-label">CONCURRENCY</label>
-            <select className="dc-select" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))}>
-              {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </div>
-          <div className="btn-row">
-            {!running && (
-              <button className="dc-btn" disabled={blockers.length > 0} onClick={handleRun}>RUN EVAL</button>
-            )}
-            {running && (
-              <button className="dc-btn outline" onClick={handleCancel}>CANCEL</button>
-            )}
-          </div>
-        </div>
-        {blockers.length > 0 && !running && (
-          <p className="status-msg">Missing: {blockers.join(', ')}.</p>
-        )}
-        {running && progress && (
-          <ProgressBar
-            phase="processing"
-            pct={progress.total ? (progress.done / progress.total) * 100 : null}
-            label={`SCANNING ${progress.done}/${progress.total}`}
-          />
-        )}
-      </div>
-
-      {runView && (
-        <div className="settings-section">
-          <div className="section-label">
-            RESULTS — {new Date(runView.at).toLocaleString()}{runView.cancelled ? ' (CANCELLED)' : ''}
-          </div>
-          <div className="eval-table-wrap">
-            <table className="eval-table">
-              <thead>
-                <tr>
-                  <th rowSpan={2}>IMAGE</th>
-                  {runView.models.map((m) => {
-                    const { name, sub } = evalModelLabel(m);
-                    return (
-                      <th key={m} colSpan={runView.variants.length} className="eval-model-head">
-                        {name}
-                        {sub && <span className="eval-model-sub"> · {sub}</span>}
-                      </th>
-                    );
-                  })}
-                </tr>
-                <tr>
-                  {runCombos.map((c) => (
-                    <th key={c.key} className="eval-variant-head" title={c.variant.mission}>{c.variant.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {runView.imageIds.map((imageId) => (
-                  <tr key={imageId}>
-                    <td className="eval-row-head">
-                      {imageById[imageId]
-                        ? <img src={imageById[imageId].dataUrl} alt="sample" className="eval-row-thumb" />
-                        : <span className="eval-row-missing">removed</span>}
-                      {expectedBadge(runView.expectedByImage?.[imageId] ?? null)}
-                    </td>
-                    {runCombos.map((c) => renderCell(imageId, c))}
-                  </tr>
-                ))}
-                {summary && (
-                  <>
-                    {renderAggRow('ACCURACY', (agg) =>
-                      agg?.labeled ? `${agg.labeled.correct}/${agg.labeled.n} (${Math.round(agg.labeled.accuracy * 100)}%)` : '—')}
-                    {renderAggRow('AVG LATENCY', (agg) =>
-                      agg?.meanLatencyMs != null ? `${(agg.meanLatencyMs / 1000).toFixed(1)}s` : '—')}
-                    {renderAggRow('TOKENS / COST', (agg) =>
-                      agg ? `${agg.totalTokens} · $${agg.estCost.toFixed(4)}${agg.errorCount ? ` · ${agg.errorCount} err` : ''}` : '—')}
-                  </>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {summary && (
-            <p className="status-msg">
-              Total: {summary.totals.totalTokens} tokens · ~${summary.totals.estCost.toFixed(4)}
-              {summary.totals.errorCount ? ` · ${summary.totals.errorCount} errors` : ''}
-            </p>
           )}
-          <div className="btn-row">
-            <button className="dc-btn outline" onClick={handleExport}>EXPORT JSON</button>
-          </div>
-        </div>
-      )}
+        </Card>
 
-      {statusMsg && (
-        <p className="status-msg" role="status" aria-live="polite">{statusMsg}</p>
-      )}
+        {runView && <ResultsTable run={runView} summary={summary} imageById={imageById} onExport={handleExport} />}
+
+        <Status id="eval-status" tone="warn" className="px-1">{statusMsg}</Status>
+      </div>
     </div>
   );
 }

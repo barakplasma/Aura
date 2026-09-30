@@ -196,13 +196,12 @@ usual interruptions. What it recovers from depends on the platform:
 src/
   main.jsx                Entry point (imports monitoring.js first)
   App.jsx                 Screen routing, settings, demo mode, camera stage mode
-  tailwind.css            Design tokens + utilities (built to assets/ui.css)
-  legacy.css              Old `dc-*` styles for screens not yet redesigned
+  tailwind.css            The one stylesheet: tokens, reset, utilities (built to assets/ui.css)
   monitoring.js           Bugsink (Sentry-compatible) error tracking
   components/             Stage (always-mounted video/canvas), AppShell, VerdictCard, ...
   ui/                     shadcn-style primitives (Tailwind + Radix)
-  screens/                Watch, Setup, Lab, History, Optimize, Eval
-  setup/                  Setup cards: engine wizard, cadence, delivery, camera, advanced
+  screens/                Watch, Setup, Alerts, Lab (Optimize = Examples, Eval = Evaluate)
+  setup/ alerts/ lab/     Parts of Setup, the Alerts timeline, and the Lab's Evaluate tab
   hooks/useMonitor.js     Camera capture + scan loop + alert delivery + telemetry
   workers/ml.worker.js    Runs the in-browser VLM — the ONLY file importing
                           @huggingface/transformers (kept out of the main bundle)
@@ -246,7 +245,7 @@ Full details are in [CLAUDE.md](./CLAUDE.md) — the short version:
   model needs an `if (modelId.includes(...))` in `ml.worker.js`, the descriptor is
   missing a field.
 - After changing an engine, add or extend a test in `test/`.
-- Edit `src/tailwind.css`, `src/legacy.css` and `scripts/sw-template.js` — `public/sw.js` and
+- Edit `src/tailwind.css` and `scripts/sw-template.js` — `public/sw.js` and
   `public/assets/` are generated.
 - Don't commit secrets. API keys stay in the user's `localStorage`.
 

@@ -42,7 +42,7 @@ export function relativeTime(then, now) {
 // The result of the last scan, as structure rather than a sentence: state,
 // headline, confidence against the threshold, engine degradation, why, what's
 // next. While idle the same card is the empty state.
-export default function VerdictCard({ verdict, running, progress, recent, modelLabel, onDemo, onFix }) {
+export default function VerdictCard({ verdict, running, progress, recent, modelLabel, onDemo, onFix, onOpenEntry }) {
   const [sheet, setSheet] = useState(false);
   const now = useNow(running);
   const meta = STATE[verdict.state] || STATE.idle;
@@ -143,7 +143,19 @@ export default function VerdictCard({ verdict, running, progress, recent, modelL
         <div className="flex items-center gap-2" aria-label="Last scans">
           <span className="text-xs text-text-dim">Last {recent.length}</span>
           {recent.map((r) => (
-            <span key={r.at} className={cn('size-3 rounded-full', RECENT_DOT[r.state])} title={r.state} />
+            r.entryId != null ? (
+              <button
+                key={r.at}
+                type="button"
+                className="grid size-11 place-items-center"
+                aria-label={`Open this ${r.state === 'alert' ? 'alert' : 'scan'} in Alerts`}
+                onClick={() => onOpenEntry(r.entryId)}
+              >
+                <span className={cn('size-3 rounded-full', RECENT_DOT[r.state])} />
+              </button>
+            ) : (
+              <span key={r.at} className={cn('size-3 rounded-full', RECENT_DOT[r.state])} title={r.state} />
+            )
           ))}
         </div>
       )}

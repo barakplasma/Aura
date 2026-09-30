@@ -111,3 +111,9 @@ test('the budget-mode notice is degraded, with a note the sheet can show', () =>
   assert.equal(v.note.kind, 'budget');
   assert.match(v.text, /^Budget mode: provider returns no token usage/);
 });
+
+test('a scan verdict carries the history entry it produced, or null', () => {
+  assert.equal(fromScan({ triggered: true, message: 'm', reason: 'r' }, { entryId: 42, now }).entryId, 42);
+  assert.equal(fromScan({ triggered: false, reason: 'r' }, { now }).entryId, null);
+  assert.equal(verdicts.stopped(now).entryId, null);
+});

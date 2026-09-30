@@ -13,7 +13,7 @@ export default function SetupScreen({
   pricing, pricingOverride, onSetPricingOverride, onResetPricingOverride,
 }) {
   return (
-    <div data-ui="" className="min-h-0 flex-1 overflow-y-auto bg-bg-0 p-3">
+    <div className="min-h-0 flex-1 overflow-y-auto bg-bg-0 p-3">
       <div className="mx-auto flex max-w-2xl flex-col gap-3">
         <h1 className="px-1 text-3xl font-semibold">Setup</h1>
         <EngineCard s={s} set={set} captureFrame={captureFrame} />

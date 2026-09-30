@@ -1,13 +1,12 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { cn } from './cn.js';
 
-// Bottom sheet below 700 px, centred dialog above. Radix portals to <body>,
-// outside the [data-ui] scope, so the content re-establishes it.
+// Bottom sheet below 700 px, centred dialog above.
 export function Sheet({ open, onOpenChange, title, description, children }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <div data-ui="">
+        <>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-bg-0/70" />
           <Dialog.Content
             className={cn(
@@ -22,7 +21,7 @@ export function Sheet({ open, onOpenChange, title, description, children }) {
             </Dialog.Description>
             {children}
           </Dialog.Content>
-        </div>
+        </>
       </Dialog.Portal>
     </Dialog.Root>
   );

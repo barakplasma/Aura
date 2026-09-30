@@ -14,6 +14,10 @@
 //   node scripts/dev-screens.mjs
 //   STRICT=1 node scripts/dev-screens.mjs     # fail when ARM is off screen
 //   OUT=/some/dir node scripts/dev-screens.mjs
+//   BASE_URL=https://barakplasma.github.io/Aura/ OUT=/tmp/live node scripts/dev-screens.mjs
+//       # drive a deployed build instead of public/: same layout checks, plus
+//       # every asset request must succeed and the service worker must precache
+//       # the stylesheets (a sub-path deploy is where asset URLs break)
 
 import http from "node:http";
 import { mkdirSync, mkdtempSync, existsSync, writeFileSync } from "node:fs";
@@ -55,11 +59,13 @@ function fakeVideo(dir) {
 }
 
 async function main() {
-  if (!existsSync(path.join(PUBLIC, "assets", "app.js"))) throw new Error("run `npm run build` first");
+  if (!process.env.BASE_URL && !existsSync(path.join(PUBLIC, "assets", "app.js"))) throw new Error("run `npm run build` first");
   mkdirSync(OUT, { recursive: true });
   const work = mkdtempSync(path.join(tmpdir(), "aura-screens-"));
-  const server = await serve();
-  const origin = `http://127.0.0.1:${server.address().port}`;
+  const BASE = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/?$/, "/") : null;
+  const server = BASE ? null : await serve();
+  const origin = BASE ? BASE.slice(0, -1) : `http://127.0.0.1:${server.address().port}`;
+  const failedRequests = [];
   const { chrome, port } = launchChrome({ profile: path.join(work, "profile"), video: fakeVideo(work) });
 
   const failures = [];
@@ -71,7 +77,19 @@ async function main() {
     // Any uncaught exception in any screen is a failure: the branches a
     // screenshot doesn't reach (an engine's fields, a closed fold) would
     // otherwise only break in someone's hands.
+    if (BASE) await page("Network.enable");
+    const urls = new Map();
     cdp.on((msg) => {
+      if (msg.method === "Network.requestWillBeSent") urls.set(msg.params.requestId, msg.params.request.url);
+      // Only the app's own requests: the error-tracking beacon (Bugsink) and
+      // other third parties aren't what a deploy can break.
+      const mine = (url) => url.startsWith(origin + "/");
+      if (msg.method === "Network.responseReceived" && msg.params.response.status >= 400 && mine(msg.params.response.url)) {
+        failedRequests.push(`${msg.params.response.status} ${msg.params.response.url}`);
+      }
+      if (msg.method === "Network.loadingFailed" && !msg.params.canceled && mine(urls.get(msg.params.requestId) || "")) {
+        failedRequests.push(`failed (${msg.params.errorText}) ${urls.get(msg.params.requestId)}`);
+      }
       if (msg.method === "Runtime.exceptionThrown") {
         const d = msg.params.exceptionDetails;
         failures.push(`uncaught exception: ${(d.exception?.description || d.text || "").split("\n")[0].slice(0, 200)}`);
@@ -82,14 +100,16 @@ async function main() {
     await page("Page.addScriptToEvaluateOnNewDocument", {
       source: `localStorage.setItem('aura.baseUrl', JSON.stringify('http://127.0.0.1:1/v1'));
                localStorage.setItem('aura.model', JSON.stringify('demo-model'));
-               localStorage.setItem('aura.mission', JSON.stringify('a person at the front door'));`,
+               localStorage.setItem('aura.mission', JSON.stringify('a person at the front door'));
+               localStorage.setItem('aura.scanEveryValue', JSON.stringify(1));
+               localStorage.setItem('aura.scanEveryUnit', JSON.stringify('s'));`,
     });
 
     for (const layout of LAYOUTS) {
       await page("Emulation.setDeviceMetricsOverride", {
         width: layout.width, height: layout.height, deviceScaleFactor: 1, mobile: layout.mobile,
       });
-      await page("Page.navigate", { url: origin + "/index.html" });
+      await page("Page.navigate", { url: BASE || origin + "/index.html" });
       await sleep(2500);
       for (const screen of SCREENS) {
         // Both navs exist in the DOM; click the one that is on screen (Lab is
@@ -173,14 +193,92 @@ async function main() {
         if (armed.pressed !== "true") failures.push(`${layout.name}: demo did not arm`);
         if (!armed.onScreen) failures.push(`${layout.name}: ARM off screen while armed`);
         if (!["watching", "alert", "degraded"].includes(armed.state)) failures.push(`${layout.name}: verdict is "${armed.state}" after a demo scan`);
+
+        // Review flows. The demo fires every third scan, so at a 1 s cadence
+        // the timeline has entries by now; the monitor is still armed.
+        await sleep(5000);
+        const nav = (id) => evaluate(`[...document.querySelectorAll('[data-nav="${id}"]')].find((n) => n.offsetParent)?.click()`);
+        const shot = async (name) => {
+          const r = await page("Page.captureScreenshot", { format: "png" });
+          writeFileSync(path.join(OUT, `${layout.name}-${name}.png`), Buffer.from(r.data, "base64"));
+        };
+        const clickText = (text, sel = "button") => evaluate(`(() => { const b = [...document.querySelectorAll('${sel}')].find((x) => x.textContent.trim().startsWith(${JSON.stringify(text)}) && x.offsetParent); if (!b) return false; b.click(); return true; })()`);
+        const examples = () => evaluate(`JSON.parse(localStorage.getItem('aura.training.examples') || '[]')`);
+
+        // A recent-scan dot on Watch opens its entry in Alerts.
+        const dot = await evaluate(`(() => { const b = document.querySelector('button[aria-label^="Open this"]'); if (!b) return false; b.click(); return true; })()`);
+        await sleep(600);
+        const landed = await evaluate(`!!document.querySelector('[data-nav="alerts"][aria-current="page"]')`);
+        if (!dot) failures.push(`${layout.name}: no recent-scan dot links to an entry`);
+        else if (!landed) failures.push(`${layout.name}: a recent-scan dot did not open Alerts`);
+
+        await nav("alerts");
+        await sleep(600);
+        const rows = await evaluate(`({ alerts: document.querySelectorAll('[data-entry="alert"]').length, preview: !!document.querySelector('aside[aria-label="Selected frame"]') })`);
+        await shot("alerts-populated");
+        console.log(`${layout.name}/alerts: ${rows.alerts} alert row(s)${layout.name === "desktop" ? `, preview ${rows.preview ? "shown" : "MISSING"}` : ""}`);
+        if (!rows.alerts) failures.push(`${layout.name}: the Alerts timeline is empty after demo alerts`);
+        if (layout.name === "desktop" && !rows.preview) failures.push("desktop: no frame preview beside the timeline");
+
+        if (layout.name === "desktop") {
+          // Marking from the timeline saves exactly the example it always did.
+          const before = (await examples()).length;
+          const marked = await clickText("False positive");
+          await sleep(400);
+          const after = await examples();
+          const last = after.at(-1);
+          if (!marked) failures.push("alerts: no False positive button");
+          else if (after.length !== before + 1 || last.type !== "detection" || last.triggered !== false || last.confidence !== 0
+            || last.reason !== "Operator marked this alert as a false positive.") {
+            failures.push(`alerts: marking a false positive saved ${JSON.stringify(last)}`);
+          }
+
+          // Send to Lab opens the Examples form pre-filled and saves nothing.
+          const sent = await clickText("Send to Lab");
+          await sleep(1500);
+          const form = await evaluate(`({ mission: document.querySelector('#train-mission')?.value, scene: document.querySelector('#train-scene')?.value })`);
+          await shot("lab-prefilled");
+          console.log(`desktop/lab prefill: mission "${form.mission}" · scene "${(form.scene || "").slice(0, 40)}"`);
+          if (!sent) failures.push("alerts: no Send to Lab button");
+          else if (form.mission !== "a person at the front door" || !form.scene) failures.push(`lab: Send to Lab did not prefill the form (${JSON.stringify(form)})`);
+          if ((await examples()).length !== after.length) failures.push("lab: Send to Lab saved an example by itself");
+
+          // Evaluate: the model list is grouped by engine.
+          await clickText("Evaluate", '[role="tab"]');
+          await sleep(800);
+          await shot("lab-evaluate");
+          const groups = await evaluate(`[...document.querySelectorAll('fieldset legend')].map((l) => l.textContent.trim())`);
+          console.log(`desktop/lab evaluate: model groups ${JSON.stringify(groups)}`);
+          if (!groups.includes("Provider")) failures.push("lab: Evaluate shows no Provider model group");
+        }
       } else {
         failures.push(`${layout.name}: no Try demo button on Watch`);
       }
     }
+    if (BASE) {
+      // What a deployed build has to get right that a local one can hide: the
+      // service worker registers under the sub-path and precaches the shell
+      // (including the Tailwind sheet), and no asset request failed.
+      const sw = await evaluate(`(async () => {
+        const reg = await navigator.serviceWorker.getRegistration();
+        const names = await caches.keys();
+        const urls = [];
+        for (const n of names) for (const r of await (await caches.open(n)).keys()) urls.push(new URL(r.url).pathname);
+        return { scope: reg && reg.scope, state: reg && (reg.active || reg.waiting || reg.installing)?.state, urls };
+      })()`);
+      console.log(`service worker: scope ${sw.scope} · ${sw.state} · ${sw.urls.length} cached`);
+      if (!sw.scope) failures.push("live: no service worker registered");
+      for (const need of ["/assets/app.js", "/assets/ui.css"]) {
+        if (!sw.urls.some((u) => u.endsWith(need))) failures.push(`live: ${need} is not precached`);
+      }
+      if (sw.urls.some((u) => u.endsWith("/aura.css"))) failures.push("live: the removed aura.css is still precached");
+      for (const f of failedRequests) failures.push(`live request: ${f}`);
+      console.log(`network: ${failedRequests.length} failed request(s)`);
+    }
     cdp.close();
   } finally {
     chrome.kill();
-    server.close();
+    server?.close();
   }
   console.log(`screenshots → ${path.relative(ROOT, OUT)}/`);
   if (failures.length) {

@@ -9,14 +9,14 @@ import VerdictCard from '../components/VerdictCard.jsx';
 // to the bottom outside the scroll area.
 export default function WatchScreen({
   verdict, recent, running, progress, telemetry, engine, modelLabel, providerReady, demoMode,
-  onToggle, onDemo, onOpenSetup, onOpenLab, mission, ...missionProps
+  onToggle, onDemo, onOpenSetup, onOpenLab, onOpenEntry, mission, ...missionProps
 }) {
   // Only while the object gate is actually running: without it there is
   // nothing here the verdict doesn't already say.
   const gateActive = running && telemetry?.gate && telemetry.gate !== '—';
   const setupNeeded = !providerReady && !demoMode && !running;
   return (
-    <section data-ui="" className="flex min-h-0 flex-col bg-bg-0">
+    <section className="flex min-h-0 flex-col bg-bg-0">
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
         {setupNeeded && (
           <Card data-setup-needed="">
@@ -41,6 +41,7 @@ export default function WatchScreen({
           modelLabel={modelLabel}
           onDemo={onDemo}
           onFix={onOpenSetup}
+          onOpenEntry={onOpenEntry}
         />
         {gateActive && (
           <Card className="text-sm" data-gate-notice="">

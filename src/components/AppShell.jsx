@@ -46,7 +46,7 @@ export default function AppShell({ screen, onNavigate, dotClass, children }) {
   // Lab has no phone tab: it highlights Setup, which links to it.
   const phoneActive = screen === 'lab' ? 'setup' : screen;
   return (
-    <div data-ui="" className="flex min-h-0 flex-1 bg-bg-0">
+    <div className="flex min-h-0 flex-1 bg-bg-0">
       <nav className="hidden w-18 shrink-0 flex-col border-r border-border bg-bg-1 pt-2 xl:flex" aria-label="Main">
         {DESTINATIONS.map((d) => (
           <NavButton key={d.id} dest={d} rail active={screen === d.id} onSelect={onNavigate} />

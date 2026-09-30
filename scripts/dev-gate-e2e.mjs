@@ -383,6 +383,37 @@ async function main() {
   console.log(`frame test: ${frameTest || "(no result)"}`);
   if (ENGINE === "decision") console.log(`decision scans ${scans.length}, polls ${polls.length}`);
 
+  // Lab > Evaluate: a real matrix (one frame, one prompt, the fake provider's
+  // model) run through the same scan function, and its result table read back.
+  // Setup carries the Lab link below the desktop rail's width, which is what
+  // this window is.
+  const clickText = (text, sel = "button") => evaluate(`(() => { const b = [...document.querySelectorAll('${sel}')].find((x) => x.textContent.trim().startsWith(${JSON.stringify(text)}) && x.offsetParent); if (!b) return false; b.click(); return true; })()`);
+  const providerScansBefore = scans.length;
+  await clickText("Lab");
+  await sleep(800);
+  await clickText("Evaluate", '[role="tab"]');
+  await sleep(800);
+  await clickText("Capture frame");
+  await sleep(800);
+  await clickText("Add variant");
+  await sleep(300);
+  // The variant starts from the live mission; label the frame "expect clear"
+  // by cycling its badge (unlabeled -> trigger -> clear).
+  await clickText("Unlabeled");
+  await sleep(200);
+  await clickText("Expect trigger");
+  await sleep(200);
+  await press("#eval-model-fake-vlm");
+  await sleep(300);
+  await press("#eval-run-btn");
+  let evalTable = "";
+  for (let i = 0; i < 60 && !/Accuracy/.test(evalTable); i++) {
+    await sleep(1000);
+    evalTable = await evaluate(`document.querySelector('table')?.innerText.replace(/\\s+/g, ' ').trim() || ''`);
+  }
+  const evalScans = scans.length - providerScansBefore;
+  console.log(`eval: ${evalTable ? evalTable.slice(0, 160) : "(no table)"}`);
+
   cdp.close();
   chrome.kill("SIGKILL");
   server.close();
@@ -409,6 +440,7 @@ async function main() {
     ["the empty room reads as empty", sawEmpty],
     ["the VLM ran (at least the baseline scan)", vlmCalls >= 1],
     ["Setup's Test on current frame answers on the live frame", /^(Clear|Would alert)/.test(frameTest)],
+    ["Lab > Evaluate runs a matrix against the provider and tabulates it", /Accuracy/.test(evalTable) && /(Trigger|Clear) \d+/.test(evalTable)],
     ["Settings renders the gate block (toggle on, WAKE ON kinds listed)",
       Boolean(settingsRender?.toggle && settingsRender?.wakeOn)],
     ...(ENGINE === "decision"

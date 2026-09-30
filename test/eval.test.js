@@ -295,3 +295,31 @@ test("runEvalMatrix preserves browser-engine provenance fields when present", as
   assert.equal(provider[0].device, undefined);
   assert.equal(provider[0].modelLoadMs, undefined);
 });
+
+// --- model grouping (the Lab's Evaluate tab) --------------------------------
+
+import { groupEvalModels, evalModelEngine, BROWSER_MODEL_PREFIX, CHROME_AI_MODEL_ID, DECISION_MODEL_PREFIX } from '../lib/eval.js';
+
+test('evalModelEngine reads the engine from the model id', () => {
+  assert.equal(evalModelEngine('gemma-4-31b'), 'provider');
+  assert.equal(evalModelEngine(`${BROWSER_MODEL_PREFIX}smolvlm2-256m`), 'browser');
+  assert.equal(evalModelEngine(CHROME_AI_MODEL_ID), 'chrome-ai');
+  assert.equal(evalModelEngine(`${DECISION_MODEL_PREFIX}glance-qwen3-vl-4b`), 'decision');
+});
+
+test('groupEvalModels groups by engine in a fixed order, keeping each group in order', () => {
+  const ids = ['decision:d1', 'gpt-x', 'browser:b1', 'chrome-ai:builtin', 'llama-y', 'browser:b2'];
+  const groups = groupEvalModels(ids);
+  assert.deepEqual(groups.map((g) => g.engine), ['provider', 'browser', 'chrome-ai', 'decision']);
+  assert.deepEqual(groups[0].ids, ['gpt-x', 'llama-y']);
+  assert.deepEqual(groups[1].ids, ['browser:b1', 'browser:b2']);
+  assert.equal(groups[1].label, 'In-browser (Transformers.js)');
+});
+
+test('groupEvalModels omits empty groups and never drops an id', () => {
+  assert.deepEqual(groupEvalModels([]), []);
+  const ids = ['a', 'browser:x', 'decision:y'];
+  const groups = groupEvalModels(ids);
+  assert.deepEqual(groups.map((g) => g.engine), ['provider', 'browser', 'decision']);
+  assert.equal(groups.flatMap((g) => g.ids).length, ids.length);
+});

@@ -1,3 +1,5 @@
+import { cn } from '../ui/cn.js';
+
 // A thin progress/countdown bar for the scan cycle.
 //   phase "processing" — amber, filling toward the model's estimated finish
 //   phase "waiting"    — green, counting down to the next capture
@@ -6,18 +8,25 @@
 export default function ProgressBar({ phase, pct, label }) {
   const known = Number.isFinite(pct);
   return (
-    <div className="scan-progress">
+    <div className="flex flex-col gap-1">
       <div
-        className={`scan-progress-track ${phase}${known ? '' : ' indeterminate'}`}
+        className="relative h-1.5 overflow-hidden rounded-full bg-bg-2"
         role="progressbar"
         aria-valuenow={known ? Math.round(pct) : undefined}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={label || 'Scan progress'}
       >
-        <div className="scan-progress-fill" style={known ? { width: `${pct}%` } : undefined} />
+        <div
+          className={cn(
+            'h-full rounded-full',
+            phase === 'processing' ? 'bg-warn' : 'bg-ok',
+            known ? 'transition-[width]' : 'w-2/5 animate-sweep',
+          )}
+          style={known ? { width: `${pct}%` } : undefined}
+        />
       </div>
-      {label && <span className="scan-progress-label">{label}</span>}
+      {label && <span className="text-xs text-text-dim">{label}</span>}
     </div>
   );
 }
@@ -28,17 +37,17 @@ export function progressLabel(progress) {
   const secs = Number.isFinite(progress.etaMs) ? (progress.etaMs / 1000).toFixed(1) : null;
   if (progress.phase === 'processing') {
     const labels = {
-      loading: 'LOADING MODEL',
-      detecting: 'DETECTING',
-      announcing: 'GENERATING ANNOUNCEMENT',
-      webhook: 'GENERATING WEBHOOK',
+      loading: 'Loading model',
+      detecting: 'Detecting',
+      announcing: 'Generating announcement',
+      webhook: 'Generating webhook',
     };
-    const label = labels[progress.stage] || 'PROCESSING';
+    const label = labels[progress.stage] || 'Processing';
     if (progress.overrun) {
       const elapsed = (progress.elapsedMs / 1000).toFixed(1);
-      return `${label} — TAKING LONGER THAN USUAL · ${elapsed}s ELAPSED`;
+      return `${label} — taking longer than usual · ${elapsed}s elapsed`;
     }
-    return secs != null ? `${label} — ~${secs}s LEFT` : `${label}…`;
+    return secs != null ? `${label} — ~${secs}s left` : `${label}…`;
   }
-  return secs != null ? `NEXT FRAME IN ${secs}s` : 'NEXT FRAME…';
+  return secs != null ? `Next frame in ${secs}s` : 'Next frame…';
 }
