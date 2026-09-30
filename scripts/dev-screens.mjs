@@ -81,11 +81,14 @@ async function main() {
     const urls = new Map();
     cdp.on((msg) => {
       if (msg.method === "Network.requestWillBeSent") urls.set(msg.params.requestId, msg.params.request.url);
-      if (msg.method === "Network.responseReceived" && msg.params.response.status >= 400) {
+      // Only the app's own requests: the error-tracking beacon (Bugsink) and
+      // other third parties aren't what a deploy can break.
+      const mine = (url) => url.startsWith(origin + "/");
+      if (msg.method === "Network.responseReceived" && msg.params.response.status >= 400 && mine(msg.params.response.url)) {
         failedRequests.push(`${msg.params.response.status} ${msg.params.response.url}`);
       }
-      if (msg.method === "Network.loadingFailed" && !msg.params.canceled) {
-        failedRequests.push(`failed (${msg.params.errorText}) ${urls.get(msg.params.requestId) || msg.params.requestId}`);
+      if (msg.method === "Network.loadingFailed" && !msg.params.canceled && mine(urls.get(msg.params.requestId) || "")) {
+        failedRequests.push(`failed (${msg.params.errorText}) ${urls.get(msg.params.requestId)}`);
       }
       if (msg.method === "Runtime.exceptionThrown") {
         const d = msg.params.exceptionDetails;
