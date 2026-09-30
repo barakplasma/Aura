@@ -30,23 +30,37 @@ camera frame → 640x480 JPEG → detection call (user's provider + model)
 ## Architecture
 
 React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → minified,
-code-split ESM bundles in `public/assets/` (with linked sourcemaps). `src/aura.css`
-is copied to `public/aura.css` by the build — edit the `src/` copy only.
+code-split ESM bundles in `public/assets/` (with linked sourcemaps). There is no
+component framework: new UI is Tailwind v4 + shadcn-style components (Radix
+primitives, `class-variance-authority`, `lucide-react`) in `src/ui/` and
+`src/components/`. Two stylesheets: `src/tailwind.css` (tokens + utilities, built by
+the Tailwind CLI to `assets/ui.css`) and `src/legacy.css` (esbuild → `assets/app.css`),
+which only serves the `dc-*` / `section-label` / `form-group` vocabulary that
+Alerts and Lab still use until Phase 3 of `docs/PRD-ux-redesign.md`, plus the page base.
+Tailwind's reset is not imported (it would restyle those screens), so `[data-ui]`
+re-sets input/select/textarea colour and heading/paragraph margins itself. Tailwind's
+utilities are deliberately unlayered so they beat any unlayered legacy rule. New
+components carry `data-ui`, which scopes the few base rules they need.
 
 | Path                                  | Role                                                                                                                                                                |
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/App.jsx`                         | Screen routing, settings (localStorage), demo-mode state, camera stage mode                                                                                         |
-| `src/components/MonitorStage.jsx`     | Always-mounted `<video>`/`<canvas>` stage — full / collapsed / PiP / parked modes so scanning survives tab switches                                                 |
-| `src/screens/`                        | MissionScreen, MonitorScreen (controls panel), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded), SettingsScreen                                             |
+| `src/App.jsx`                         | Screen routing (`watch`/`alerts`/`setup`/`lab`), settings (localStorage), demo-mode state, camera stage mode                                                        |
+| `src/components/Stage.jsx`            | Always-mounted `<video>`/`<canvas>`, first child of `<main>` — full / collapsed / PiP / parked modes so scanning survives tab switches                              |
+| `src/components/AppShell.jsx`         | Header, tab bar (phone) / rail (≥1100 px), and the `<main>` grid that lays stage and panel side by side from 700 px                                                 |
+| `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                 |
+| `src/screens/`                        | WatchScreen (verdict + mission + arm bar), SetupScreen, LabScreen (Examples/Evaluate), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded)                     |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
-| `src/aura.css`                        | Dark "tactical" theme + responsive layout (portrait/landscape breakpoints)                                                                                          |
+| `src/legacy.css`                      | Page base + the old `dc-*` vocabulary, for Alerts and Lab until Phase 3                                                                                             |
+| `src/tailwind.css`                    | Design tokens (`@theme`) + Tailwind utilities; scoped base rules under `[data-ui]`                                                                                  |
 | `src/monitoring.js`                   | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                                                |
 | `public/index.html`                   | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                                                   |
 | `public/feedback.js`                  | Web Speech + Web Vibration                                                                                                                                          |
 | `lib/aura.js`                         | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models; `runProviderLeg()` announces for DECISION                     |
 | `lib/decision.js`                     | DECISION engine: `scanDecision()`, mission → question, one pure `toRequest`/`fromResponse` adapter per wire dialect, relay templates, polling, provider fallback    |
 | `lib/decision-models.js`              | `DECISION_MODELS` table (dialect, pinned Replicate version, per-second price) + relay presets — pure                                                                |
-| `src/components/DecisionSettings.jsx` | DECISION card in Settings: model row, relay/server URL, the user's own key, announcer, fallback                                                                     |
+| `src/setup/`                          | Setup cards: EngineCard (choose, connect, test), Provider/Browser/DecisionFields, Cadence, Delivery, Camera, Advanced (folds with value summaries)                  |
+| `lib/frame-test.js`                   | "Test on current frame" for every engine: one threshold-0 detection pass via injected scan functions; DECISION runs with no fallback                                |
+| `lib/verdict.js`                      | Pure result model: `fromScan()` + `verdicts.*` build every status the monitor shows, as a structured verdict plus its legacy one-line text                          |
 | `lib/monitor.js`                      | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)                                                    |
 | `lib/browser-engine.js`               | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                                                               |
 | `lib/browser-models.js`               | `BROWSER_MODELS` table + `pickBrowserModel()` / `probeBrowserEnv()` — pure, Node-testable, no Worker or DOM                                                         |
@@ -98,6 +112,7 @@ npm run dev               # npx serve public → http://localhost:3000
 npm test                  # node --test
 npm run lint              # stylelint + jscpd + djlint (MegaLinter's checks)
 npm run deploy            # Build + gh-pages -d public
+node scripts/dev-screens.mjs   # screenshots of every screen × 3 layouts → docs/screens/
 ```
 
 ## Provider format
@@ -171,7 +186,7 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - There is no silent mock: a misconfigured or unreachable provider throws. A blank
   API key is *not* misconfiguration — it's the normal local-server setup, and the
   request goes out for real. Demo mode is the only simulated path: explicit opt-in
-  (TRY DEMO on the Monitor screen), isolated in `lib/demo.js`, clearly bannered
+  (TRY DEMO on the Watch screen), isolated in `lib/demo.js`, clearly bannered
   while active, and never fires webhooks.
 - Don't commit secrets. The API key stays in the user's localStorage.
 - `public/sw.js` is **generated** by `npm run build` (and gitignored — it isn't in

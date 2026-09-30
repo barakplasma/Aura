@@ -1,20 +1,21 @@
 import { useState, useRef, lazy, Suspense } from 'react';
-import { IonApp, IonToast } from '@ionic/react';
 import { useLocalStorage } from '@uidotdev/usehooks';
 import { useMonitor } from './hooks/useMonitor.js';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.js';
-import { DEFAULT_BROWSER_MODEL, DEFAULT_DETECTOR_MODEL } from '../lib/browser-engine.js';
+import { useRecentVerdicts } from './hooks/useRecentVerdicts.js';
+import { BROWSER_MODELS, DEFAULT_BROWSER_MODEL, DEFAULT_DETECTOR_MODEL } from '../lib/browser-engine.js';
 import { pricingKey, resolvePricing, resolveDecisionPricing } from '../lib/pricing.js';
 import { isEngineConfigured } from '../lib/providers.js';
 import { DEFAULT_DECISION_MODEL, DEFAULT_RELAY_URL, getDecisionModel } from '../lib/decision-models.js';
 import { resumeWindowOpen } from '../lib/keepalive.js';
-import TopBar from './components/TopBar.jsx';
-import NavRail from './components/NavRail.jsx';
-import MonitorStage from './components/MonitorStage.jsx';
-import MissionScreen from './screens/MissionScreen.jsx';
-import MonitorScreen from './screens/MonitorScreen.jsx';
+import AppShell from './components/AppShell.jsx';
+import Stage from './components/Stage.jsx';
+import WatchScreen from './screens/WatchScreen.jsx';
+import LabScreen from './screens/LabScreen.jsx';
+import { Button } from './ui/button.jsx';
+import { Toast } from './ui/toast.jsx';
 import HistoryScreen from './screens/HistoryScreen.jsx';
-import SettingsScreen from './screens/SettingsScreen.jsx';
+import SetupScreen from './screens/SetupScreen.jsx';
 
 // Lazy — keeps the optimizer screen (and, transitively, @ax-llm/ax) out of
 // the initial bundle.
@@ -27,7 +28,9 @@ const EvalScreen = lazy(() => import('./screens/EvalScreen.jsx'));
 const RESUME_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 export default function App() {
-  const [screen, setScreen] = useState('monitor');
+  // 'watch' | 'alerts' | 'setup' | 'lab' — docs/PRD-ux-redesign.md.
+  const [screen, setScreen] = useState('watch');
+  const [labTab, setLabTab] = useState('tune');
   // Session-only on purpose: a reload always exits demo mode.
   const [demoMode, setDemoMode] = useState(false);
   // Dismissing the resume banner is session-only too — it only needs to stop
@@ -39,8 +42,6 @@ export default function App() {
   // next reload (or the next visit) offers it again.
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useLocalStorage('aura.previewCollapsed', false);
-  // Transient provider messages (model fetch results/failures) shown in Settings.
-  const [statusMsg, setStatusMsg] = useState('');
 
   // Settings — persisted via localStorage (JSON-serialized by @uidotdev/usehooks)
   const [baseUrl, setBaseUrl] = useLocalStorage('aura.baseUrl', 'https://api.cerebras.ai/v1');
@@ -62,6 +63,8 @@ export default function App() {
   // Re-run a failed decision on the PROVIDER engine (only when one is set up).
   const [decisionFallback, setDecisionFallback] = useLocalStorage('aura.decisionFallback', true);
   const [mission, setMission] = useLocalStorage('aura.mission', '');
+  // Minimum confidence for an alert to fire. 0 = anything the model reports.
+  const [threshold, setThreshold] = useLocalStorage('aura.threshold', 0);
   const [action, setAction] = useLocalStorage('aura.action', '');
   const [scanMode, setScanMode] = useLocalStorage('aura.scanMode', 'interval');
   const [scanEveryValue, setScanEveryValue] = useLocalStorage('aura.scanEveryValue', 5);
@@ -129,7 +132,7 @@ export default function App() {
     baseUrl, apiKey, model, mission, action,
     engine, browserModel, browserRuntime,
     decisionModel, decisionUrl, decisionKey, decisionAnnouncer, decisionFallback,
-    threshold: 0, scanMode, scanEvery, budgetPerHour, networkMbPerHour, pricing,
+    threshold, scanMode, scanEvery, budgetPerHour, networkMbPerHour, pricing,
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
     speech, haptics, demo: demoMode,
@@ -141,7 +144,8 @@ export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
-  const { running, status, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, clearHistory, captureFrame, start, stop, switchCamera, wakeLockHeld } = useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn });
+  const { running, verdict, dotClass, flashActive, telemetry, alerts, missed, progress, stats, markedIds, markExample, clearHistory, captureFrame, start, stop, switchCamera, wakeLockHeld } = useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScreenOn });
+  const recent = useRecentVerdicts(verdict);
   const { updateAvailable, reloadToUpdate } = useServiceWorkerUpdate();
 
   // Wraps the hook's start()/stop() so an ordinary ARM/DISARM also persists
@@ -166,11 +170,6 @@ export default function App() {
   function handleToggle() {
     if (running) handleStop();
     else handleStart();
-  }
-
-  async function handleDeployAndArm() {
-    setScreen('monitor');
-    if (!running) await handleStart();
   }
 
   function handleResume() {
@@ -200,13 +199,6 @@ export default function App() {
     setDemoMode(false);
   }
 
-  function handleStatusMsg(msg) {
-    // Surfaced in the Settings PROVIDER section — a failed model fetch against
-    // a local server (CORS, server down) is otherwise invisible to the user.
-    console.info('[aura]', msg);
-    setStatusMsg(msg);
-  }
-
   // Eval-screen frame capture — only meaningful while the video element has
   // a live frame (same readiness gate the scan loop uses).
   function handleCaptureEvalFrame() {
@@ -226,10 +218,28 @@ export default function App() {
     switchCamera();
   }
 
-  // How the always-mounted camera stage presents itself (see MonitorStage).
-  const stageMode = screen === 'monitor'
-    ? (previewCollapsed ? 'stage-collapsed' : 'stage-full')
-    : (running ? 'stage-pip' : 'stage-parked');
+  // How the always-mounted camera stage presents itself (see Stage).
+  const stageMode = screen === 'watch'
+    ? (previewCollapsed ? 'collapsed' : 'full')
+    : (running ? 'pip' : 'parked');
+
+  // Which model answers, for the verdict card's engine chip.
+  const modelLabel = engine === 'browser'
+    ? BROWSER_MODELS[browserModel]?.label
+    : engine === 'decision'
+      ? getDecisionModel(decisionModel)?.label
+      : model;
+
+  const optimizeNote = (
+    <div className="screen">
+      <p className="status-msg">
+        Prompt optimization needs the PROVIDER engine. It runs GEPA against an
+        OpenAI-compatible chat endpoint — neither the in-browser model nor a
+        DECISION classifier is one.
+        Switch engines in Setup to use it.
+      </p>
+    </div>
+  );
 
   // A session armed before a reload (OS kill, redeploy, pull-to-refresh) gets
   // a one-tap RESUME offer instead of silently staying disarmed — but only
@@ -239,142 +249,174 @@ export default function App() {
 
   const showUpdateBanner = updateAvailable && !updateDismissed;
 
+  // What the Setup cards read and write, in one place instead of a hundred props.
+  const settingsView = {
+    engine,
+    browserModel,
+    browserRuntime,
+    decisionModel,
+    decisionUrl,
+    decisionKey,
+    decisionAnnouncer,
+    decisionFallback,
+    baseUrl,
+    apiKey,
+    model,
+    mission,
+    scanMode,
+    scanEveryValue,
+    scanEveryUnit,
+    budgetPerHour,
+    networkMbPerHour,
+    videoSource,
+    captureSize,
+    customCaptureWidth,
+    customCaptureHeight,
+    cameraFacing,
+    cameraDeviceId,
+    keepScreenOn,
+    speech,
+    haptics,
+    webhookUrl,
+    webhookMethod,
+    webhookHeaders,
+    webhookAction,
+    webhookSchema,
+    webhookIncludeImage,
+    objectGate,
+    objectModel,
+    objectGateEveryS,
+    objectClasses,
+    objectWakeOn,
+    objectMoveFrac,
+    objectSens,
+    heartbeatMin,
+    objectPromptContext,
+    vlmIdleEvictMin,
+  };
+  const settingsSetters = {
+    engine: setEngine,
+    browserModel: setBrowserModel,
+    browserRuntime: setBrowserRuntime,
+    decisionModel: setDecisionModel,
+    decisionUrl: setDecisionUrl,
+    decisionKey: setDecisionKey,
+    decisionAnnouncer: setDecisionAnnouncer,
+    decisionFallback: setDecisionFallback,
+    baseUrl: setBaseUrl,
+    apiKey: setApiKey,
+    model: setModel,
+    mission: setMission,
+    scanMode: setScanMode,
+    scanEveryValue: setScanEveryValue,
+    scanEveryUnit: setScanEveryUnit,
+    budgetPerHour: setBudgetPerHour,
+    networkMbPerHour: setNetworkMbPerHour,
+    videoSource: setVideoSource,
+    captureSize: setCaptureSize,
+    customCaptureWidth: setCustomCaptureWidth,
+    customCaptureHeight: setCustomCaptureHeight,
+    cameraFacing: setCameraFacing,
+    cameraDeviceId: setCameraDeviceId,
+    keepScreenOn: setKeepScreenOn,
+    speech: setSpeech,
+    haptics: setHaptics,
+    webhookUrl: setWebhookUrl,
+    webhookMethod: setWebhookMethod,
+    webhookHeaders: setWebhookHeaders,
+    webhookAction: setWebhookAction,
+    webhookSchema: setWebhookSchema,
+    webhookIncludeImage: setWebhookIncludeImage,
+    objectGate: setObjectGate,
+    objectModel: setObjectModel,
+    objectGateEveryS: setObjectGateEveryS,
+    objectClasses: setObjectClasses,
+    objectWakeOn: setObjectWakeOn,
+    objectMoveFrac: setObjectMoveFrac,
+    objectSens: setObjectSens,
+    heartbeatMin: setHeartbeatMin,
+    objectPromptContext: setObjectPromptContext,
+    vlmIdleEvictMin: setVlmIdleEvictMin,
+  };
+
   return (
-    <IonApp>
-      <TopBar dotClass={dotClass} />
-      <IonToast isOpen={demoMode} message="Demo mode — simulated alerts, no API calls." color="warning" buttons={[{ text: 'Exit', handler: handleExitDemo }]} />
-      <IonToast isOpen={showResumeBanner} message="Monitoring was interrupted by a reload." buttons={[{ text: 'Resume', handler: handleResume }, { text: 'Dismiss', role: 'cancel', handler: handleDismissResume }]} />
-      <IonToast isOpen={showUpdateBanner} message="A new version is ready." buttons={[{ text: 'Update', handler: reloadToUpdate }, { text: 'Later', role: 'cancel', handler: handleDismissUpdate }]} />
-      <div className="app-body">
-        <main className={`main-content ${screen === 'monitor' ? 'monitor-layout' : ''}`}>
-          <MonitorStage
-            videoRef={videoRef} canvasRef={canvasRef}
-            stageMode={stageMode} flashActive={flashActive}
-            dotClass={dotClass} status={status} progress={progress}
-            collapsed={previewCollapsed}
-            onToggleCollapse={() => setPreviewCollapsed(c => !c)}
-            onTap={() => setScreen('monitor')}
-            videoSource={videoSource}
-            running={running}
-            onFlipCamera={handleFlipCamera}
-            wakeLockHeld={wakeLockHeld}
+    <div className="flex h-dvh flex-col">
+      <Toast open={demoMode} tone="warn" message="Demo mode — simulated alerts, no API calls." actions={[{ text: 'Exit', onClick: handleExitDemo }]} />
+      <Toast open={showResumeBanner} message="Monitoring was interrupted by a reload." actions={[{ text: 'Resume', onClick: handleResume }, { text: 'Dismiss', onClick: handleDismissResume }]} />
+      <Toast open={showUpdateBanner} message="A new version is ready." actions={[{ text: 'Update', onClick: reloadToUpdate }, { text: 'Later', onClick: handleDismissUpdate }]} />
+      <AppShell screen={screen} onNavigate={setScreen} dotClass={dotClass}>
+        <Stage
+          videoRef={videoRef} canvasRef={canvasRef}
+          mode={stageMode} flashActive={flashActive}
+          running={running} demoMode={demoMode} videoSource={videoSource}
+          wakeLockHeld={wakeLockHeld}
+          onToggleCollapse={() => setPreviewCollapsed(c => !c)}
+          onFlipCamera={handleFlipCamera}
+          onDemo={handleStartDemo}
+          onReturn={() => setScreen('watch')}
+        />
+        {screen === 'watch' && (
+          <WatchScreen
+            verdict={verdict} recent={recent} running={running} progress={progress} telemetry={telemetry}
+            engine={engine} modelLabel={modelLabel} providerReady={providerReady} demoMode={demoMode}
+            onToggle={handleToggle} onDemo={handleStartDemo}
+            onOpenSetup={() => setScreen('setup')}
+            onOpenLab={() => { setLabTab('tune'); setScreen('lab'); }}
+            mission={mission} setMission={setMission}
+            action={action} setAction={setAction}
+            speech={speech} setSpeech={setSpeech}
+            haptics={haptics} setHaptics={setHaptics}
+            threshold={threshold} setThreshold={setThreshold}
           />
-          {screen === 'mission' && (
-            <MissionScreen
-              mission={mission} setMission={setMission}
-              action={action} setAction={setAction}
-              speech={speech} setSpeech={setSpeech}
-              haptics={haptics} setHaptics={setHaptics}
-              onDeployAndArm={handleDeployAndArm}
-              onNavigateOptimize={() => setScreen('optimize')}
-              engine={engine}
-            />
-          )}
-          {screen === 'monitor' && (
-            <MonitorScreen
-              running={running}
-              telemetry={telemetry}
-              onToggle={handleToggle}
-              providerReady={providerReady}
-              engine={engine}
-              demoMode={demoMode}
-              onStartDemo={handleStartDemo}
-              onOpenSettings={() => setScreen('settings')}
-            />
-          )}
-          {screen === 'history' && (
+        )}
+        {screen === 'alerts' && (
+          <div className="main-content">
             <HistoryScreen alerts={alerts} missed={missed} markedIds={markedIds} onMarkExample={markExample} onClearHistory={clearHistory} />
-          )}
-          {screen === 'optimize' && (
-            axAvailable ? (
-              <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
-                <OptimizeScreen />
+          </div>
+        )}
+        {screen === 'lab' && (
+          <LabScreen tab={labTab} setTab={setLabTab}>
+            {labTab === 'tune' && (
+              axAvailable ? (
+                <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
+                  <OptimizeScreen />
+                </Suspense>
+              ) : optimizeNote
+            )}
+            {labTab === 'eval' && (
+              <Suspense fallback={<div className="screen"><p className="status-msg">Loading evaluation…</p></div>}>
+                <EvalScreen
+                  baseUrl={baseUrl}
+                  apiKey={apiKey}
+                  pricingOverrides={pricingOverrides}
+                  configuredModel={model}
+                  mission={mission}
+                  decision={{ decisionModel, decisionUrl, decisionKey }}
+                  captureFrame={handleCaptureEvalFrame}
+                  monitorRunning={running}
+                />
               </Suspense>
-            ) : (
-              <div className="screen">
-                <p className="status-msg">
-                  Prompt optimization needs the PROVIDER engine. It runs GEPA against an
-                  OpenAI-compatible chat endpoint — neither the in-browser model nor a
-                  DECISION classifier is one.
-                  Switch engines in SETTINGS to use it.
-                </p>
-              </div>
-            )
-          )}
-          {screen === 'eval' && (
-            <Suspense fallback={<div className="screen"><p className="status-msg">Loading evaluation…</p></div>}>
-              <EvalScreen
-                baseUrl={baseUrl}
-                apiKey={apiKey}
-                pricingOverrides={pricingOverrides}
-                configuredModel={model}
-                mission={mission}
-                decision={{ decisionModel, decisionUrl, decisionKey }}
-                captureFrame={handleCaptureEvalFrame}
-                monitorRunning={running}
-              />
-            </Suspense>
-          )}
-          {screen === 'settings' && (
-            <SettingsScreen
-              engine={engine} setEngine={setEngine}
-              browserModel={browserModel} setBrowserModel={setBrowserModel}
-              browserRuntime={browserRuntime} setBrowserRuntime={setBrowserRuntime}
-              decisionModel={decisionModel} setDecisionModel={setDecisionModel}
-              decisionUrl={decisionUrl} setDecisionUrl={setDecisionUrl}
-              decisionKey={decisionKey} setDecisionKey={setDecisionKey}
-              decisionAnnouncer={decisionAnnouncer} setDecisionAnnouncer={setDecisionAnnouncer}
-              decisionFallback={decisionFallback} setDecisionFallback={setDecisionFallback}
-              baseUrl={baseUrl} setBaseUrl={setBaseUrl}
-              apiKey={apiKey} setApiKey={setApiKey}
-              model={model} setModel={setModel}
-              scanMode={scanMode} setScanMode={setScanMode}
-              scanEveryValue={scanEveryValue} setScanEveryValue={setScanEveryValue}
-              scanEveryUnit={scanEveryUnit} setScanEveryUnit={setScanEveryUnit}
-              budgetPerHour={budgetPerHour} setBudgetPerHour={setBudgetPerHour}
-              networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
-              // On DECISION the token rates shown are the provider's (it
-              // announces and falls back); the decision rate rides along.
-              pricing={engine === 'decision' ? { ...providerPricing, perSecond: pricing.perSecond } : pricing}
-              pricingOverride={pricingOverride}
-              onSetPricingOverride={(override) => setPricingOverrides((current) => ({ ...current, [pricingKey(baseUrl, model)]: override }))}
-              onResetPricingOverride={() => setPricingOverrides((current) => {
-                const next = { ...current };
-                delete next[pricingKey(baseUrl, model)];
-                return next;
-              })}
-              videoSource={videoSource} setVideoSource={setVideoSource}
-              captureSize={captureSize} setCaptureSize={setCaptureSize}
-              customCaptureWidth={customCaptureWidth} setCustomCaptureWidth={setCustomCaptureWidth}
-              customCaptureHeight={customCaptureHeight} setCustomCaptureHeight={setCustomCaptureHeight}
-              cameraFacing={cameraFacing} setCameraFacing={setCameraFacing}
-              cameraDeviceId={cameraDeviceId} setCameraDeviceId={setCameraDeviceId}
-              keepScreenOn={keepScreenOn} setKeepScreenOn={setKeepScreenOn}
-              mission={mission}
-              objectGate={objectGate} setObjectGate={setObjectGate}
-              objectModel={objectModel} setObjectModel={setObjectModel}
-              objectGateEveryS={objectGateEveryS} setObjectGateEveryS={setObjectGateEveryS}
-              objectClasses={objectClasses} setObjectClasses={setObjectClasses}
-              objectWakeOn={objectWakeOn} setObjectWakeOn={setObjectWakeOn}
-              objectMoveFrac={objectMoveFrac} setObjectMoveFrac={setObjectMoveFrac}
-              objectSens={objectSens} setObjectSens={setObjectSens}
-              heartbeatMin={heartbeatMin} setHeartbeatMin={setHeartbeatMin}
-              objectPromptContext={objectPromptContext} setObjectPromptContext={setObjectPromptContext}
-              vlmIdleEvictMin={vlmIdleEvictMin} setVlmIdleEvictMin={setVlmIdleEvictMin}
-              webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
-              webhookMethod={webhookMethod} setWebhookMethod={setWebhookMethod}
-              webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}
-              webhookAction={webhookAction} setWebhookAction={setWebhookAction}
-              webhookSchema={webhookSchema} setWebhookSchema={setWebhookSchema}
-              webhookIncludeImage={webhookIncludeImage} setWebhookIncludeImage={setWebhookIncludeImage}
-              statusMsg={statusMsg}
-              onStatusMsg={handleStatusMsg}
-              captureFrame={handleCaptureEvalFrame}
-            />
-          )}
-        </main>
-        <NavRail screen={screen} setScreen={setScreen} hidden={axAvailable ? undefined : ['optimize']} />
-      </div>
-    </IonApp>
+            )}
+          </LabScreen>
+        )}
+        {screen === 'setup' && (
+          <SetupScreen
+            s={settingsView} set={settingsSetters}
+            captureFrame={handleCaptureEvalFrame}
+            onOpenLab={() => setScreen('lab')}
+            // On DECISION the token rates shown are the provider's (it
+            // announces and falls back); the decision rate rides along.
+            pricing={engine === 'decision' ? { ...providerPricing, perSecond: pricing.perSecond } : pricing}
+            pricingOverride={pricingOverride}
+            onSetPricingOverride={(override) => setPricingOverrides((current) => ({ ...current, [pricingKey(baseUrl, model)]: override }))}
+            onResetPricingOverride={() => setPricingOverrides((current) => {
+              const next = { ...current };
+              delete next[pricingKey(baseUrl, model)];
+              return next;
+            })}
+          />
+        )}
+      </AppShell>
+    </div>
   );
 }

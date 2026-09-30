@@ -2,6 +2,7 @@ import * as esbuild from "esbuild";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 const dir = import.meta.dirname;
@@ -43,12 +44,21 @@ await Promise.all([
     minify: true,
     sourcemap: "linked",
   }),
-  copyFile(
-    path.join(root, "src", "aura.css"),
-    path.join(root, "public", "aura.css"),
-  ),
   copyOnnxRuntimeFiles(),
 ]);
+
+// Tailwind (utilities only) is a separate stylesheet from esbuild's app.css:
+// its scanner reads src/ for class names, which esbuild can't do.
+execFileSync(
+  process.execPath,
+  [
+    path.join(root, "node_modules", "@tailwindcss", "cli", "dist", "index.mjs"),
+    "-i", path.join(root, "src", "tailwind.css"),
+    "-o", path.join(outdir, "ui.css"),
+    "--minify",
+  ],
+  { stdio: ["ignore", "ignore", "inherit"] },
+);
 
 await buildServiceWorker();
 
@@ -149,7 +159,6 @@ async function buildServiceWorker() {
     .map((f) => `icons/${f}`);
   const precache = [
     "index.html",
-    "aura.css",
     "manifest.webmanifest",
     ...icons,
     ...bundles,

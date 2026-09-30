@@ -300,12 +300,10 @@ rail by breakpoint), `Stage`, `VerdictCard`, `MissionCard`, `ArmBar`,
 control is rendered), `Segmented`, `Sheet` (bottom sheet on phone, dialog on
 desktop), `Timeline`, `Chip`, `ProgressRing`.
 
-Ionic decision: the app uses Ionic for a header, a tab bar, toggles, toasts, a
-textarea and cards. Every one of those is under 40 lines as a native element
-with the tokens above, and the tab bar is the thing the redesign replaces.
-Recommendation: drop `@ionic/react` and `ionicons` (one dependency, one
-stylesheet, smaller `app.js`), using inline SVG icons. This is a decision the
-owner makes at Phase 0, and the phases below work either way.
+Ionic decision (made): `@ionic/react` and `ionicons` are gone. The component
+layer is Tailwind v4 + shadcn-style primitives (Radix for dialog, switch,
+slider, collapsible and menu; `class-variance-authority`; `lucide-react`
+icons), in `src/ui/`. The main bundle went from 625 KB to 434 KB.
 
 ## Capability map
 
@@ -325,7 +323,8 @@ Every control today and where it lives after. Keys (`aura.*`) do not change.
 | Settings · Fetch vision models                                               | Setup · Engine wizard step 2 (populates the picker)  |
 | Settings · Browser model, Runtime                                            | Setup · Engine wizard step 2 (In-browser)            |
 | Settings · Decision model, relay, token, announcer, fallback, Test           | Setup · Engine wizard step 2–3 (Decision)            |
-| Settings · Sensitivity                                                       | Watch · Mission card slider                          |
+| Settings · Sensitivity (object gate)                                         | Setup · Advanced › Object gate                       |
+| (new) alert threshold                                                        | Watch · Mission card slider (`aura.threshold`)       |
 | Settings · Mode, Scan every, Max $/hour, Max MB/hour                         | Setup · Cadence & cost                               |
 | Settings · Model pricing override                                            | Setup · Advanced                                     |
 | Settings · Object gate (all ten controls)                                    | Setup · Advanced › Object gate                       |
@@ -351,7 +350,7 @@ Each phase is one PR, ships on its own, and leaves the app working.
   at the three layouts, with the fake camera. Run it in CI and commit the
   images under `docs/screens/` so a UI PR shows its before/after.
 - Update CLAUDE.md's architecture table (live stylesheet, screens).
-- Decide the Ionic question.
+- Decide the Ionic question (decided: dropped).
 - Acceptance: `npm run build` produces no `public/aura.css`; screenshots exist
   for 3 layouts × 6 screens; `npm test` and `dev-gate-e2e.mjs` unchanged.
 
@@ -377,6 +376,19 @@ Each phase is one PR, ships on its own, and leaves the app working.
 - Acceptance: a fresh install reaches a passing frame test in three taps per
   engine (scripted); no control from the capability map is missing.
 
+Status: built. Where it differs from the plan above:
+
+- The Advanced card is a list of folded rows, each showing its current value,
+  rather than one fold containing all of them: the summaries are the point, so
+  they are visible without a tap.
+- `DecisionSettings` became `src/setup/DecisionFields.jsx`; `SettingsScreen` is
+  gone, replaced by `SetupScreen` and the cards in `src/setup/`.
+- "Test on current frame" is `lib/frame-test.js` (tested); it needs an armed
+  monitor, since the frame comes from the live stage. The e2e drives it against
+  the fake camera and provider, and against the fake Replicate.
+- Not done: the scripted three-tap fresh-install path. The tap count is real
+  (choose, connect, test) but nothing asserts it.
+
 ### Phase 3 — Alerts and Lab
 
 - Timeline with the two lanes and row actions; desktop side preview.
@@ -396,9 +408,8 @@ Each phase is one PR, ships on its own, and leaves the app working.
 
 ## Open questions for the owner
 
-1. Drop Ionic (recommended) or keep it for primitives?
+1. ~~Drop Ionic?~~ Decided: dropped, on Tailwind + shadcn-style components.
 2. Desktop secondary screens: replace the stage + panel (proposed, keeps the
    PiP) or open in the panel only, keeping the stage full size?
 3. Light theme in Phase 4, or dark only?
-4. Should `Lab` stay in the phone tab bar, or live behind Setup on phones and
-   be a rail item only on desktop?
+4. ~~Lab on phones?~~ Decided: behind Setup on phones, a rail item on desktop.

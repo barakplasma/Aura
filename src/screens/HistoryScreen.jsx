@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { IonContent } from '@ionic/react';
 
 // Alert history + review. Every alert keeps the exact frame it fired on so the
 // operator can eyeball it and, if it was wrong, mark it a FALSE POSITIVE — that
@@ -40,7 +39,7 @@ export default function HistoryScreen({ alerts, missed, markedIds, onMarkExample
   }
 
   return (
-    <IonContent className="aura-page screen screen-history">
+    <div className="aura-page screen screen-history">
       <div className="screen-header">
         <span className="screen-title">ALERT HISTORY</span>
         <span className="screen-subtitle">{alerts.length} event{alerts.length !== 1 ? 's' : ''}</span>
@@ -122,6 +121,6 @@ export default function HistoryScreen({ alerts, missed, markedIds, onMarkExample
           </ul>
         </>
       )}
-    </IonContent>
+    </div>
   );
 }

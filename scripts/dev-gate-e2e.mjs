@@ -36,18 +36,14 @@
 // Exits non-zero when the gate run fails its own acceptance checks.
 
 import http from "node:http";
-import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import WebSocket from "ws";
-import { settleReply } from "./cdp-request.mjs";
+import { cdpConnect, launchChrome, openPage, sendStatic, sleep } from "./dev-browser.mjs";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
-const CHROME =
-  process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const GATE = process.env.GATE !== "0";
 const ENGINE = ["browser", "decision"].includes(process.env.ENGINE) ? process.env.ENGINE : "provider";
 // The in-page VLM runs on WASM here (headless has no GPU adapter) at many
@@ -59,7 +55,6 @@ const W = 640;
 const H = 480;
 const BUS_URL = "https://ultralytics.com/images/bus.jpg";
 const MIRROR = process.env.MIRROR_DIR || path.join(tmpdir(), "aura-gate-e2e-mirror");
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const work = mkdtempSync(path.join(tmpdir(), "aura-gate-e2e-"));
 
 // --- the Hub, mirrored on demand ---------------------------------------------
@@ -150,13 +145,6 @@ async function makeVideo() {
 
 // --- the app, plus a fake vision model on the same origin -------------------
 
-const TYPES = {
-  ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
-  ".css": "text/css", ".json": "application/json", ".wasm": "application/wasm",
-  ".webmanifest": "application/manifest+json", ".png": "image/png",
-  ".svg": "image/svg+xml", ".map": "application/json",
-};
-
 const scans = []; // { at, promptChars }
 const polls = []; // decision engine: GETs of an unfinished prediction
 const decisionAuth = new Set(); // Authorization headers the fake Replicate saw
@@ -225,43 +213,9 @@ function serve() {
       });
       return res.end(bytes);
     }
-    let file = path.join(PUBLIC, decodeURIComponent(url.pathname));
-    if (!file.startsWith(PUBLIC)) return res.writeHead(403).end();
-    if (!existsSync(file) || statSync(file).isDirectory()) file = path.join(PUBLIC, "index.html");
-    res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream" });
-    res.end(readFileSync(file));
+    sendStatic(res, PUBLIC, url.pathname);
   });
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r(server)));
-}
-
-// --- a minimal CDP client ----------------------------------------------------
-
-async function cdpConnect(port) {
-  let info;
-  for (let i = 0; i < 50 && !info; i++) {
-    try {
-      info = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-    } catch {
-      await sleep(200);
-    }
-  }
-  if (!info) throw new Error("Chromium never opened its DevTools port");
-  const ws = new WebSocket(info.webSocketDebuggerUrl);
-  await new Promise((r, j) => { ws.once("open", r); ws.once("error", j); });
-  let id = 0;
-  const waiting = new Map();
-  const listeners = [];
-  ws.on("message", (raw) => {
-    const msg = JSON.parse(raw);
-    if (!settleReply(waiting, msg)) for (const fn of listeners) fn(msg);
-  });
-  const send = (method, params = {}, sessionId) =>
-    new Promise((resolve, reject) => {
-      const mid = ++id;
-      waiting.set(mid, { ok: resolve, fail: reject });
-      ws.send(JSON.stringify({ id: mid, method, params, sessionId }));
-    });
-  return { send, on: (fn) => listeners.push(fn), close: () => ws.close() };
 }
 
 // --- the run -------------------------------------------------------------------
@@ -271,23 +225,10 @@ async function main() {
   const video = await makeVideo();
   const server = await serve();
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const port = 9300 + Math.floor(Math.random() * 500);
-  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
-  const chrome = spawn(CHROME, [
-    "--headless=new", "--no-sandbox", "--disable-gpu-sandbox",
-    `--remote-debugging-port=${port}`, `--user-data-dir=${path.join(work, "profile")}`,
-    "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
-    `--use-file-for-fake-video-capture=${video}`,
-    ...(proxy ? [`--proxy-server=${proxy}`, "--proxy-bypass-list=127.0.0.1;localhost"] : []),
-    "about:blank",
-  ], { stdio: "ignore" });
+  const { chrome, port } = launchChrome({ profile: path.join(work, "profile"), video });
 
   const cdp = await cdpConnect(port);
-  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
-  const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
-  const page = (method, params) => cdp.send(method, params, sessionId);
-  const evaluate = async (expression) =>
-    (await page("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })).result.value;
+  const { page, evaluate } = await openPage(cdp);
 
   const problems = [];
   cdp.on((msg) => {
@@ -375,12 +316,13 @@ async function main() {
   await page("Page.navigate", { url: `${origin}/` });
   for (let i = 0; i < 50 && !(await evaluate(`!!document.querySelector('#toggle')`)); i++) await sleep(200);
 
-  // A real pointer press, not element.click(): #toggle is an Ionic web
-  // component, and a synthetic click on its host doesn't reliably reach the
-  // React handler the way a user's tap does.
+  // A real pointer press, not element.click(), the way a user's tap arrives.
+  // Both navs (rail and tab bar) are in the DOM; press the one on screen.
   const press = async (selector) => {
     const box = await evaluate(`(() => {
-      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.offsetParent);
+      el.scrollIntoView({ block: 'center' });
+      const r = el.getBoundingClientRect();
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
     })()`);
     for (const type of ["mousePressed", "mouseReleased"])
@@ -398,7 +340,7 @@ async function main() {
   while (Date.now() - armedAt < RUN_S * 1000) {
     await sleep(2000);
     const card = await evaluate(`(() => {
-      const c = [...document.querySelectorAll('.notice')].find(n => n.innerText.includes('Object gate'));
+      const c = [...document.querySelectorAll('[data-gate-notice]')].find(n => n.innerText.includes('Object gate'));
       return c ? c.innerText.replace(/\\s+/g, ' ').trim() : '';
     })()`);
     const t = ((Date.now() - armedAt) / 1000).toFixed(0);
@@ -416,13 +358,30 @@ async function main() {
   // import once did exactly that, and the stored toggle kept it blank).
   let settingsRender = null;
   if (GATE) {
-    await press('ion-tab-button[tab="settings"]');
+    await press('[data-nav="setup"]');
     await sleep(1000);
+    // The gate block lives in a fold (Setup > Advanced > Object gate), and a
+    // closed fold doesn't mount its controls — open it to render them.
+    await press('[data-advanced-item="Object gate"]');
+    await sleep(500);
     settingsRender = await evaluate(`(() => ({
-      toggle: document.querySelector('#object-gate-toggle')?.checked === true,
-      wakeOn: /WAKE ON/.test(document.body.innerText) && /MOVED/.test(document.body.innerText),
+      toggle: document.querySelector('#object-gate-toggle')?.getAttribute('aria-checked') === 'true',
+      wakeOn: /wake on/i.test(document.body.innerText) && /moved/i.test(document.body.innerText),
     }))()`);
   }
+
+  // Setup's "Test on current frame" (every engine): one real detection pass on
+  // the frame the armed stage is showing, through the same scan function.
+  await press('[data-nav="setup"]');
+  await sleep(800);
+  await press("#frame-test-btn");
+  let frameTest = "";
+  for (let i = 0; i < 150 && !frameTest; i++) {
+    await sleep(1000);
+    frameTest = await evaluate(`document.querySelector('#frame-test-result')?.innerText.replace(/\\s+/g, ' ').trim() || ''`);
+  }
+  console.log(`frame test: ${frameTest || "(no result)"}`);
+  if (ENGINE === "decision") console.log(`decision scans ${scans.length}, polls ${polls.length}`);
 
   cdp.close();
   chrome.kill("SIGKILL");
@@ -449,11 +408,14 @@ async function main() {
     ["…and the bus", sawBus],
     ["the empty room reads as empty", sawEmpty],
     ["the VLM ran (at least the baseline scan)", vlmCalls >= 1],
+    ["Setup's Test on current frame answers on the live frame", /^(Clear|Would alert)/.test(frameTest)],
     ["Settings renders the gate block (toggle on, WAKE ON kinds listed)",
       Boolean(settingsRender?.toggle && settingsRender?.wakeOn)],
     ...(ENGINE === "decision"
       ? [
-          ["every prediction was polled to completion", polls.length >= scans.length && scans.length >= 1],
+          // The monitor is still armed when the counters are read, so the newest
+          // prediction can be mid-flight: allow exactly one unpolled.
+          ["every prediction was polled to completion", polls.length >= scans.length - 1 && scans.length >= 1],
           ["the user's own token was forwarded, nothing else", [...decisionAuth].join() === "Bearer r8_e2e"],
         ]
       : []),

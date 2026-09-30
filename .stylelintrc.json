@@ -1,6 +1,12 @@
 {
   "extends": "stylelint-config-standard",
   "rules": {
-    "media-feature-range-notation": null
+    "media-feature-range-notation": null,
+    "import-notation": null,
+    "at-rule-no-unknown": [
+      true,
+      { "ignoreAtRules": ["theme", "source", "utility", "variant", "custom-variant"] }
+    ],
+    "custom-property-pattern": null
   }
 }

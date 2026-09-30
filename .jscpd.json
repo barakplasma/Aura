@@ -10,7 +10,6 @@
     "**/*.yml",
     "**/*.md",
     "**/*.svg",
-    "public/aura.css",
     "public/sw.js",
     "public/assets/**"
   ]

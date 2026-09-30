@@ -37,7 +37,7 @@ and installs djlint at the start of every cloud session.
 
 | Command          | What it does                                                                                                                            |
 |------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies `src/aura.css` and ONNX Runtime's WASM files, generates the service worker |
+| `npm run build`  | Builds `src/main.jsx` and `src/workers/ml.worker.js`, copies ONNX Runtime's WASM files, generates the service worker                    |
 | `npm run dev`    | Serves `public/` (rebuilds first via `predev`)                                                                                          |
 | `npm test`       | Unit tests for the pure `lib/` helpers — no DOM, no network                                                                             |
 | `npm run lint`   | Stylelint, jscpd and djlint — the same checks MegaLinter runs on every PR                                                               |
@@ -49,12 +49,12 @@ Aura needs an inference source before it will do anything. Pick one.
 
 ### A hosted provider
 
-In **Settings → Provider**:
+In **Setup → Engine → Provider**:
 
 1. **Base URL** — the OpenAI-compatible endpoint, e.g. `https://api.cerebras.ai/v1`
 2. **API key** — your key. It's stored in `localStorage` and sent only to that base
    URL. Blank is valid (see local servers below).
-3. **Model** — press **FETCH MODELS** to list what the endpoint offers
+3. **Model** — press **Fetch models** to list what the endpoint offers
    (`GET /v1/models`), or type a name.
 
 Any API implementing `POST /v1/chat/completions` with vision works: Cerebras,
@@ -67,7 +67,7 @@ requirements the provider has to meet:
 
 ### No key at all: demo mode
 
-Press **TRY DEMO** on the Monitor screen for deterministic simulated scans. It
+Press **Try demo** on the Watch screen for deterministic simulated scans. It
 exercises the camera, speech, vibration and alert log with no provider configured,
 never fires webhooks, and is bannered while active. It is the only simulated path in
 the app — a misconfigured real provider throws rather than pretending.
@@ -89,9 +89,9 @@ llama-server -m your-vision-model.gguf --cors    # → http://localhost:8080/v1
 # and enable CORS in the server settings.        → http://localhost:1234/v1
 ```
 
-Then in **Settings → Provider** press the **OLLAMA** / **LM STUDIO** / **LLAMA.CPP**
+Then in **Setup → Engine → Provider** pick the **Ollama** / **LM Studio** / **llama.cpp**
 preset (which also zeroes the cost rate), **leave the API key blank** — no
-`Authorization` header is sent when it's empty — and **FETCH MODELS**.
+`Authorization` header is sent when it's empty — and **Fetch models**.
 
 Two gotchas:
 
@@ -104,10 +104,11 @@ Two gotchas:
 
 ### In the browser itself
 
-In **Settings → Provider**, switch **ENGINE** to **BROWSER**, then
-**DOWNLOAD / LOAD** the model. Progress is shown; weights are cached by the browser
-afterwards, so it happens once, and works offline after that. **TEST ON CURRENT
-FRAME** runs a single scan before you arm; **CLEAR MODEL CACHE** frees the weights.
+In **Setup → Engine**, choose **In-browser**, then **Download / load** the model.
+Progress is shown; weights are cached by the browser afterwards, so it happens once,
+and works offline after that. **Test on current frame** (step 3, every engine) runs a
+single scan on the live camera frame, so arm the monitor first; **Clear model cache**
+frees the weights.
 
 The model is picked from a table (`lib/browser-models.js`) based on what the device
 can actually run — currently SmolVLM2 500M by default, with LFM2.5-VL 450M,
@@ -122,7 +123,7 @@ sample frames before trusting it for a given camera.
 
 ### Turning on the object gate
 
-Settings → OBJECT GATE puts a small YOLO26 detector (3–5 MB) in front of the
+Setup → Advanced → Object gate puts a small YOLO26 detector (3–5 MB) in front of the
 vision model: it looks every couple of seconds and only wakes the expensive
 model when the *set of objects* in frame changes. Worth it on any scene that
 mostly sits still, and the main lever against a phone that gets hot while armed.
@@ -170,10 +171,10 @@ system monospace and sans-serif. Layout is unaffected — only the typeface chan
 Aura is meant to be propped on a shelf and left running, and tries to survive the
 usual interruptions. What it recovers from depends on the platform:
 
-- **Backgrounding (app switch, lock screen, a phone call).** With **KEEP SCREEN ON**
-  (Settings → Camera, on by default) Aura holds a screen wake lock while armed, so an
+- **Backgrounding (app switch, lock screen, a phone call).** With **Keep screen on**
+  (Setup → Advanced → Keep screen on, on by default) Aura holds a screen wake lock while armed, so an
   Android screen won't dim and lock. If the tab is hidden anyway the browser throttles
-  the scan loop without stopping it, and the status line says so; returning to the tab
+  the scan loop without stopping it, and the verdict card says so; returning to the tab
   fires an immediate scan if the gap overran. If the OS reclaims the camera, Aura
   detects the lost or muted track and reconnects, retrying three times before giving
   up with "Camera lost — tap ARM to retry".
@@ -195,10 +196,13 @@ usual interruptions. What it recovers from depends on the platform:
 src/
   main.jsx                Entry point (imports monitoring.js first)
   App.jsx                 Screen routing, settings, demo mode, camera stage mode
-  aura.css                Dark "tactical" theme (edit this copy, not public/aura.css)
+  tailwind.css            Design tokens + utilities (built to assets/ui.css)
+  legacy.css              Old `dc-*` styles for screens not yet redesigned
   monitoring.js           Bugsink (Sentry-compatible) error tracking
-  components/             MonitorStage (always-mounted video/canvas), NavRail, ...
-  screens/                Mission, Monitor, History, Optimize, Eval, Settings
+  components/             Stage (always-mounted video/canvas), AppShell, VerdictCard, ...
+  ui/                     shadcn-style primitives (Tailwind + Radix)
+  screens/                Watch, Setup, Lab, History, Optimize, Eval
+  setup/                  Setup cards: engine wizard, cadence, delivery, camera, advanced
   hooks/useMonitor.js     Camera capture + scan loop + alert delivery + telemetry
   workers/ml.worker.js    Runs the in-browser VLM — the ONLY file importing
                           @huggingface/transformers (kept out of the main bundle)
@@ -213,7 +217,7 @@ lib/
   eval.js / eval-store.js Prompt evaluation matrix + IndexedDB persistence
   training.js             ax/GEPA optimization (only ever dynamically imported)
   ...                     demo, scheduler, stats, alert-store, frame, keepalive
-public/                   Deployed as-is: index.html, aura.css, icons, assets/
+public/                   Deployed as-is: index.html, icons, assets/
 scripts/
   build-react.js          esbuild build + service worker generation
   sw-template.js          Source of the generated public/sw.js
@@ -242,8 +246,8 @@ Full details are in [CLAUDE.md](./CLAUDE.md) — the short version:
   model needs an `if (modelId.includes(...))` in `ml.worker.js`, the descriptor is
   missing a field.
 - After changing an engine, add or extend a test in `test/`.
-- Edit `src/aura.css` and `scripts/sw-template.js` — `public/aura.css` and
-  `public/sw.js` are generated.
+- Edit `src/tailwind.css`, `src/legacy.css` and `scripts/sw-template.js` — `public/sw.js` and
+  `public/assets/` are generated.
 - Don't commit secrets. API keys stay in the user's `localStorage`.
 
 ## Tests and linting
