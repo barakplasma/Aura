@@ -14,13 +14,20 @@ import WatchScreen from './screens/WatchScreen.jsx';
 import LabScreen from './screens/LabScreen.jsx';
 import { Button } from './ui/button.jsx';
 import { Toast } from './ui/toast.jsx';
-import HistoryScreen from './screens/HistoryScreen.jsx';
+import { prefillFromEntry } from '../lib/training-store.js';
+import AlertsScreen from './screens/AlertsScreen.jsx';
 import SetupScreen from './screens/SetupScreen.jsx';
 
 // Lazy — keeps the optimizer screen (and, transitively, @ax-llm/ax) out of
 // the initial bundle.
 const OptimizeScreen = lazy(() => import('./screens/OptimizeScreen.jsx'));
 const EvalScreen = lazy(() => import('./screens/EvalScreen.jsx'));
+
+// A line of explanation where a screen would be (a chunk still loading, or a
+// screen that doesn't apply to the current engine).
+function Notice({ children }) {
+  return <p className="min-h-0 flex-1 overflow-y-auto bg-bg-0 p-4 text-sm text-text-dim">{children}</p>;
+}
 
 // A RESUME MONITORING offer stays valid for this long after arming — long
 // enough to cover an overnight run interrupted by a reload, short enough that
@@ -31,6 +38,10 @@ export default function App() {
   // 'watch' | 'alerts' | 'setup' | 'lab' — docs/PRD-ux-redesign.md.
   const [screen, setScreen] = useState('watch');
   const [labTab, setLabTab] = useState('tune');
+  // "Send to Lab" hands the Examples form a history entry to start from; a
+  // recent-scan dot on Watch hands Alerts an entry to open.
+  const [labPrefill, setLabPrefill] = useState(null);
+  const [alertFocus, setAlertFocus] = useState(null);
   // Session-only on purpose: a reload always exits demo mode.
   const [demoMode, setDemoMode] = useState(false);
   // Dismissing the resume banner is session-only too — it only needs to stop
@@ -218,6 +229,17 @@ export default function App() {
     switchCamera();
   }
 
+  function handleSendToLab(entry, { isAlert }) {
+    setLabPrefill(prefillFromEntry(entry, { isAlert, mission }));
+    setLabTab('tune');
+    setScreen('lab');
+  }
+
+  function handleOpenEntry(id) {
+    setAlertFocus(id);
+    setScreen('alerts');
+  }
+
   // How the always-mounted camera stage presents itself (see Stage).
   const stageMode = screen === 'watch'
     ? (previewCollapsed ? 'collapsed' : 'full')
@@ -231,14 +253,11 @@ export default function App() {
       : model;
 
   const optimizeNote = (
-    <div className="screen">
-      <p className="status-msg">
-        Prompt optimization needs the PROVIDER engine. It runs GEPA against an
-        OpenAI-compatible chat endpoint — neither the in-browser model nor a
-        DECISION classifier is one.
-        Switch engines in Setup to use it.
-      </p>
-    </div>
+    <Notice>
+      Prompt optimization needs the PROVIDER engine. It runs GEPA against an
+      OpenAI-compatible chat endpoint — neither the in-browser model nor a
+      DECISION classifier is one. Switch engines in Setup to use it.
+    </Notice>
   );
 
   // A session armed before a reload (OS kill, redeploy, pull-to-refresh) gets
@@ -362,6 +381,7 @@ export default function App() {
             onToggle={handleToggle} onDemo={handleStartDemo}
             onOpenSetup={() => setScreen('setup')}
             onOpenLab={() => { setLabTab('tune'); setScreen('lab'); }}
+            onOpenEntry={handleOpenEntry}
             mission={mission} setMission={setMission}
             action={action} setAction={setAction}
             speech={speech} setSpeech={setSpeech}
@@ -370,21 +390,24 @@ export default function App() {
           />
         )}
         {screen === 'alerts' && (
-          <div className="main-content">
-            <HistoryScreen alerts={alerts} missed={missed} markedIds={markedIds} onMarkExample={markExample} onClearHistory={clearHistory} />
-          </div>
+          <AlertsScreen
+            alerts={alerts} missed={missed} markedIds={markedIds}
+            onMarkExample={markExample} onClearHistory={clearHistory}
+            onSendToLab={handleSendToLab}
+            focusId={alertFocus} onFocusHandled={() => setAlertFocus(null)}
+          />
         )}
         {screen === 'lab' && (
           <LabScreen tab={labTab} setTab={setLabTab}>
             {labTab === 'tune' && (
               axAvailable ? (
-                <Suspense fallback={<div className="screen"><p className="status-msg">Loading optimizer…</p></div>}>
-                  <OptimizeScreen />
+                <Suspense fallback={<Notice>Loading optimizer…</Notice>}>
+                  <OptimizeScreen prefill={labPrefill} onPrefillUsed={() => setLabPrefill(null)} mission={mission} />
                 </Suspense>
               ) : optimizeNote
             )}
             {labTab === 'eval' && (
-              <Suspense fallback={<div className="screen"><p className="status-msg">Loading evaluation…</p></div>}>
+              <Suspense fallback={<Notice>Loading evaluation…</Notice>}>
                 <EvalScreen
                   baseUrl={baseUrl}
                   apiKey={apiKey}

@@ -51,7 +51,7 @@ export default function FrameTest({ s, captureFrame, ready }) {
         </Button>
         {!ready && <span className="text-xs text-text-dim">Finish step 2 first.</span>}
       </div>
-      {running && pct != null && <ProgressBar phase="processing" pct={pct} label="LOADING MODEL" />}
+      {running && pct != null && <ProgressBar phase="processing" pct={pct} label="Loading model" />}
       {out?.error && <Status tone="danger" id="frame-test-result">Test failed: {out.error}</Status>}
       {v && (
         <div id="frame-test-result" className="flex flex-col gap-1 rounded-md bg-bg-0 p-3 text-sm" role="status">

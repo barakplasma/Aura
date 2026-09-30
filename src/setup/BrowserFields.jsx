@@ -180,7 +180,7 @@ export default function BrowserFields({ s, set }) {
             ? `Downloading ${pct != null ? `${pct}%` : '…'}`
             : loaded ? `Ready${deviceSuffix()}` : 'Not downloaded'}
         </Status>
-        {downloading && <ProgressBar phase="processing" pct={pct} label={`LOADING ${cfg.label.toUpperCase()}`} />}
+        {downloading && <ProgressBar phase="processing" pct={pct} label={`Loading ${cfg.label}`} />}
         {!hasWebGpu && !downloading && (
           <Status tone="warn">No WebGPU detected on this browser/device — falls back to WASM, which is much slower (roughly 10-30s per scan).</Status>
         )}

@@ -5,7 +5,7 @@ import { cn } from './cn.js';
 export function Toast({ open, tone = 'neutral', message, actions = [] }) {
   if (!open) return null;
   return (
-    <div data-ui="" className="pointer-events-none fixed inset-x-0 top-2 z-50 flex justify-center px-3">
+    <div className="pointer-events-none fixed inset-x-0 top-2 z-50 flex justify-center px-3">
       <div
         role="status"
         className={cn(

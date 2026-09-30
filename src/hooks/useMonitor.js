@@ -32,6 +32,7 @@ import {
   getExamples,
   getOptimizedArtifact,
   addExample,
+  exampleFromReview,
 } from "../../lib/training-store.js";
 import { recordLatency, percentile, tunedTimeoutMs } from "../../lib/stats.js";
 import { computeGapMs, emaUpdate } from "../../lib/scheduler.js";
@@ -554,6 +555,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     alertStore
       .addAlert(record)
       .catch((err) => console.warn("[aura] failed to persist alert", err));
+    return record.id;
   }, []);
 
   // Keep a handful of recent non-alert frames, spaced out in time, so the
@@ -570,21 +572,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     alertStore
       .addMissed(record)
       .catch((err) => console.warn("[aura] failed to persist missed frame", err));
+    return record.id;
   }, []);
 
   // Turn a reviewed frame into a training example. A false positive teaches the
   // detector NOT to fire on that scene; a false negative teaches it to fire.
   const markExample = useCallback((entry, kind) => {
-    const triggered = kind === "false-negative";
-    addExample({
-      type: "detection",
-      sceneDescription: entry.reason || entry.message || "",
-      triggered,
-      confidence: triggered ? 90 : 0,
-      reason: triggered
-        ? entry.reason || "Operator marked this as a missed alert."
-        : "Operator marked this alert as a false positive.",
-    });
+    addExample(exampleFromReview(entry, kind));
     setMarkedIds((prev) => ({ ...prev, [entry.id]: kind }));
     alertStore
       .setMark(entry.id, kind)
@@ -1002,14 +996,16 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           };
         });
         if (result.triggered) {
-          say(fromScan(result, { engine: s.engine, threshold: s.threshold ?? 0 }));
           flashAlert();
-          logAlert(
+          // The verdict carries the history entry's id so the Watch screen's
+          // recent-scan dots can open it.
+          const entryId = logAlert(
             result.message || result.reason,
             result.confidence,
             frame,
             result.reason,
           );
+          say(fromScan(result, { engine: s.engine, threshold: s.threshold ?? 0, entryId }));
           alertOut(result.message || result.reason, {
             speech: s.speech,
             haptics: s.haptics,
@@ -1023,8 +1019,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           );
           if (!s.demo && webhookBody) sendWebhook(webhookBody, frame);
         } else {
-          say(fromScan(result, { engine: s.engine, threshold: s.threshold ?? 0 }));
-          recordMissed(frame, result.reason, result.confidence);
+          const entryId = recordMissed(frame, result.reason, result.confidence);
+          say(fromScan(result, { engine: s.engine, threshold: s.threshold ?? 0, entryId }));
         }
         // Budget mode can't cost-cap a provider that returns no token usage —
         // warn once and let the scheduler fall back to interval cadence.

@@ -19,7 +19,7 @@ export default function Stage({
   const showFlip = running && !pip && !collapsed && videoSource !== 'screen';
   return (
     <div
-      data-ui=""
+     
       data-stage={mode}
       onClick={pip ? onReturn : undefined}
       role={pip ? 'button' : undefined}
@@ -28,7 +28,7 @@ export default function Stage({
         'relative overflow-hidden rounded-lg bg-bg-2',
         mode === 'full' && 'm-3 md:h-[calc(100%-1.5rem)] xl:max-h-[calc(100dvh-160px)]',
         collapsed && 'm-3 flex items-center justify-between px-4',
-        pip && 'fixed top-16 right-4 z-20 w-33 shadow-[0_10px_32px_#0009]',
+        pip && 'fixed right-4 bottom-20 z-20 w-33 shadow-[0_10px_32px_#0009] xl:bottom-4',
         mode === 'parked' && 'hidden',
       )}
     >

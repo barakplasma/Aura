@@ -100,7 +100,9 @@ async function main() {
     await page("Page.addScriptToEvaluateOnNewDocument", {
       source: `localStorage.setItem('aura.baseUrl', JSON.stringify('http://127.0.0.1:1/v1'));
                localStorage.setItem('aura.model', JSON.stringify('demo-model'));
-               localStorage.setItem('aura.mission', JSON.stringify('a person at the front door'));`,
+               localStorage.setItem('aura.mission', JSON.stringify('a person at the front door'));
+               localStorage.setItem('aura.scanEveryValue', JSON.stringify(1));
+               localStorage.setItem('aura.scanEveryUnit', JSON.stringify('s'));`,
     });
 
     for (const layout of LAYOUTS) {
@@ -191,6 +193,64 @@ async function main() {
         if (armed.pressed !== "true") failures.push(`${layout.name}: demo did not arm`);
         if (!armed.onScreen) failures.push(`${layout.name}: ARM off screen while armed`);
         if (!["watching", "alert", "degraded"].includes(armed.state)) failures.push(`${layout.name}: verdict is "${armed.state}" after a demo scan`);
+
+        // Review flows. The demo fires every third scan, so at a 1 s cadence
+        // the timeline has entries by now; the monitor is still armed.
+        await sleep(5000);
+        const nav = (id) => evaluate(`[...document.querySelectorAll('[data-nav="${id}"]')].find((n) => n.offsetParent)?.click()`);
+        const shot = async (name) => {
+          const r = await page("Page.captureScreenshot", { format: "png" });
+          writeFileSync(path.join(OUT, `${layout.name}-${name}.png`), Buffer.from(r.data, "base64"));
+        };
+        const clickText = (text, sel = "button") => evaluate(`(() => { const b = [...document.querySelectorAll('${sel}')].find((x) => x.textContent.trim().startsWith(${JSON.stringify(text)}) && x.offsetParent); if (!b) return false; b.click(); return true; })()`);
+        const examples = () => evaluate(`JSON.parse(localStorage.getItem('aura.training.examples') || '[]')`);
+
+        // A recent-scan dot on Watch opens its entry in Alerts.
+        const dot = await evaluate(`(() => { const b = document.querySelector('button[aria-label^="Open this"]'); if (!b) return false; b.click(); return true; })()`);
+        await sleep(600);
+        const landed = await evaluate(`!!document.querySelector('[data-nav="alerts"][aria-current="page"]')`);
+        if (!dot) failures.push(`${layout.name}: no recent-scan dot links to an entry`);
+        else if (!landed) failures.push(`${layout.name}: a recent-scan dot did not open Alerts`);
+
+        await nav("alerts");
+        await sleep(600);
+        const rows = await evaluate(`({ alerts: document.querySelectorAll('[data-entry="alert"]').length, preview: !!document.querySelector('aside[aria-label="Selected frame"]') })`);
+        await shot("alerts-populated");
+        console.log(`${layout.name}/alerts: ${rows.alerts} alert row(s)${layout.name === "desktop" ? `, preview ${rows.preview ? "shown" : "MISSING"}` : ""}`);
+        if (!rows.alerts) failures.push(`${layout.name}: the Alerts timeline is empty after demo alerts`);
+        if (layout.name === "desktop" && !rows.preview) failures.push("desktop: no frame preview beside the timeline");
+
+        if (layout.name === "desktop") {
+          // Marking from the timeline saves exactly the example it always did.
+          const before = (await examples()).length;
+          const marked = await clickText("False positive");
+          await sleep(400);
+          const after = await examples();
+          const last = after.at(-1);
+          if (!marked) failures.push("alerts: no False positive button");
+          else if (after.length !== before + 1 || last.type !== "detection" || last.triggered !== false || last.confidence !== 0
+            || last.reason !== "Operator marked this alert as a false positive.") {
+            failures.push(`alerts: marking a false positive saved ${JSON.stringify(last)}`);
+          }
+
+          // Send to Lab opens the Examples form pre-filled and saves nothing.
+          const sent = await clickText("Send to Lab");
+          await sleep(1500);
+          const form = await evaluate(`({ mission: document.querySelector('#train-mission')?.value, scene: document.querySelector('#train-scene')?.value })`);
+          await shot("lab-prefilled");
+          console.log(`desktop/lab prefill: mission "${form.mission}" · scene "${(form.scene || "").slice(0, 40)}"`);
+          if (!sent) failures.push("alerts: no Send to Lab button");
+          else if (form.mission !== "a person at the front door" || !form.scene) failures.push(`lab: Send to Lab did not prefill the form (${JSON.stringify(form)})`);
+          if ((await examples()).length !== after.length) failures.push("lab: Send to Lab saved an example by itself");
+
+          // Evaluate: the model list is grouped by engine.
+          await clickText("Evaluate", '[role="tab"]');
+          await sleep(800);
+          await shot("lab-evaluate");
+          const groups = await evaluate(`[...document.querySelectorAll('fieldset legend')].map((l) => l.textContent.trim())`);
+          console.log(`desktop/lab evaluate: model groups ${JSON.stringify(groups)}`);
+          if (!groups.includes("Provider")) failures.push("lab: Evaluate shows no Provider model group");
+        }
       } else {
         failures.push(`${layout.name}: no Try demo button on Watch`);
       }
@@ -208,7 +268,7 @@ async function main() {
       })()`);
       console.log(`service worker: scope ${sw.scope} · ${sw.state} · ${sw.urls.length} cached`);
       if (!sw.scope) failures.push("live: no service worker registered");
-      for (const need of ["/assets/app.js", "/assets/app.css", "/assets/ui.css"]) {
+      for (const need of ["/assets/app.js", "/assets/ui.css"]) {
         if (!sw.urls.some((u) => u.endsWith(need))) failures.push(`live: ${need} is not precached`);
       }
       if (sw.urls.some((u) => u.endsWith("/aura.css"))) failures.push("live: the removed aura.css is still precached");

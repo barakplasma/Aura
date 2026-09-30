@@ -10,7 +10,7 @@ const TABS = [
 export default function LabScreen({ tab, setTab, children }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div data-ui="" className="flex shrink-0 gap-2 border-b border-border bg-bg-1 p-2" role="tablist">
+      <div className="flex shrink-0 gap-2 border-b border-border bg-bg-1 p-2" role="tablist">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -27,7 +27,7 @@ export default function LabScreen({ tab, setTab, children }) {
           </button>
         ))}
       </div>
-      <div className="main-content">{children}</div>
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }

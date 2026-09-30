@@ -47,8 +47,9 @@ await Promise.all([
   copyOnnxRuntimeFiles(),
 ]);
 
-// Tailwind (utilities only) is a separate stylesheet from esbuild's app.css:
-// its scanner reads src/ for class names, which esbuild can't do.
+// The one stylesheet: Tailwind (tokens, reset, utilities) → assets/ui.css. Its
+// scanner reads src/ for class names, which esbuild can't do, so it runs as its
+// own step rather than as an esbuild CSS import.
 execFileSync(
   process.execPath,
   [

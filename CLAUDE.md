@@ -15,7 +15,7 @@ An **automated visual monitoring PWA** that runs entirely in the browser. A phon
   nothing. It writes no text, so a fired alert is worded by the provider, the BROWSER
   model, or a template. See `lib/decision.js` and docs/PRD-decision-engine.md.
 
-All three return the exact same result shape from `scanClient()` / `scanBrowser()` / `scanDecision()`, so `useMonitor`, telemetry, history, and the eval screen don't care which one is active.
+All three return the exact same result shape from `scanClient()` / `scanBrowser()` / `scanDecision()`, so `useMonitor`, telemetry, history, and the Lab's Evaluate tab don't care which one is active.
 
 ```text
 camera frame → 640x480 JPEG → detection call (user's provider + model)
@@ -31,16 +31,14 @@ camera frame → 640x480 JPEG → detection call (user's provider + model)
 
 React SPA built with esbuild (`scripts/build-react.js`): `src/main.jsx` → minified,
 code-split ESM bundles in `public/assets/` (with linked sourcemaps). There is no
-component framework: new UI is Tailwind v4 + shadcn-style components (Radix
-primitives, `class-variance-authority`, `lucide-react`) in `src/ui/` and
-`src/components/`. Two stylesheets: `src/tailwind.css` (tokens + utilities, built by
-the Tailwind CLI to `assets/ui.css`) and `src/legacy.css` (esbuild → `assets/app.css`),
-which only serves the `dc-*` / `section-label` / `form-group` vocabulary that
-Alerts and Lab still use until Phase 3 of `docs/PRD-ux-redesign.md`, plus the page base.
-Tailwind's reset is not imported (it would restyle those screens), so `[data-ui]`
-re-sets input/select/textarea colour and heading/paragraph margins itself. Tailwind's
-utilities are deliberately unlayered so they beat any unlayered legacy rule. New
-components carry `data-ui`, which scopes the few base rules they need.
+component framework: UI is Tailwind v4 + shadcn-style components (Radix primitives,
+`class-variance-authority`, `lucide-react`) in `src/ui/` (primitives) and
+`src/components/`, `src/setup/`, `src/alerts/`, `src/lab/` (screen parts). There is
+one stylesheet: `src/tailwind.css` — design tokens (`@theme`), Tailwind's reset, and
+its utilities — which the Tailwind CLI builds to `assets/ui.css` (esbuild can't scan
+class names, so it is its own build step). Utilities are unlayered on purpose so they
+always beat the reset. `docs/PRD-ux-redesign.md` is the plan this UI follows; Phases
+0–3 are done, Phase 4 (polish) is not.
 
 | Path                                  | Role                                                                                                                                                                |
 |---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -48,10 +46,10 @@ components carry `data-ui`, which scopes the few base rules they need.
 | `src/components/Stage.jsx`            | Always-mounted `<video>`/`<canvas>`, first child of `<main>` — full / collapsed / PiP / parked modes so scanning survives tab switches                              |
 | `src/components/AppShell.jsx`         | Header, tab bar (phone) / rail (≥1100 px), and the `<main>` grid that lays stage and panel side by side from 700 px                                                 |
 | `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                 |
-| `src/screens/`                        | WatchScreen (verdict + mission + arm bar), SetupScreen, LabScreen (Examples/Evaluate), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded)                     |
+| `src/screens/`                        | WatchScreen, SetupScreen, AlertsScreen (timeline), LabScreen wrapping OptimizeScreen (Examples) + EvalScreen (Evaluate), both lazy-loaded                           |
+| `src/alerts/`, `src/lab/`             | Alerts timeline parts (EntryRow, FramePreview, EntryActions); Lab Evaluate parts (SampleImages, PromptVariants, ModelPicker, ResultsTable)                          |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
-| `src/legacy.css`                      | Page base + the old `dc-*` vocabulary, for Alerts and Lab until Phase 3                                                                                             |
-| `src/tailwind.css`                    | Design tokens (`@theme`) + Tailwind utilities; scoped base rules under `[data-ui]`                                                                                  |
+| `src/tailwind.css`                    | The only stylesheet: design tokens (`@theme`), Tailwind reset, utilities → `assets/ui.css`                                                                          |
 | `src/monitoring.js`                   | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                                                |
 | `public/index.html`                   | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                                                   |
 | `public/feedback.js`                  | Web Speech + Web Vibration                                                                                                                                          |
@@ -217,7 +215,7 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Cost is estimated from token usage returned by the provider (always `0` for BROWSER).
 - BROWSER engine: needs WebGPU for a usable cadence (falls back to WASM, which is
   10-30s/scan). Even the best row in the table is not a substitute for a strong
-  cloud model — the eval screen exists to measure that trade-off.
+  cloud model — Lab › Evaluate exists to measure that trade-off.
 - Chrome built-in AI runtime (Gemini Nano): desktop Chrome 148+ / Chromebook Plus
   only — **not Chrome for Android**, so Aura's reference phone never sees it; Auto
   resolves to Transformers.js there. It runs on the main thread only (no worker),
@@ -230,7 +228,7 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
   limits before the first session, or a larger model silently drops to WASM and
   looks like "no WebGPU here". It must stay ahead of the first `from_pretrained`,
   and reading `env.backends.onnx.webgpu.device` is itself device-creating — don't.
-- Prompt optimization (OPTIMIZE screen) is PROVIDER-only. `@ax-llm/ax` drives HTTP
+- Prompt optimization (Lab › Examples) is PROVIDER-only. `@ax-llm/ax` drives HTTP
   providers and cannot reach a model running inside the page, so `App.jsx` hides
   the screen and `useMonitor` withholds the GEPA artifact when `aura.engine` is
   `browser` or `decision`. Few-shot examples still apply — `lib/training-store.js` imports no ax.

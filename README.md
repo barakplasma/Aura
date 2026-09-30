@@ -120,7 +120,7 @@ server at all. It's a static page.
 Because all three sources return the same shape, you can compare them: the
 **Evaluate** screen runs your own labelled frames through several models and prompts
 and scores them, so "is the tiny local model good enough for this camera?" is a
-measurement rather than a guess. The **Optimize** screen goes further and rewrites
+measurement rather than a guess. The Lab's **Examples** tab goes further and rewrites
 your prompt against your own examples.
 
 ## What your phone actually needs

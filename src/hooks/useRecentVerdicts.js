@@ -10,7 +10,7 @@ export function useRecentVerdicts(verdict, size = 5) {
     // 'watching' also names the "Monitoring…" lifecycle text; only a verdict
     // that carries a reason is a scan result.
     if (!SCAN_STATES.has(verdict.state) || verdict.reason == null) return;
-    setRecent((r) => [...r, { state: verdict.state, at: verdict.at }].slice(-size));
+    setRecent((r) => [...r, { state: verdict.state, at: verdict.at, entryId: verdict.entryId }].slice(-size));
   }, [verdict, size]);
   return recent;
 }
