@@ -1,0 +1,35 @@
+# Static hosting for the Aura PWA in the homelab (Traefik routes to this).
+#
+# Updates are automatic (sw.js skipWaiting), so the browser must always
+# revalidate sw.js and the shell — a cached sw.js would freeze the app on an
+# old build. Only content-hashed chunks and the ORT binaries are cached long.
+# COOP/COEP go on every response so even the first load is cross-origin
+# isolated; the service worker stamps them on afterwards.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	root * /srv
+	encode zstd gzip
+
+	header {
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Embedder-Policy require-corp
+		Cross-Origin-Resource-Policy same-origin
+	}
+
+	@immutable path /ort/* /assets/chunk-*
+	@mutable not path /ort/* /assets/chunk-*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+	header @mutable Cache-Control no-cache
+
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		file_server
+	}
+}

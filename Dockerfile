@@ -1,6 +1,6 @@
 # Aura, served as static files — for the homelab (homelab-manifests/apps/aura).
-# The PWA needs no backend: a small Go file server (deploy/server) in front of
-# the `npm run build` output. Traefik does the routing.
+# The PWA needs no backend: stock Caddy in front of the `npm run build` output.
+# Traefik does the routing.
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -10,14 +10,10 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
-FROM golang:1.24-alpine AS server
-WORKDIR /src
-COPY deploy/server/ .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /aura-server .
-
-FROM scratch
-COPY --from=server /aura-server /aura-server
+FROM caddy:2-alpine
+COPY deploy/caddy/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /app/public /srv
+# Non-root: Caddy needs a writable home for its state even with autohttps off.
+ENV XDG_DATA_HOME=/tmp XDG_CONFIG_HOME=/tmp
 USER 65532:65532
 EXPOSE 8080
-ENTRYPOINT ["/aura-server"]

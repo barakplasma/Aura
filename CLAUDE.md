@@ -191,7 +191,7 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Don't commit secrets. The API key stays in the user's localStorage.
 - Updates are automatic and must stay so: `sw.js` calls `skipWaiting()` on
   install and `useServiceWorkerUpdate` reloads on `controllerchange` — no prompt.
-  The Dockerfile's Go server (`deploy/server`) serves `sw.js`/`index.html` with `no-cache` so a new build is
+  The Dockerfile's Caddy (`deploy/caddy/Caddyfile`) serves `sw.js`/`index.html` with `no-cache` so a new build is
   seen at once; the homelab (`homelab-manifests/apps/aura`) runs that image and
   bumps its pin to each successful `image.yml` run.
 - `public/sw.js` is **generated** by `npm run build` (and gitignored — it isn't in
