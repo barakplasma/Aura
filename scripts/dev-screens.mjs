@@ -14,6 +14,10 @@
 //   node scripts/dev-screens.mjs
 //   STRICT=1 node scripts/dev-screens.mjs     # fail when ARM is off screen
 //   OUT=/some/dir node scripts/dev-screens.mjs
+//   BASE_URL=https://barakplasma.github.io/Aura/ OUT=/tmp/live node scripts/dev-screens.mjs
+//       # drive a deployed build instead of public/: same layout checks, plus
+//       # every asset request must succeed and the service worker must precache
+//       # the stylesheets (a sub-path deploy is where asset URLs break)
 
 import http from "node:http";
 import { mkdirSync, mkdtempSync, existsSync, writeFileSync } from "node:fs";
@@ -55,11 +59,13 @@ function fakeVideo(dir) {
 }
 
 async function main() {
-  if (!existsSync(path.join(PUBLIC, "assets", "app.js"))) throw new Error("run `npm run build` first");
+  if (!process.env.BASE_URL && !existsSync(path.join(PUBLIC, "assets", "app.js"))) throw new Error("run `npm run build` first");
   mkdirSync(OUT, { recursive: true });
   const work = mkdtempSync(path.join(tmpdir(), "aura-screens-"));
-  const server = await serve();
-  const origin = `http://127.0.0.1:${server.address().port}`;
+  const BASE = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/?$/, "/") : null;
+  const server = BASE ? null : await serve();
+  const origin = BASE ? BASE.slice(0, -1) : `http://127.0.0.1:${server.address().port}`;
+  const failedRequests = [];
   const { chrome, port } = launchChrome({ profile: path.join(work, "profile"), video: fakeVideo(work) });
 
   const failures = [];
@@ -71,7 +77,16 @@ async function main() {
     // Any uncaught exception in any screen is a failure: the branches a
     // screenshot doesn't reach (an engine's fields, a closed fold) would
     // otherwise only break in someone's hands.
+    if (BASE) await page("Network.enable");
+    const urls = new Map();
     cdp.on((msg) => {
+      if (msg.method === "Network.requestWillBeSent") urls.set(msg.params.requestId, msg.params.request.url);
+      if (msg.method === "Network.responseReceived" && msg.params.response.status >= 400) {
+        failedRequests.push(`${msg.params.response.status} ${msg.params.response.url}`);
+      }
+      if (msg.method === "Network.loadingFailed" && !msg.params.canceled) {
+        failedRequests.push(`failed (${msg.params.errorText}) ${urls.get(msg.params.requestId) || msg.params.requestId}`);
+      }
       if (msg.method === "Runtime.exceptionThrown") {
         const d = msg.params.exceptionDetails;
         failures.push(`uncaught exception: ${(d.exception?.description || d.text || "").split("\n")[0].slice(0, 200)}`);
@@ -89,7 +104,7 @@ async function main() {
       await page("Emulation.setDeviceMetricsOverride", {
         width: layout.width, height: layout.height, deviceScaleFactor: 1, mobile: layout.mobile,
       });
-      await page("Page.navigate", { url: origin + "/index.html" });
+      await page("Page.navigate", { url: BASE || origin + "/index.html" });
       await sleep(2500);
       for (const screen of SCREENS) {
         // Both navs exist in the DOM; click the one that is on screen (Lab is
@@ -177,10 +192,30 @@ async function main() {
         failures.push(`${layout.name}: no Try demo button on Watch`);
       }
     }
+    if (BASE) {
+      // What a deployed build has to get right that a local one can hide: the
+      // service worker registers under the sub-path and precaches the shell
+      // (including the Tailwind sheet), and no asset request failed.
+      const sw = await evaluate(`(async () => {
+        const reg = await navigator.serviceWorker.getRegistration();
+        const names = await caches.keys();
+        const urls = [];
+        for (const n of names) for (const r of await (await caches.open(n)).keys()) urls.push(new URL(r.url).pathname);
+        return { scope: reg && reg.scope, state: reg && (reg.active || reg.waiting || reg.installing)?.state, urls };
+      })()`);
+      console.log(`service worker: scope ${sw.scope} · ${sw.state} · ${sw.urls.length} cached`);
+      if (!sw.scope) failures.push("live: no service worker registered");
+      for (const need of ["/assets/app.js", "/assets/app.css", "/assets/ui.css"]) {
+        if (!sw.urls.some((u) => u.endsWith(need))) failures.push(`live: ${need} is not precached`);
+      }
+      if (sw.urls.some((u) => u.endsWith("/aura.css"))) failures.push("live: the removed aura.css is still precached");
+      for (const f of failedRequests) failures.push(`live request: ${f}`);
+      console.log(`network: ${failedRequests.length} failed request(s)`);
+    }
     cdp.close();
   } finally {
     chrome.kill();
-    server.close();
+    server?.close();
   }
   console.log(`screenshots → ${path.relative(ROOT, OUT)}/`);
   if (failures.length) {
