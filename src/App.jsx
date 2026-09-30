@@ -15,7 +15,7 @@ import LabScreen from './screens/LabScreen.jsx';
 import { Button } from './ui/button.jsx';
 import { Toast } from './ui/toast.jsx';
 import HistoryScreen from './screens/HistoryScreen.jsx';
-import SettingsScreen from './screens/SettingsScreen.jsx';
+import SetupScreen from './screens/SetupScreen.jsx';
 
 // Lazy — keeps the optimizer screen (and, transitively, @ax-llm/ax) out of
 // the initial bundle.
@@ -42,8 +42,6 @@ export default function App() {
   // next reload (or the next visit) offers it again.
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [previewCollapsed, setPreviewCollapsed] = useLocalStorage('aura.previewCollapsed', false);
-  // Transient provider messages (model fetch results/failures) shown in Settings.
-  const [statusMsg, setStatusMsg] = useState('');
 
   // Settings — persisted via localStorage (JSON-serialized by @uidotdev/usehooks)
   const [baseUrl, setBaseUrl] = useLocalStorage('aura.baseUrl', 'https://api.cerebras.ai/v1');
@@ -201,13 +199,6 @@ export default function App() {
     setDemoMode(false);
   }
 
-  function handleStatusMsg(msg) {
-    // Surfaced in the Settings PROVIDER section — a failed model fetch against
-    // a local server (CORS, server down) is otherwise invisible to the user.
-    console.info('[aura]', msg);
-    setStatusMsg(msg);
-  }
-
   // Eval-screen frame capture — only meaningful while the video element has
   // a live frame (same readiness gate the scan loop uses).
   function handleCaptureEvalFrame() {
@@ -257,6 +248,96 @@ export default function App() {
     && armed && resumeWindowOpen(armedAt, Date.now(), RESUME_WINDOW_MS);
 
   const showUpdateBanner = updateAvailable && !updateDismissed;
+
+  // What the Setup cards read and write, in one place instead of a hundred props.
+  const settingsView = {
+    engine,
+    browserModel,
+    browserRuntime,
+    decisionModel,
+    decisionUrl,
+    decisionKey,
+    decisionAnnouncer,
+    decisionFallback,
+    baseUrl,
+    apiKey,
+    model,
+    mission,
+    scanMode,
+    scanEveryValue,
+    scanEveryUnit,
+    budgetPerHour,
+    networkMbPerHour,
+    videoSource,
+    captureSize,
+    customCaptureWidth,
+    customCaptureHeight,
+    cameraFacing,
+    cameraDeviceId,
+    keepScreenOn,
+    speech,
+    haptics,
+    webhookUrl,
+    webhookMethod,
+    webhookHeaders,
+    webhookAction,
+    webhookSchema,
+    webhookIncludeImage,
+    objectGate,
+    objectModel,
+    objectGateEveryS,
+    objectClasses,
+    objectWakeOn,
+    objectMoveFrac,
+    objectSens,
+    heartbeatMin,
+    objectPromptContext,
+    vlmIdleEvictMin,
+  };
+  const settingsSetters = {
+    engine: setEngine,
+    browserModel: setBrowserModel,
+    browserRuntime: setBrowserRuntime,
+    decisionModel: setDecisionModel,
+    decisionUrl: setDecisionUrl,
+    decisionKey: setDecisionKey,
+    decisionAnnouncer: setDecisionAnnouncer,
+    decisionFallback: setDecisionFallback,
+    baseUrl: setBaseUrl,
+    apiKey: setApiKey,
+    model: setModel,
+    mission: setMission,
+    scanMode: setScanMode,
+    scanEveryValue: setScanEveryValue,
+    scanEveryUnit: setScanEveryUnit,
+    budgetPerHour: setBudgetPerHour,
+    networkMbPerHour: setNetworkMbPerHour,
+    videoSource: setVideoSource,
+    captureSize: setCaptureSize,
+    customCaptureWidth: setCustomCaptureWidth,
+    customCaptureHeight: setCustomCaptureHeight,
+    cameraFacing: setCameraFacing,
+    cameraDeviceId: setCameraDeviceId,
+    keepScreenOn: setKeepScreenOn,
+    speech: setSpeech,
+    haptics: setHaptics,
+    webhookUrl: setWebhookUrl,
+    webhookMethod: setWebhookMethod,
+    webhookHeaders: setWebhookHeaders,
+    webhookAction: setWebhookAction,
+    webhookSchema: setWebhookSchema,
+    webhookIncludeImage: setWebhookIncludeImage,
+    objectGate: setObjectGate,
+    objectModel: setObjectModel,
+    objectGateEveryS: setObjectGateEveryS,
+    objectClasses: setObjectClasses,
+    objectWakeOn: setObjectWakeOn,
+    objectMoveFrac: setObjectMoveFrac,
+    objectSens: setObjectSens,
+    heartbeatMin: setHeartbeatMin,
+    objectPromptContext: setObjectPromptContext,
+    vlmIdleEvictMin: setVlmIdleEvictMin,
+  };
 
   return (
     <div className="flex h-dvh flex-col">
@@ -319,68 +400,21 @@ export default function App() {
           </LabScreen>
         )}
         {screen === 'setup' && (
-          <div className="main-content">
-            <div data-ui="" className="shrink-0 border-b border-border bg-bg-1 p-2 xl:hidden">
-              <Button variant="outline" className="w-full" onClick={() => setScreen('lab')}>
-                Lab — examples &amp; evaluation
-              </Button>
-            </div>
-            <SettingsScreen
-              engine={engine} setEngine={setEngine}
-              browserModel={browserModel} setBrowserModel={setBrowserModel}
-              browserRuntime={browserRuntime} setBrowserRuntime={setBrowserRuntime}
-              decisionModel={decisionModel} setDecisionModel={setDecisionModel}
-              decisionUrl={decisionUrl} setDecisionUrl={setDecisionUrl}
-              decisionKey={decisionKey} setDecisionKey={setDecisionKey}
-              decisionAnnouncer={decisionAnnouncer} setDecisionAnnouncer={setDecisionAnnouncer}
-              decisionFallback={decisionFallback} setDecisionFallback={setDecisionFallback}
-              baseUrl={baseUrl} setBaseUrl={setBaseUrl}
-              apiKey={apiKey} setApiKey={setApiKey}
-              model={model} setModel={setModel}
-              scanMode={scanMode} setScanMode={setScanMode}
-              scanEveryValue={scanEveryValue} setScanEveryValue={setScanEveryValue}
-              scanEveryUnit={scanEveryUnit} setScanEveryUnit={setScanEveryUnit}
-              budgetPerHour={budgetPerHour} setBudgetPerHour={setBudgetPerHour}
-              networkMbPerHour={networkMbPerHour} setNetworkMbPerHour={setNetworkMbPerHour}
-              // On DECISION the token rates shown are the provider's (it
-              // announces and falls back); the decision rate rides along.
-              pricing={engine === 'decision' ? { ...providerPricing, perSecond: pricing.perSecond } : pricing}
-              pricingOverride={pricingOverride}
-              onSetPricingOverride={(override) => setPricingOverrides((current) => ({ ...current, [pricingKey(baseUrl, model)]: override }))}
-              onResetPricingOverride={() => setPricingOverrides((current) => {
-                const next = { ...current };
-                delete next[pricingKey(baseUrl, model)];
-                return next;
-              })}
-              videoSource={videoSource} setVideoSource={setVideoSource}
-              captureSize={captureSize} setCaptureSize={setCaptureSize}
-              customCaptureWidth={customCaptureWidth} setCustomCaptureWidth={setCustomCaptureWidth}
-              customCaptureHeight={customCaptureHeight} setCustomCaptureHeight={setCustomCaptureHeight}
-              cameraFacing={cameraFacing} setCameraFacing={setCameraFacing}
-              cameraDeviceId={cameraDeviceId} setCameraDeviceId={setCameraDeviceId}
-              keepScreenOn={keepScreenOn} setKeepScreenOn={setKeepScreenOn}
-              mission={mission}
-              objectGate={objectGate} setObjectGate={setObjectGate}
-              objectModel={objectModel} setObjectModel={setObjectModel}
-              objectGateEveryS={objectGateEveryS} setObjectGateEveryS={setObjectGateEveryS}
-              objectClasses={objectClasses} setObjectClasses={setObjectClasses}
-              objectWakeOn={objectWakeOn} setObjectWakeOn={setObjectWakeOn}
-              objectMoveFrac={objectMoveFrac} setObjectMoveFrac={setObjectMoveFrac}
-              objectSens={objectSens} setObjectSens={setObjectSens}
-              heartbeatMin={heartbeatMin} setHeartbeatMin={setHeartbeatMin}
-              objectPromptContext={objectPromptContext} setObjectPromptContext={setObjectPromptContext}
-              vlmIdleEvictMin={vlmIdleEvictMin} setVlmIdleEvictMin={setVlmIdleEvictMin}
-              webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
-              webhookMethod={webhookMethod} setWebhookMethod={setWebhookMethod}
-              webhookHeaders={webhookHeaders} setWebhookHeaders={setWebhookHeaders}
-              webhookAction={webhookAction} setWebhookAction={setWebhookAction}
-              webhookSchema={webhookSchema} setWebhookSchema={setWebhookSchema}
-              webhookIncludeImage={webhookIncludeImage} setWebhookIncludeImage={setWebhookIncludeImage}
-              statusMsg={statusMsg}
-              onStatusMsg={handleStatusMsg}
-              captureFrame={handleCaptureEvalFrame}
-            />
-          </div>
+          <SetupScreen
+            s={settingsView} set={settingsSetters}
+            captureFrame={handleCaptureEvalFrame}
+            onOpenLab={() => setScreen('lab')}
+            // On DECISION the token rates shown are the provider's (it
+            // announces and falls back); the decision rate rides along.
+            pricing={engine === 'decision' ? { ...providerPricing, perSecond: pricing.perSecond } : pricing}
+            pricingOverride={pricingOverride}
+            onSetPricingOverride={(override) => setPricingOverrides((current) => ({ ...current, [pricingKey(baseUrl, model)]: override }))}
+            onResetPricingOverride={() => setPricingOverrides((current) => {
+              const next = { ...current };
+              delete next[pricingKey(baseUrl, model)];
+              return next;
+            })}
+          />
         )}
       </AppShell>
     </div>

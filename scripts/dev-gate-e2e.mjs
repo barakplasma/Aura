@@ -321,6 +321,7 @@ async function main() {
   const press = async (selector) => {
     const box = await evaluate(`(() => {
       const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.offsetParent);
+      el.scrollIntoView({ block: 'center' });
       const r = el.getBoundingClientRect();
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
     })()`);
@@ -359,11 +360,28 @@ async function main() {
   if (GATE) {
     await press('[data-nav="setup"]');
     await sleep(1000);
+    // The gate block lives in a fold (Setup > Advanced > Object gate), and a
+    // closed fold doesn't mount its controls — open it to render them.
+    await press('[data-advanced-item="Object gate"]');
+    await sleep(500);
     settingsRender = await evaluate(`(() => ({
-      toggle: document.querySelector('#object-gate-toggle')?.checked === true,
-      wakeOn: /WAKE ON/.test(document.body.innerText) && /MOVED/.test(document.body.innerText),
+      toggle: document.querySelector('#object-gate-toggle')?.getAttribute('aria-checked') === 'true',
+      wakeOn: /wake on/i.test(document.body.innerText) && /moved/i.test(document.body.innerText),
     }))()`);
   }
+
+  // Setup's "Test on current frame" (every engine): one real detection pass on
+  // the frame the armed stage is showing, through the same scan function.
+  await press('[data-nav="setup"]');
+  await sleep(800);
+  await press("#frame-test-btn");
+  let frameTest = "";
+  for (let i = 0; i < 150 && !frameTest; i++) {
+    await sleep(1000);
+    frameTest = await evaluate(`document.querySelector('#frame-test-result')?.innerText.replace(/\\s+/g, ' ').trim() || ''`);
+  }
+  console.log(`frame test: ${frameTest || "(no result)"}`);
+  if (ENGINE === "decision") console.log(`decision scans ${scans.length}, polls ${polls.length}`);
 
   cdp.close();
   chrome.kill("SIGKILL");
@@ -390,11 +408,14 @@ async function main() {
     ["…and the bus", sawBus],
     ["the empty room reads as empty", sawEmpty],
     ["the VLM ran (at least the baseline scan)", vlmCalls >= 1],
+    ["Setup's Test on current frame answers on the live frame", /^(Clear|Would alert)/.test(frameTest)],
     ["Settings renders the gate block (toggle on, WAKE ON kinds listed)",
       Boolean(settingsRender?.toggle && settingsRender?.wakeOn)],
     ...(ENGINE === "decision"
       ? [
-          ["every prediction was polled to completion", polls.length >= scans.length && scans.length >= 1],
+          // The monitor is still armed when the counters are read, so the newest
+          // prediction can be mid-flight: allow exactly one unpolled.
+          ["every prediction was polled to completion", polls.length >= scans.length - 1 && scans.length >= 1],
           ["the user's own token was forwarded, nothing else", [...decisionAuth].join() === "Bearer r8_e2e"],
         ]
       : []),

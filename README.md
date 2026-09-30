@@ -80,7 +80,7 @@ describing what you care about.
 ## Bring your own intelligence
 
 Aura has no model of its own and no opinion about whose you use. Three sources,
-switchable in Settings, all feeding the exact same loop:
+switchable in Setup, all feeding the exact same loop:
 
 | Source                             | What it is                                                                                                                               | Good for                                                                 |
 |------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
@@ -91,7 +91,7 @@ switchable in Settings, all feeding the exact same loop:
 The in-browser source picks its own brain: **Qwen3.5 0.8B** by default — an ONNX
 conversion downloaded once (~875 MB, then cached), with smaller models as
 fallbacks for modest devices. On desktop Chrome 148+ there is a second runtime,
-Chrome's built-in Gemini Nano, which Settings can prefer explicitly; AUTO only
+Chrome's built-in Gemini Nano, which Setup can prefer explicitly; AUTO only
 chooses it when it is already downloaded and image-capable, and it doesn't exist
 on Chrome for Android — phones always get the Transformers.js model.
 
@@ -128,7 +128,7 @@ your prompt against your own examples.
 Cloud and local-server engines need nothing but a browser and a network — all
 the work happens elsewhere, so a five-year-old phone is fine. The requirements
 below are for running a model **on the device**, and they are per model. Every
-one of these is built in and picked in Settings; Aura probes the GPU adapter's
+one of these is built in and picked in Setup; Aura probes the GPU adapter's
 real buffer limits and the reported memory on arrival and selects the largest
 one the device can actually run, falling back rather than failing.
 
@@ -160,7 +160,7 @@ sustained in-browser inference makes a phone hot, and a hot phone throttles. The
 **object gate** exists for exactly this — a 3 MB detector watches for changes
 and only wakes the big model when the set of objects in frame actually changes,
 which takes the GPU from busy most of the time to busy almost never. Turn it on
-in Settings → OBJECT GATE.
+in Setup → Advanced → Object gate.
 
 ## Being honest about it
 

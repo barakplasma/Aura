@@ -68,6 +68,15 @@ async function main() {
     const { page, evaluate } = await openPage(cdp);
     await page("Page.enable");
     await page("Runtime.enable");
+    // Any uncaught exception in any screen is a failure: the branches a
+    // screenshot doesn't reach (an engine's fields, a closed fold) would
+    // otherwise only break in someone's hands.
+    cdp.on((msg) => {
+      if (msg.method === "Runtime.exceptionThrown") {
+        const d = msg.params.exceptionDetails;
+        failures.push(`uncaught exception: ${(d.exception?.description || d.text || "").split("\n")[0].slice(0, 200)}`);
+      }
+    });
     // Configured enough that the app doesn't show a first-run state, without
     // touching the network: a local provider URL, no key.
     await page("Page.addScriptToEvaluateOnNewDocument", {
@@ -102,6 +111,38 @@ async function main() {
         await sleep(900);
         const { data } = await page("Page.captureScreenshot", { format: "png" });
         writeFileSync(path.join(OUT, `${layout.name}-${screen}.png`), Buffer.from(data, "base64"));
+        if (screen === "setup") {
+          // Setup scrolls inside its own container, so a viewport shot only
+          // shows its top. Grow the viewport to the content for a full one.
+          await page("Emulation.setDeviceMetricsOverride", { width: layout.width, height: 4200, deviceScaleFactor: 1, mobile: layout.mobile });
+          await sleep(400);
+          const full = await page("Page.captureScreenshot", { format: "png" });
+          writeFileSync(path.join(OUT, `${layout.name}-setup-full.png`), Buffer.from(full.data, "base64"));
+          await page("Emulation.setDeviceMetricsOverride", { width: layout.width, height: layout.height, deviceScaleFactor: 1, mobile: layout.mobile });
+          await sleep(300);
+          if (layout.name === "desktop") {
+            // Every engine's fields, and every Advanced fold, rendered.
+            const click = (expr) => evaluate(`(() => { const el = ${expr}; if (!el) return false; el.click(); return true; })()`);
+            for (const [engine, label] of [["browser", "In-browser"], ["decision", "Decision"], ["provider", "Provider"]]) {
+              const ok = await click(`[...document.querySelectorAll('[role=radio]')].find((b) => b.textContent.startsWith('${label}'))`);
+              if (!ok) { failures.push(`setup: no ${label} engine card`); continue; }
+              await sleep(800);
+              if (engine !== "provider") {
+                await click(`[...document.querySelectorAll('[data-advanced-item]')].find((b) => b.dataset.advancedItem === 'Object gate')`);
+                for (const item of await evaluate(`[...document.querySelectorAll('[data-advanced-item]')].map((b) => b.dataset.advancedItem)`)) {
+                  if (item !== "Object gate") await click(`[...document.querySelectorAll('[data-advanced-item]')].find((b) => b.dataset.advancedItem === ${JSON.stringify(item)})`);
+                }
+                await sleep(500);
+                await page("Emulation.setDeviceMetricsOverride", { width: layout.width, height: 5200, deviceScaleFactor: 1, mobile: false });
+                await sleep(400);
+                const shot = await page("Page.captureScreenshot", { format: "png" });
+                writeFileSync(path.join(OUT, `desktop-setup-${engine}.png`), Buffer.from(shot.data, "base64"));
+                await page("Emulation.setDeviceMetricsOverride", { width: layout.width, height: layout.height, deviceScaleFactor: 1, mobile: false });
+                await sleep(300);
+              }
+            }
+          }
+        }
         if (screen === "watch") {
           const box = await evaluate(
             `(() => { const b = document.querySelector('#toggle'); if (!b) return null;

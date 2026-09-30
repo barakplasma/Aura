@@ -61,6 +61,18 @@
     font-size: var(--text-sm);
     color: var(--color-text);
     font-variant-numeric: tabular-nums;
+    color-scheme: dark;
+  }
+
+  [data-ui] input,
+  [data-ui] select,
+  [data-ui] textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  [data-ui] :is(h1, h2, h3, h4, p, pre) {
+    margin: 0;
   }
 
   [data-ui] button {

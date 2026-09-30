@@ -49,12 +49,12 @@ Aura needs an inference source before it will do anything. Pick one.
 
 ### A hosted provider
 
-In **Settings → Provider**:
+In **Setup → Engine → Provider**:
 
 1. **Base URL** — the OpenAI-compatible endpoint, e.g. `https://api.cerebras.ai/v1`
 2. **API key** — your key. It's stored in `localStorage` and sent only to that base
    URL. Blank is valid (see local servers below).
-3. **Model** — press **FETCH MODELS** to list what the endpoint offers
+3. **Model** — press **Fetch models** to list what the endpoint offers
    (`GET /v1/models`), or type a name.
 
 Any API implementing `POST /v1/chat/completions` with vision works: Cerebras,
@@ -89,9 +89,9 @@ llama-server -m your-vision-model.gguf --cors    # → http://localhost:8080/v1
 # and enable CORS in the server settings.        → http://localhost:1234/v1
 ```
 
-Then in **Settings → Provider** press the **OLLAMA** / **LM STUDIO** / **LLAMA.CPP**
+Then in **Setup → Engine → Provider** pick the **Ollama** / **LM Studio** / **llama.cpp**
 preset (which also zeroes the cost rate), **leave the API key blank** — no
-`Authorization` header is sent when it's empty — and **FETCH MODELS**.
+`Authorization` header is sent when it's empty — and **Fetch models**.
 
 Two gotchas:
 
@@ -104,10 +104,11 @@ Two gotchas:
 
 ### In the browser itself
 
-In **Settings → Provider**, switch **ENGINE** to **BROWSER**, then
-**DOWNLOAD / LOAD** the model. Progress is shown; weights are cached by the browser
-afterwards, so it happens once, and works offline after that. **TEST ON CURRENT
-FRAME** runs a single scan before you arm; **CLEAR MODEL CACHE** frees the weights.
+In **Setup → Engine**, choose **In-browser**, then **Download / load** the model.
+Progress is shown; weights are cached by the browser afterwards, so it happens once,
+and works offline after that. **Test on current frame** (step 3, every engine) runs a
+single scan on the live camera frame, so arm the monitor first; **Clear model cache**
+frees the weights.
 
 The model is picked from a table (`lib/browser-models.js`) based on what the device
 can actually run — currently SmolVLM2 500M by default, with LFM2.5-VL 450M,
@@ -122,7 +123,7 @@ sample frames before trusting it for a given camera.
 
 ### Turning on the object gate
 
-Settings → OBJECT GATE puts a small YOLO26 detector (3–5 MB) in front of the
+Setup → Advanced → Object gate puts a small YOLO26 detector (3–5 MB) in front of the
 vision model: it looks every couple of seconds and only wakes the expensive
 model when the *set of objects* in frame changes. Worth it on any scene that
 mostly sits still, and the main lever against a phone that gets hot while armed.
@@ -170,10 +171,10 @@ system monospace and sans-serif. Layout is unaffected — only the typeface chan
 Aura is meant to be propped on a shelf and left running, and tries to survive the
 usual interruptions. What it recovers from depends on the platform:
 
-- **Backgrounding (app switch, lock screen, a phone call).** With **KEEP SCREEN ON**
-  (Settings → Camera, on by default) Aura holds a screen wake lock while armed, so an
+- **Backgrounding (app switch, lock screen, a phone call).** With **Keep screen on**
+  (Setup → Advanced → Keep screen on, on by default) Aura holds a screen wake lock while armed, so an
   Android screen won't dim and lock. If the tab is hidden anyway the browser throttles
-  the scan loop without stopping it, and the status line says so; returning to the tab
+  the scan loop without stopping it, and the verdict card says so; returning to the tab
   fires an immediate scan if the gap overran. If the OS reclaims the camera, Aura
   detects the lost or muted track and reconnects, retrying three times before giving
   up with "Camera lost — tap ARM to retry".
@@ -200,7 +201,8 @@ src/
   monitoring.js           Bugsink (Sentry-compatible) error tracking
   components/             Stage (always-mounted video/canvas), AppShell, VerdictCard, ...
   ui/                     shadcn-style primitives (Tailwind + Radix)
-  screens/                Watch, Lab, History, Optimize, Eval, Settings
+  screens/                Watch, Setup, Lab, History, Optimize, Eval
+  setup/                  Setup cards: engine wizard, cadence, delivery, camera, advanced
   hooks/useMonitor.js     Camera capture + scan loop + alert delivery + telemetry
   workers/ml.worker.js    Runs the in-browser VLM — the ONLY file importing
                           @huggingface/transformers (kept out of the main bundle)

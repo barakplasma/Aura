@@ -323,7 +323,8 @@ Every control today and where it lives after. Keys (`aura.*`) do not change.
 | Settings · Fetch vision models                                               | Setup · Engine wizard step 2 (populates the picker)  |
 | Settings · Browser model, Runtime                                            | Setup · Engine wizard step 2 (In-browser)            |
 | Settings · Decision model, relay, token, announcer, fallback, Test           | Setup · Engine wizard step 2–3 (Decision)            |
-| Settings · Sensitivity                                                       | Watch · Mission card slider                          |
+| Settings · Sensitivity (object gate)                                         | Setup · Advanced › Object gate                       |
+| (new) alert threshold                                                        | Watch · Mission card slider (`aura.threshold`)       |
 | Settings · Mode, Scan every, Max $/hour, Max MB/hour                         | Setup · Cadence & cost                               |
 | Settings · Model pricing override                                            | Setup · Advanced                                     |
 | Settings · Object gate (all ten controls)                                    | Setup · Advanced › Object gate                       |
@@ -374,6 +375,19 @@ Each phase is one PR, ships on its own, and leaves the app working.
 - Inline validation replaces `statusMsg`.
 - Acceptance: a fresh install reaches a passing frame test in three taps per
   engine (scripted); no control from the capability map is missing.
+
+Status: built. Where it differs from the plan above:
+
+- The Advanced card is a list of folded rows, each showing its current value,
+  rather than one fold containing all of them: the summaries are the point, so
+  they are visible without a tap.
+- `DecisionSettings` became `src/setup/DecisionFields.jsx`; `SettingsScreen` is
+  gone, replaced by `SetupScreen` and the cards in `src/setup/`.
+- "Test on current frame" is `lib/frame-test.js` (tested); it needs an armed
+  monitor, since the frame comes from the live stage. The e2e drives it against
+  the fake camera and provider, and against the fake Replicate.
+- Not done: the scripted three-tap fresh-install path. The tap count is real
+  (choose, connect, test) but nothing asserts it.
 
 ### Phase 3 — Alerts and Lab
 

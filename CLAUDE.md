@@ -36,9 +36,10 @@ primitives, `class-variance-authority`, `lucide-react`) in `src/ui/` and
 `src/components/`. Two stylesheets: `src/tailwind.css` (tokens + utilities, built by
 the Tailwind CLI to `assets/ui.css`) and `src/legacy.css` (esbuild → `assets/app.css`),
 which only serves the `dc-*` / `section-label` / `form-group` vocabulary that
-Setup, Alerts and Lab still use until their phases in `docs/PRD-ux-redesign.md`, plus
-the page base. Tailwind's reset is not imported (it would restyle those screens);
-its utilities are deliberately unlayered so they beat any unlayered legacy rule. New
+Alerts and Lab still use until Phase 3 of `docs/PRD-ux-redesign.md`, plus the page base.
+Tailwind's reset is not imported (it would restyle those screens), so `[data-ui]`
+re-sets input/select/textarea colour and heading/paragraph margins itself. Tailwind's
+utilities are deliberately unlayered so they beat any unlayered legacy rule. New
 components carry `data-ui`, which scopes the few base rules they need.
 
 | Path                                  | Role                                                                                                                                                                |
@@ -47,9 +48,9 @@ components carry `data-ui`, which scopes the few base rules they need.
 | `src/components/Stage.jsx`            | Always-mounted `<video>`/`<canvas>`, first child of `<main>` — full / collapsed / PiP / parked modes so scanning survives tab switches                              |
 | `src/components/AppShell.jsx`         | Header, tab bar (phone) / rail (≥1100 px), and the `<main>` grid that lays stage and panel side by side from 700 px                                                 |
 | `src/components/VerdictCard.jsx`      | Renders the structured verdict: state, headline, confidence vs. threshold, degradation note + sheet, why, next scan                                                 |
-| `src/screens/`                        | WatchScreen (verdict + mission + arm bar), LabScreen (Examples/Evaluate wrapper), HistoryScreen, SettingsScreen, OptimizeScreen + EvalScreen (lazy-loaded)          |
+| `src/screens/`                        | WatchScreen (verdict + mission + arm bar), SetupScreen, LabScreen (Examples/Evaluate), HistoryScreen, OptimizeScreen + EvalScreen (lazy-loaded)                     |
 | `src/hooks/useMonitor.js`             | Camera capture + scan loop + alert delivery + telemetry                                                                                                             |
-| `src/legacy.css`                      | Page base + the old `dc-*` form vocabulary, for screens not yet redesigned                                                                                          |
+| `src/legacy.css`                      | Page base + the old `dc-*` vocabulary, for Alerts and Lab until Phase 3                                                                                             |
 | `src/tailwind.css`                    | Design tokens (`@theme`) + Tailwind utilities; scoped base rules under `[data-ui]`                                                                                  |
 | `src/monitoring.js`                   | Initializes Bugsink (Sentry-compatible) error tracking; imported first in `main.jsx`                                                                                |
 | `public/index.html`                   | Tiny shell: mounts `#root`, loads `assets/app.js`                                                                                                                   |
@@ -57,7 +58,8 @@ components carry `data-ui`, which scopes the few base rules they need.
 | `lib/aura.js`                         | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models; `runProviderLeg()` announces for DECISION                     |
 | `lib/decision.js`                     | DECISION engine: `scanDecision()`, mission → question, one pure `toRequest`/`fromResponse` adapter per wire dialect, relay templates, polling, provider fallback    |
 | `lib/decision-models.js`              | `DECISION_MODELS` table (dialect, pinned Replicate version, per-second price) + relay presets — pure                                                                |
-| `src/components/DecisionSettings.jsx` | DECISION card in Settings: model row, relay/server URL, the user's own key, announcer, fallback                                                                     |
+| `src/setup/`                          | Setup cards: EngineCard (choose, connect, test), Provider/Browser/DecisionFields, Cadence, Delivery, Camera, Advanced (folds with value summaries)                  |
+| `lib/frame-test.js`                   | "Test on current frame" for every engine: one threshold-0 detection pass via injected scan functions; DECISION runs with no fallback                                |
 | `lib/verdict.js`                      | Pure result model: `fromScan()` + `verdicts.*` build every status the monitor shows, as a structured verdict plus its legacy one-line text                          |
 | `lib/monitor.js`                      | Pure functions: prompt builders, JSON parsers, usage normalization (used by aura.js + browser-engine.js + tests)                                                    |
 | `lib/browser-engine.js`               | BROWSER engine facade: `scanBrowser()`, worker lifecycle + runtime choice; re-exports the model table                                                               |

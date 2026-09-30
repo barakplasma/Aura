@@ -90,7 +90,6 @@ body {
   resize: vertical;
 }
 
-.field-hint,
 .status-msg {
   display: block;
   margin-top: 7px;
@@ -99,7 +98,6 @@ body {
   line-height: 1.4;
 }
 
-.mode-segments,
 .inline-row,
 .btn-row {
   display: flex;
@@ -108,7 +106,6 @@ body {
   flex-wrap: wrap;
 }
 
-.mode-segment,
 .dc-btn,
 .mark-btn {
   border: 0;
@@ -120,11 +117,6 @@ body {
   font-weight: 650;
 }
 
-.mode-segment {
-  flex: 1;
-}
-
-.mode-segment:not(.active),
 .dc-btn.outline {
   background: #252b35;
 }
@@ -137,30 +129,6 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
-}
-
-.model-row {
-  display: flex;
-  gap: 8px;
-}
-
-.model-dropdown,
-.provider-dropdown {
-  background: #101319;
-  border: 1px solid #343b46;
-  border-radius: 10px;
-  padding: 6px;
-}
-
-.model-dropdown-item,
-.provider-dropdown-item {
-  padding: 8px;
-}
-
-.provider-dropdown-label {
-  padding: 8px;
-  color: #98a2b3;
-  font-size: 0.75rem;
 }
 
 .screen-history {
