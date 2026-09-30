@@ -17,4 +17,4 @@ COPY --from=build /app/public /srv
 ENV XDG_DATA_HOME=/tmp XDG_CONFIG_HOME=/tmp
 USER 65532:65532
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=3s CMD ["wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
