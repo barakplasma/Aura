@@ -54,6 +54,29 @@
   }
 }
 
+/* Light variant of the tokens (docs/PRD-ux-redesign.md, Phase 4), following the
+   OS. Status colors darken so text on them and they on the page both clear
+   4.5:1; the camera stage is video and needs no change. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-bg-0: #f6f8fb;
+    --color-bg-1: #ffffff;
+    --color-bg-2: #e9edf3;
+    --color-border: #c4ccd8;
+    --color-text: #10151c;
+    --color-text-dim: #485467;
+    --color-accent: #1d5fd1;
+    --color-ok: #047857;
+    --color-warn: #a84b08;
+    --color-danger: #b91c1c;
+    --color-info: #0369a1;
+  }
+
+  body {
+    color-scheme: light;
+  }
+}
+
 @layer base {
   html,
   body,

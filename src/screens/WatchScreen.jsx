@@ -9,7 +9,7 @@ import VerdictCard from '../components/VerdictCard.jsx';
 // to the bottom outside the scroll area.
 export default function WatchScreen({
   verdict, recent, running, progress, telemetry, engine, modelLabel, providerReady, demoMode,
-  onToggle, onDemo, onOpenSetup, onOpenLab, onOpenEntry, mission, ...missionProps
+  onToggle, onDemo, onInstall, onOpenSetup, onOpenLab, onOpenEntry, mission, ...missionProps
 }) {
   // Only while the object gate is actually running: without it there is
   // nothing here the verdict doesn't already say.
@@ -30,6 +30,15 @@ export default function WatchScreen({
             </p>
             <div className="mt-3">
               <Button variant="outline" onClick={onOpenSetup}>Open setup</Button>
+            </div>
+          </Card>
+        )}
+        {onInstall && !running && (
+          <Card data-install-prompt="">
+            <p className="font-semibold">Install Aura</p>
+            <p className="mt-1 text-text-dim">Runs full screen, starts offline, and keeps a long watch steadier than a browser tab.</p>
+            <div className="mt-3">
+              <Button variant="outline" onClick={onInstall}>Install app</Button>
             </div>
           </Card>
         )}

@@ -20,18 +20,11 @@ const precached = new Set(
 );
 
 self.addEventListener("install", (event) => {
-  // Deliberately no skipWaiting(): a new worker stays waiting until every tab
-  // is gone. Swapping mid-session would let activate() delete the hashed
-  // chunks a running monitor still needs to lazy-load.
+  // Updates apply themselves: skipWaiting() hands control to the new worker
+  // at once and the page reloads (src/hooks/useServiceWorkerUpdate.js). An
+  // armed monitor resumes on its own after that reload.
+  self.skipWaiting();
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)));
-});
-
-// Opt-in only: the page's "update available" prompt (see src/main.jsx) posts
-// this after the operator explicitly asks to reload now. A waiting worker
-// never skips on its own — only an explicit user action interrupts a
-// possibly-running monitor session.
-self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {

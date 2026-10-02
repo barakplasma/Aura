@@ -430,6 +430,26 @@ Status: built. Where it differs from the plan above:
   sheets on phone.
 - Accessibility pass: every control labelled, contrast ≥ 4.5:1, focus rings.
 
+Status: built, with one deliberate change. The update toast is gone rather than
+becoming a sheet: updates now apply automatically (see below), so there is
+nothing to ask. Where it differs from the plan above:
+
+- Shortcuts are `lib/shortcuts.js` (pure, tested). Space is left to a focused
+  button, digits and Space to anything that takes text, and all of them to an
+  open dialog or menu. Esc was already Radix's.
+- The light tokens follow `prefers-color-scheme` (no manual switch); status
+  colors darken so they clear 4.5:1 on the light surfaces. `theme-color` has a
+  light variant.
+- The install prompt is a card on Watch, shown only when the browser has fired
+  `beforeinstallprompt` and the monitor is not running.
+- Updates are automatic: `sw.js` calls `skipWaiting()` on install, the page
+  reloads on `controllerchange`, and an armed monitor resumes itself after that
+  reload (`aura.updatedReload` in sessionStorage; an ordinary interrupted
+  reload still offers RESUME). A long-lived tab checks for a new build on
+  focus and every 10 minutes. The cost is one reload of a running monitor per
+  deploy, a few seconds of missed scanning.
+- Not done: an automated contrast audit; the ratios were chosen by hand.
+
 ## Open questions for the owner
 
 1. ~~Drop Ionic?~~ Decided: dropped, on Tailwind + shadcn-style components.
