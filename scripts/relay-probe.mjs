@@ -11,8 +11,8 @@
 // contract is checked (preflight passes our three headers, Authorization
 // reaches Replicate, CORS headers on the answer). Without it the operator
 // relay's abuse controls are checked too: 404 without a token / from another
-// origin / off the prediction paths, 413 on a 5 MB body, and a per-
-// CF-Connecting-IP rate limit.
+// origin / off the prediction paths, 413 on a 5 MB body, a per-
+// CF-Connecting-IP rate limit, and Workers AI reachable for Clef's one path only.
 //
 // Measurement (spends the caller's own Replicate credit, ~$0.00022 a run):
 //   REPLICATE_API_TOKEN=r8_... node scripts/relay-probe.mjs <relay> --measure 100
@@ -139,6 +139,30 @@ async function conformance() {
     body: predictBody(),
   });
   check("…while another IP is not", other.status !== 429, `HTTP ${other.status}`);
+
+  // Workers AI's Clef: exactly one model path under a 32-hex account, any
+  // bearer token (Cloudflare's have no prefix) — so the path is the guard.
+  const clef = DECISION_MODELS.clef;
+  const account = "0123456789abcdef0123456789abcdef";
+  const cfToken = "cfrelayprobe00000000000000000000000000000";
+  const clefCall = (url, init = {}) => call(at(url), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${cfToken}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.12" },
+    body: "{}",
+    ...init,
+  });
+  const clefUrl = `${clef.upstream}/client/v4/accounts/${account}/ai/run/${clef.workersModel}`;
+  const toCf = await clefCall(clefUrl);
+  check("Clef: the caller's token reaches Cloudflare", toCf.status !== 404 && Boolean(toCf.headers.get("access-control-allow-origin")),
+    `HTTP ${toCf.status} ${toCf.body.slice(0, 80).replace(/\s+/g, " ")}`);
+  const otherModel = await clefCall(`${clef.upstream}/client/v4/accounts/${account}/ai/run/@cf/meta/llama-3.1-8b-instruct`);
+  check("Clef: another Workers AI model → 404", otherModel.status === 404, `HTTP ${otherModel.status}`);
+  const otherApi = await clefCall(`${clef.upstream}/client/v4/accounts/${account}/workers/scripts`, { method: "GET", body: undefined });
+  check("Clef: the rest of the Cloudflare API → 404", otherApi.status === 404, `HTTP ${otherApi.status}`);
+  const badAccount = await clefCall(`${clef.upstream}/client/v4/accounts/not-an-account/ai/run/${clef.workersModel}`);
+  check("Clef: a non-hex account → 404", badAccount.status === 404, `HTTP ${badAccount.status}`);
+  const clefNoToken = await clefCall(clefUrl, { headers: { "Content-Type": "application/json" } });
+  check("Clef: no token → 404", clefNoToken.status === 404, `HTTP ${clefNoToken.status}`);
 }
 
 async function testFrame() {

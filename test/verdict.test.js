@@ -88,7 +88,7 @@ test('lifecycle texts are exactly the strings useMonitor used to write', () => {
 test('failures are "error" verdicts that name the setting that cures them', () => {
   const cases = [
     [verdicts.notConfigured('browser', now), 'Pick a BROWSER MODEL in Settings, or use Demo Mode.', 'browserModel'],
-    [verdicts.notConfigured('decision', now), 'Pick a DECISION model (and its server URL, if self-hosted) in Settings, or use Demo Mode.', 'decisionModel'],
+    [verdicts.notConfigured('decision', now), 'Pick a DECISION model (and its server URL if self-hosted, or account ID for Cloudflare) in Settings, or use Demo Mode.', 'decisionModel'],
     [verdicts.notConfigured('provider', now), 'Set a provider Base URL and model in Settings, or use Demo Mode.', 'baseUrl'],
     [verdicts.needMission(now), 'Describe the mission (what to watch for) first.', 'mission'],
   ];

@@ -10,9 +10,9 @@ An **automated visual monitoring PWA** that runs entirely in the browser. A phon
 - **BROWSER** — a small vision-language model run entirely client-side via Transformers.js/WebGPU. No key, no server, no CORS; the frame never leaves the device. The model is picked from a table (`lib/browser-models.js`); the reference device is a Pixel 10 in Chrome. See `lib/browser-engine.js` and `src/workers/ml.worker.js`.
 
 - **DECISION** — a typed-decision classifier (Glance/Qwen3-VL on Replicate by default,
-  Jev-Omni, or a self-hosted `/v1/systemone` server) returns p(yes) from one forward pass.
-  BYOK: the user's own Replicate token goes through a CORS pass-through relay that stores
-  nothing. It writes no text, so a fired alert is worded by the provider, the BROWSER
+  Jev-Omni, Cloudflare's Clef on Workers AI, or a self-hosted `/v1/systemone` server)
+  returns p(yes) from one forward pass. BYOK: the user's own Replicate or Cloudflare token
+  goes through a CORS pass-through relay that stores nothing. It writes no text, so a fired alert is worded by the provider, the BROWSER
   model, or a template. See `lib/decision.js` and docs/PRD-decision-engine.md.
 
 All three return the exact same result shape from `scanClient()` / `scanBrowser()` / `scanDecision()`, so `useMonitor`, telemetry, history, and the Lab's Evaluate tab don't care which one is active.
@@ -172,6 +172,11 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
   falls back to the template and never drops a fired alert; a failed decision re-runs on
   the provider when `aura.decisionFallback` is on. `ENGINE=decision node scripts/dev-gate-e2e.mjs`
   drives it against a fake Replicate.
+- Clef (`dialect: "workers-ai"`) needs the user's Cloudflare account ID
+  (`aura.decisionAccount`) in its URL path; only a 32-hex ID may reach it (`isAccountId`).
+  Its `images` must be data URIs and it bills per input token (`usage.decision_tokens` ×
+  `perMillionInput`), so criteria go out as `null` — clef-webcam's lesson that latency
+  and tokens grow with prompt length.
 - A row is only `autoSelectable` if `pickBrowserModel()` may hand it to someone who
   never opened Settings. Anything whose download needs a deliberate yes stays
   `false` and is picked manually.

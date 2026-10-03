@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import {
   DECISION_MODELS, RELAY_PRESETS, relayPresetFor, decisionModelKeys, defaultDecisionUrl,
-  getDecisionModel, usesRelay, DEFAULT_DECISION_MODEL,
+  getDecisionModel, usesRelay, vendorFor, isAccountId, DEFAULT_DECISION_MODEL,
 } from '../../lib/decision-models.js';
+import { decisionTarget } from '../../lib/decision.js';
 import { Button } from '../ui/button.jsx';
 import { Field } from '../ui/field.jsx';
 import { Input, Select } from '../ui/input.jsx';
@@ -18,13 +19,15 @@ const ANNOUNCERS = [
 ];
 
 // DECISION engine, step 2 (docs/PRD-decision-engine.md): which typed-decision
-// model, the relay (or self-hosted server) URL, the user's OWN key, who words a
+// model, the relay (or self-hosted server) URL, the Cloudflare account ID when
+// the row's URL needs one, the user's OWN key, who words a
 // fired alert, and whether a failed decision falls back to the provider.
 export default function DecisionFields({ s, set }) {
   const [keyNote, setKeyNote] = useState('');
   const rowKey = getDecisionModel(s.decisionModel) ? s.decisionModel : DEFAULT_DECISION_MODEL;
   const row = DECISION_MODELS[rowKey];
   const relayed = usesRelay(row);
+  const vendor = vendorFor(row);
   const providerConfigured = Boolean(s.baseUrl && s.model);
 
   // Switching between a hosted row and a self-hosted one changes where the
@@ -67,10 +70,10 @@ export default function DecisionFields({ s, set }) {
         htmlFor="decision-url"
         hint={relayed ? (
           <>
-            A browser can&apos;t call Replicate directly (no CORS), so requests go through a relay that
+            A browser can&apos;t call {vendor.name} directly (no CORS), so requests go through a relay that
             only adds CORS headers. <code>{'{path}'}</code>, <code>{'{url}'}</code> and <code>{'{url:encoded}'}</code> are
             filled in per request. <strong>Your token and camera frames pass through the relay</strong> on
-            the way to Replicate — use your own relay if you&apos;d rather no one else sees them.
+            the way to {vendor.name} — use your own relay if you&apos;d rather no one else sees them.
           </>
         ) : (
           <>
@@ -97,18 +100,42 @@ export default function DecisionFields({ s, set }) {
         {relayed && relayPresetFor(s.decisionUrl) && <Status>{relayPresetFor(s.decisionUrl).note}</Status>}
       </Field>
 
+      {row.needsAccount && (
+        <Field
+          label="Cloudflare account ID"
+          htmlFor="decision-account"
+          hint={<>
+            The 32-character ID from your Cloudflare dashboard (Workers AI › Use REST API). It is part of the
+            request URL — each scan is sent to:{' '}
+            <code className="break-all">
+              {decisionTarget(row, { url: s.decisionUrl, account: isAccountId(s.decisionAccount) ? s.decisionAccount.trim() : 'ACCOUNT_ID' })}
+            </code>
+          </>}
+        >
+          <Input
+            id="decision-account"
+            value={s.decisionAccount}
+            onChange={(e) => set.decisionAccount(e.target.value)}
+            placeholder="0123456789abcdef0123456789abcdef"
+          />
+          {s.decisionAccount && !isAccountId(s.decisionAccount) && (
+            <Status tone="warn">An account ID is 32 hex characters.</Status>
+          )}
+        </Field>
+      )}
+
       <Field
-        label={relayed ? 'Your Replicate token' : 'Server API key'}
+        label={relayed ? `Your ${vendor.name} token` : 'Server API key'}
         htmlFor="decision-key"
         hint={relayed
-          ? 'Your own token, billed to your own Replicate account for predict time only. Stored in this browser; the relay forwards it and keeps nothing.'
+          ? `Your own token, billed to your own ${vendor.name} account. Stored in this browser; the relay forwards it and keeps nothing.`
           : 'Leave blank for a server started without --api-key.'}
       >
         <SecretInput
           id="decision-key"
           value={s.decisionKey}
           onChange={(e) => { set.decisionKey(e.target.value); setKeyNote(''); }}
-          placeholder={relayed ? 'r8_…' : 'blank if the server needs none'}
+          placeholder={relayed ? vendor.tokenPlaceholder : 'blank if the server needs none'}
         />
         <Status tone="warn">{keyNote}</Status>
       </Field>

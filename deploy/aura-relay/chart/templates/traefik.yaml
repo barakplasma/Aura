@@ -63,3 +63,14 @@ spec:
           port: 443
           scheme: https
           passHostHeader: false
+    - kind: Rule
+      match: Host(`{{ .Values.host }}`) && Header(`Origin`, `{{ .Values.auraOrigin }}`) && Method(`POST`) && PathRegexp(`^/client/v4/accounts/[0-9a-f]{32}/ai/run/@cf/cloudflare/clef$`) && HeaderRegexp(`Authorization`, `{{ .Values.cloudflare.tokenPattern }}`)
+      middlewares:
+        - name: aura-relay-cors
+        - name: aura-relay-body-limit
+        - name: aura-relay-ratelimit
+      services:
+        - name: cloudflare-api
+          port: 443
+          scheme: https
+          passHostHeader: false

@@ -25,7 +25,7 @@ const ENGINES = [
     id: 'decision',
     title: 'Decision',
     where: 'Classifier via relay',
-    blurb: 'A yes/no classifier with a real probability. Faster and cheaper than a chat model; the frame passes through a CORS relay to Replicate, or to your own server.',
+    blurb: 'A yes/no classifier with a real probability. Faster and cheaper than a chat model; the frame passes through a CORS relay to Replicate or Cloudflare, or to your own server.',
   },
 ];
 

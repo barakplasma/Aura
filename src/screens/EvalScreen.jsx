@@ -40,6 +40,7 @@ async function scanForEval(params, decision) {
     return scanDecision({
       modelId: params.model.slice(DECISION_MODEL_PREFIX.length),
       url: decision.decisionUrl,
+      account: decision.decisionAccount,
       apiKey: decision.decisionKey || undefined,
       question: missionToQuestion({ mission: params.mission }),
       image: params.image,
