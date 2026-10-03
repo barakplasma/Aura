@@ -4,15 +4,19 @@
 //
 // Conformance (no token needed — a fake `r8_` token is forwarded and
 // Replicate itself rejects it):
-//   node scripts/relay-probe.mjs https://aura-relay.526462738.xyz
+//   node scripts/relay-probe.mjs https://relay.526462738.xyz
+//   node scripts/relay-probe.mjs http://127.0.0.1:9876   # `celld dev` in deploy/relay-worker
 //   node scripts/relay-probe.mjs 'https://proxy.corsfix.com/?{url}' --hosted
 //
 // `--hosted` is for a third-party CORS proxy: only the browser-facing
 // contract is checked (preflight passes our three headers, Authorization
 // reaches Replicate, CORS headers on the answer). Without it the operator
 // relay's abuse controls are checked too: 404 without a token / from another
-// origin / off the prediction paths, 413 on a 5 MB body, a per-
-// CF-Connecting-IP rate limit, and Workers AI reachable for Clef's one path only.
+// origin / off the prediction paths, 403 for a model version Aura doesn't pin,
+// 413 on a 5 MB body, and Workers AI reachable for Clef's one path only. The
+// per-IP rate limit is a zone WAF rule in front of the relay, not the relay's
+// own code, so it isn't probed here (Cloudflare rejects a client-set
+// CF-Connecting-IP, and one probe host is one IP).
 //
 // Measurement (spends the caller's own Replicate credit, ~$0.00022 a run):
 //   REPLICATE_API_TOKEN=r8_... node scripts/relay-probe.mjs <relay> --measure 100
@@ -79,7 +83,7 @@ async function conformance() {
   });
   if (challenged(pre)) {
     check("not behind a Cloudflare challenge", false,
-      "cf-mitigated: challenge — add a WAF skip rule for this host (see deploy/aura-relay/README.md)");
+      "cf-mitigated: challenge — this host's WAF challenges the probe's country or IP (see deploy/relay-worker/README.md)");
     return;
   }
   const allowHeaders = (pre.headers.get("access-control-allow-headers") || "").toLowerCase();
@@ -116,29 +120,20 @@ async function conformance() {
   check("another origin → 404", otherOrigin.status === 404, `HTTP ${otherOrigin.status}`);
   const offPath = await call(at(`${row.upstream}/v1/account`), { headers: { Authorization: `Bearer ${FAKE_TOKEN}` } });
   check("off the prediction paths → 404", offPath.status === 404, `HTTP ${offPath.status}`);
+  // A relay that refuses on Content-Length may close the socket before the
+  // upload finishes (celld does); that is a refusal too, not an outage.
   const big = await call(at(UPSTREAM), {
     method: "POST",
-    headers: { Authorization: `Bearer ${FAKE_TOKEN}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9" },
+    headers: { Authorization: `Bearer ${FAKE_TOKEN}`, "Content-Type": "application/json" },
     body: predictBody("A".repeat(5_000_000)),
-  });
-  check("5 MB body → 413", big.status === 413, `HTTP ${big.status}`);
-
-  // Burst from one end-user IP; a second IP on the same connection must
-  // still get through (the limit is per CF-Connecting-IP, not per socket).
-  const burst = await Promise.all(Array.from({ length: 30 }, () =>
-    call(at(UPSTREAM), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${FAKE_TOKEN}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.10" },
-      body: predictBody(),
-    })));
-  const limited = burst.filter((r) => r.status === 429).length;
-  check("a burst from one IP is rate limited", limited > 0, `${limited}/30 got 429`);
-  const other = await call(at(UPSTREAM), {
+  }).catch((err) => ({ status: `closed early (${err.cause?.code || err.message})` }));
+  check("5 MB body → 413", big.status === 413 || String(big.status).startsWith("closed early"), `HTTP ${big.status}`);
+  const unpinned = await call(at(UPSTREAM), {
     method: "POST",
-    headers: { Authorization: `Bearer ${FAKE_TOKEN}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.11" },
-    body: predictBody(),
+    headers: { Authorization: `Bearer ${FAKE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ version: "f".repeat(64), input: {} }),
   });
-  check("…while another IP is not", other.status !== 429, `HTTP ${other.status}`);
+  check("a model version Aura doesn't pin → 403 (never forwarded)", unpinned.status === 403, `HTTP ${unpinned.status}`);
 
   // Workers AI's Clef: exactly one model path under a 32-hex account, any
   // bearer token (Cloudflare's have no prefix) — so the path is the guard.
@@ -147,7 +142,7 @@ async function conformance() {
   const cfToken = "cfrelayprobe00000000000000000000000000000";
   const clefCall = (url, init = {}) => call(at(url), {
     method: "POST",
-    headers: { Authorization: `Bearer ${cfToken}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.12" },
+    headers: { Authorization: `Bearer ${cfToken}`, "Content-Type": "application/json" },
     body: "{}",
     ...init,
   });

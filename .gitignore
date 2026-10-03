@@ -31,3 +31,5 @@ public/assets/ort*.bundle.min.mjs
 npm-debug.log*
 .DS_Store
 megalinter-reports/
+# celld dev state (deploy/relay-worker)
+.celld/

@@ -1,0 +1,17 @@
+// Aura's BYOK CORS relay on Cloudflare Workers (free plan):
+//   npx wrangler deploy -c wrangler.cloudflare.jsonc
+// Same worker as wrangler.jsonc (the celld config) plus the Cloudflare-only
+// keys celld rejects. Keep the two in step.
+{
+  "name": "aura-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-20",
+  // The workers.dev address would skip the zone's WAF (country rule, rate
+  // limit), so the relay is only reachable on its custom domain.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "relay.526462738.xyz", "custom_domain": true }],
+  "vars": {
+    "ALLOWED_ORIGINS": "https://barakplasma.github.io,https://aura.526462738.xyz"
+  }
+}

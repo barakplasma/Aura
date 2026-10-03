@@ -169,7 +169,7 @@ test("an uncalibrated row gets 100/0 from its answer", () => {
 
 test("relay URL templates", () => {
   const up = "https://api.replicate.com/v1/predictions";
-  assert.equal(expandRelayUrl(DEFAULT_RELAY_URL, up), "https://aura-relay.526462738.xyz/v1/predictions");
+  assert.equal(expandRelayUrl(DEFAULT_RELAY_URL, up), "https://relay.526462738.xyz/v1/predictions");
   assert.equal(expandRelayUrl("https://proxy.corsfix.com/?{url}", up), `https://proxy.corsfix.com/?${up}`);
   assert.equal(expandRelayUrl("https://corsproxy.io/?url={url:encoded}", up), `https://corsproxy.io/?url=${encodeURIComponent(up)}`);
   assert.equal(expandRelayUrl("{url}", up), up);
@@ -194,7 +194,7 @@ test("scanDecision: one Replicate call through the relay with the user's own tok
   });
   assert.equal(fetchImpl.calls.length, 1);
   const [call] = fetchImpl.calls;
-  assert.equal(call.url, "https://aura-relay.526462738.xyz/v1/predictions");
+  assert.equal(call.url, "https://relay.526462738.xyz/v1/predictions");
   assert.equal(call.init.headers.Authorization, "Bearer r8_user");
   assert.equal(call.init.headers.Prefer, "wait=15");
   assert.equal(call.body.version, glance.version);
@@ -223,9 +223,9 @@ test("scanDecision: a cold start polls the prediction through the relay until it
     sleep: noSleep,
   });
   assert.deepEqual(fetchImpl.calls.map((c) => [c.init.method, c.url]), [
-    ["POST", "https://aura-relay.526462738.xyz/v1/predictions"],
-    ["GET", "https://aura-relay.526462738.xyz/v1/predictions/p1"],
-    ["GET", "https://aura-relay.526462738.xyz/v1/predictions/p1"],
+    ["POST", "https://relay.526462738.xyz/v1/predictions"],
+    ["GET", "https://relay.526462738.xyz/v1/predictions/p1"],
+    ["GET", "https://relay.526462738.xyz/v1/predictions/p1"],
   ]);
   assert.equal(r.confidence, 93);
 });

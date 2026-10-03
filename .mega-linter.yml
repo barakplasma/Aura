@@ -9,9 +9,7 @@ DISABLE_LINTERS:
 # public/sw.js is generated
 # from scripts/sw-template.js and gitignored, so CI never sees it — the entry
 # below only matters when linting a locally built tree. Don't lint generated files.
-# deploy/aura-relay/chart/templates/ are Helm (Go) templates, not YAML until
-# rendered — `helm lint deploy/aura-relay/chart` is their check.
-FILTER_REGEX_EXCLUDE: "(public/assets/|public/sw\\.js|\\.map$|deploy/aura-relay/chart/templates/)"
+FILTER_REGEX_EXCLUDE: "(public/assets/|public/sw\\.js|\\.map$)"
 
 # jscpd runs in project mode (scans the whole tree itself, ignoring
 # MegaLinter's FILTER_REGEX_EXCLUDE family of variables entirely — confirmed:
@@ -28,9 +26,9 @@ ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
 # package-lock.json embeds npm packages' funding URLs (e.g. Patreon,
 # OpenCollective); those hosts 403 automated requests, which isn't a real
 # dead link. Still JSON/lint-checked — just not link-checked.
-# deploy/aura-relay/chart/values.yaml holds the relay's CORS origin
-# (scheme+host only), not a link — the bare github.io host has no page.
-SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: "(package-lock\\.json|deploy/aura-relay/chart/values\\.yaml)"
+# deploy/relay-worker/wrangler*.jsonc hold the relay's CORS origins
+# (scheme+host only), not links — the bare github.io host has no page.
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: "(package-lock\\.json|deploy/relay-worker/wrangler[^/]*\\.jsonc)"
 
 # The repo uses semicolons throughout; Standard's default style forbids them.
 # Prettier keeps the existing convention instead of forcing a repo-wide rewrite.
@@ -71,9 +69,3 @@ PRINT_ALPACA: false
 # c539d4e); reinstalling them would undo local lint fixes, so they're not
 # ours to restyle.
 MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: "\\.agents/skills/"
-
-# Scoped, reasoned suppressions live in .trivyignore.yaml; trivy only reads
-# the plain .trivyignore on its own.
-REPOSITORY_TRIVY_ARGUMENTS:
-  - "--ignorefile"
-  - ".trivyignore.yaml"
