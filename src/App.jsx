@@ -67,6 +67,8 @@ export default function App() {
   const [decisionModel, setDecisionModel] = useLocalStorage('aura.decisionModel', DEFAULT_DECISION_MODEL);
   const [decisionUrl, setDecisionUrl] = useLocalStorage('aura.decisionUrl', DEFAULT_RELAY_URL);
   const [decisionKey, setDecisionKey] = useLocalStorage('aura.decisionKey', '');
+  // Cloudflare account ID — part of the Workers AI URL, for rows with needsAccount.
+  const [decisionAccount, setDecisionAccount] = useLocalStorage('aura.decisionAccount', '');
   // 'provider' | 'browser' | 'template' — who words a fired alert.
   const [decisionAnnouncer, setDecisionAnnouncer] = useLocalStorage('aura.decisionAnnouncer', 'provider');
   // Re-run a failed decision on the PROVIDER engine (only when one is set up).
@@ -119,7 +121,7 @@ export default function App() {
 
   // "Configured" means a model is selected for BROWSER, or a base URL + model
   // for PROVIDER — never gate on the API key (see CLAUDE.md's provider format).
-  const providerReady = isEngineConfigured({ engine, browserModel, baseUrl, model, decisionModel, decisionUrl });
+  const providerReady = isEngineConfigured({ engine, browserModel, baseUrl, model, decisionModel, decisionUrl, decisionAccount });
   // The optimizer is @ax-llm/ax end to end, and ax only talks to HTTP
   // providers — it cannot drive a model running inside this page. So on the
   // BROWSER engine the screen is not just useless, it would quietly optimize
@@ -140,7 +142,7 @@ export default function App() {
   settingsRef.current = {
     baseUrl, apiKey, model, mission, action,
     engine, browserModel, browserRuntime,
-    decisionModel, decisionUrl, decisionKey, decisionAnnouncer, decisionFallback,
+    decisionModel, decisionUrl, decisionAccount, decisionKey, decisionAnnouncer, decisionFallback,
     threshold, scanMode, scanEvery, budgetPerHour, networkMbPerHour, pricing,
     cameraFacing, cameraDeviceId, videoSource,
     captureSize: captureSize === 'custom' ? `${customCaptureWidth}x${customCaptureHeight}` : captureSize,
@@ -299,6 +301,7 @@ export default function App() {
     browserRuntime,
     decisionModel,
     decisionUrl,
+    decisionAccount,
     decisionKey,
     decisionAnnouncer,
     decisionFallback,
@@ -343,6 +346,7 @@ export default function App() {
     browserRuntime: setBrowserRuntime,
     decisionModel: setDecisionModel,
     decisionUrl: setDecisionUrl,
+    decisionAccount: setDecisionAccount,
     decisionKey: setDecisionKey,
     decisionAnnouncer: setDecisionAnnouncer,
     decisionFallback: setDecisionFallback,
@@ -437,7 +441,7 @@ export default function App() {
                   pricingOverrides={pricingOverrides}
                   configuredModel={model}
                   mission={mission}
-                  decision={{ decisionModel, decisionUrl, decisionKey }}
+                  decision={{ decisionModel, decisionUrl, decisionAccount, decisionKey }}
                   captureFrame={handleCaptureEvalFrame}
                   monitorRunning={running}
                 />

@@ -110,6 +110,32 @@ no spoken announcement, no webhook payload. Aura's action and webhook legs
 still need a generator. That is the central design constraint: **split
 *decide* from *announce*.**
 
+## Clef on Workers AI (added 2026-10-03)
+
+Cloudflare's [Clef](https://blog.cloudflare.com/clef-decision-models/) is a
+27B open-weight decision model, hosted as `@cf/cloudflare/clef` on Workers AI
+and runnable locally as clef-flash (see
+[clef-webcam](https://github.com/barakplasma/clef-webcam), which drives it
+from a webcam at ~250 ms/decision on an M5 Max). Its request is System One
+with Cloudflare's names, verified against the live API:
+
+```json
+POST https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/cloudflare/clef
+{ "model": "clef", "state": "A live camera frame.", "images": ["data:image/jpeg;base64,…"],
+  "questions": { "alert": { "type": "choice", "instructions": "…", "criteria": { "yes": null, "no": null } } } }
+→ { "result": { "answers": { "alert": { "type": "choice", "choice": "yes",
+      "probabilities": { "yes": 0.996, "no": 0.004 }, "confidence": 0.98 } },
+    "usage": { "input_tokens": 186 } }, "success": true }
+```
+
+- `images` must be data URIs (raw base64 is rejected); `model` must be `clef`.
+- Billed at $0.24 per million input tokens to the user's own account. Null
+  criteria are clef-webcam's lesson: tokens and latency grow with the prompt
+  (186 vs 202 tokens for the same question with Aura's option texts).
+- The account ID is a Settings field (`aura.decisionAccount`); Settings shows
+  the full URL each scan is sent to. api.cloudflare.com sends no CORS, so the
+  relay routes exactly this path, with any bearer token, to it.
+
 ## Goals
 
 1. A new engine, `aura.engine = 'decision'`, whose detection leg calls a

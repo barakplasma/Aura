@@ -278,6 +278,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     // DECISION engine: billed per decision / predict-second, not per token.
     totalDecisions: 0,
     totalPredictS: 0,
+    totalDecisionTokens: 0,
     running: false,
     abort: null,
     // latency samples + current scan-cycle phase, read by the progress ticker.
@@ -869,6 +870,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
               ? await scanDecision({
                   modelId: s.decisionModel,
                   url: s.decisionUrl,
+                  account: s.decisionAccount,
                   apiKey: s.decisionKey || undefined,
                   mission: s.mission,
                   question: missionToQuestion({ mission: s.mission }),
@@ -965,11 +967,13 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
           internalRef.current.totalCompletionTokens += result.usage?.reported ? result.usage.completion_tokens : 0;
           internalRef.current.totalDecisions += Number(result.usage?.decisions) || 0;
           internalRef.current.totalPredictS += Number(result.usage?.predict_s) || 0;
+          internalRef.current.totalDecisionTokens += Number(result.usage?.decision_tokens) || 0;
           const cost = costForUsage({
             prompt_tokens: internalRef.current.totalPromptTokens,
             completion_tokens: internalRef.current.totalCompletionTokens,
             decisions: internalRef.current.totalDecisions,
             predict_s: internalRef.current.totalPredictS,
+            decision_tokens: internalRef.current.totalDecisionTokens,
           }, s.pricing);
           // Spread prev: this update only owns the per-scan fields. Replacing
           // the whole object wiped everything else after every scan — the
@@ -1312,6 +1316,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
     internalRef.current.totalCompletionTokens = 0;
     internalRef.current.totalDecisions = 0;
     internalRef.current.totalPredictS = 0;
+    internalRef.current.totalDecisionTokens = 0;
     // Fresh latency history each session — a new provider/model has its own
     // performance profile.
     internalRef.current.samples = [];

@@ -16,6 +16,8 @@ import {
   DEFAULT_DECISION_MODEL,
   DEFAULT_RELAY_URL,
   defaultDecisionUrl,
+  isDecisionConfigured,
+  vendorFor,
 } from "../lib/decision-models.js";
 import { costForUsage, resolveDecisionPricing } from "../lib/pricing.js";
 import { computeGapMs } from "../lib/scheduler.js";
@@ -73,9 +75,13 @@ const noSleep = async () => {};
 test("every row names a known dialect and pins what it calls", () => {
   assert.ok(DECISION_MODELS[DEFAULT_DECISION_MODEL]);
   for (const [id, row] of Object.entries(DECISION_MODELS)) {
-    assert.ok(["replicate", "content"].includes(row.dialect), id);
+    assert.ok(["replicate", "content", "workers-ai"].includes(row.dialect), id);
     assert.ok(row.label, id);
-    if (row.dialect === "replicate") {
+    if (row.dialect === "workers-ai") {
+      assert.ok(vendorFor(row), id);
+      assert.ok(Number.isFinite(row.perMillionInput) && row.perMillionInput > 0, id);
+      assert.equal(defaultDecisionUrl(row), DEFAULT_RELAY_URL);
+    } else if (row.dialect === "replicate") {
       assert.match(row.version, /^[0-9a-f]{64}$/, `${id} must pin a full version id`);
       assert.ok(Number.isFinite(row.perSecond) && row.perSecond > 0, id);
       assert.equal(defaultDecisionUrl(row), DEFAULT_RELAY_URL);
@@ -421,4 +427,71 @@ test("a 422 'image is required' names the stale version pin, not the operator's 
   const other = decisionHttpError(422, '{"detail":"- input.question: field required"}', "r8_k");
   assert.match(other.message, /rejected the input/);
   assert.doesNotMatch(other.message, /stale/);
+});
+
+// --- Cloudflare Workers AI (clef) --------------------------------------------
+
+const ACCOUNT = "0123456789abcdef0123456789abcdef";
+
+// The live @cf/cloudflare/clef answer, read 2026-10-03 through the Cloudflare
+// API for a choice question with null criteria.
+const CLEF_RESULT = {
+  result: {
+    model: "clef",
+    answers: { alert: { type: "choice", choice: "yes", probabilities: { yes: 0.996, no: 0.004 }, confidence: 0.9842 } },
+    usage: { input_tokens: 186, output_tokens: 0 },
+  },
+  success: true,
+  errors: [],
+  messages: [],
+};
+
+test("workers-ai adapter: data-URI image, model 'clef', required state, null criteria", () => {
+  const row = DECISION_MODELS.clef;
+  const req = toDialectRequest(row, buildDecisionRequest({ image: IMAGE, question: QUESTION }));
+  assert.deepEqual(req, {
+    model: "clef",
+    state: "A live camera frame.",
+    images: [IMAGE],
+    questions: { alert: { type: "choice", instructions: QUESTION.question, criteria: { yes: null, no: null } } },
+  });
+  const withHint = toDialectRequest(row, buildDecisionRequest({ image: IMAGE, question: QUESTION, context: "porch" }));
+  assert.equal(withHint.state, "porch");
+});
+
+test("scanDecision: clef goes through the relay to the account's Workers AI URL and bills input tokens", async () => {
+  const fetchImpl = fakeFetch([jsonResponse(CLEF_RESULT)]);
+  const r = await scanDecision({
+    modelId: "clef",
+    url: "https://relay.example{path}",
+    account: ACCOUNT,
+    apiKey: "cf-token",
+    question: QUESTION,
+    image: IMAGE,
+    fetchImpl,
+    sleep: noSleep,
+  });
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.equal(fetchImpl.calls[0].url, `https://relay.example/client/v4/accounts/${ACCOUNT}/ai/run/@cf/cloudflare/clef`);
+  assert.equal(fetchImpl.calls[0].init.headers.Authorization, "Bearer cf-token");
+  assert.equal(r.confidence, 100);
+  assert.equal(r.triggered, true);
+  assert.equal(r.usage.decision_tokens, 186);
+  const pricing = resolveDecisionPricing({ row: DECISION_MODELS.clef });
+  assert.equal(pricing.source, "cloudflare");
+  assert.ok(Math.abs(costForUsage({ decision_tokens: 1e6 }, pricing) - 0.24) < 1e-12);
+  assert.equal(sumUsage(r.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, reported: false }).decision_tokens, 186);
+});
+
+test("clef needs a 32-hex account ID — nothing else ever reaches the URL path", async () => {
+  assert.equal(isDecisionConfigured({ decisionModel: "clef", decisionUrl: DEFAULT_RELAY_URL }), false);
+  assert.equal(isDecisionConfigured({ decisionModel: "clef", decisionUrl: DEFAULT_RELAY_URL, decisionAccount: ACCOUNT }), true);
+  for (const account of ["", "../../zones", `${ACCOUNT}/x`]) {
+    const fetchImpl = fakeFetch([]);
+    await assert.rejects(
+      scanDecision({ modelId: "clef", url: DEFAULT_RELAY_URL, account, question: QUESTION, image: IMAGE, fetchImpl }),
+      /account ID/,
+    );
+    assert.equal(fetchImpl.calls.length, 0);
+  }
 });

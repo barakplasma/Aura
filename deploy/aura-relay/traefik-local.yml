@@ -32,8 +32,19 @@ http:
       middlewares:
         [aura-relay-cors, aura-relay-body-limit, aura-relay-ratelimit]
       service: replicate-api
+    aura-relay-clef:
+      entryPoints: [web]
+      rule: Host(`__HOST__`) && Header(`Origin`, `__ORIGIN__`) && Method(`POST`) && PathRegexp(`^/client/v4/accounts/[0-9a-f]{32}/ai/run/@cf/cloudflare/clef$`) && HeaderRegexp(`Authorization`, `^Bearer [A-Za-z0-9_-]{30,}$`)
+      middlewares:
+        [aura-relay-cors, aura-relay-body-limit, aura-relay-ratelimit]
+      service: cloudflare-api
   services:
     replicate-api:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: "__UPSTREAM__"
+    cloudflare-api:
       loadBalancer:
         passHostHeader: false
         servers:

@@ -24,6 +24,13 @@ upstream:
   # bearer token - everything else is a 404 from the router.
   tokenPattern: "^Bearer r8_[A-Za-z0-9]+$"
 
+# Workers AI's Clef, and nothing else on api.cloudflare.com: one model path
+# under a 32-hex account ID. Cloudflare tokens have no prefix, so the path is
+# what keeps this from being a general Cloudflare API proxy.
+cloudflare:
+  host: api.cloudflare.com
+  tokenPattern: "^Bearer [A-Za-z0-9_-]{30,}$"
+
 # Traefik's in-cluster Service, fronted by the cloudflare-tunnel Ingress
 # (same pattern as convertx/babybuddy).
 traefik:
