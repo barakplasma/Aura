@@ -414,7 +414,15 @@ the choice for an operator without a server — then Corsfix in plain mode
 `authorization, content-type, prefer`), bearing in mind its per-user pricing
 scales with Aura's audience.
 
-### Default relay: `aura-relay.526462738.xyz` in homelab-manifests
+> **Superseded 2026-10-03.** The default relay is now a Cloudflare Worker at
+> `relay.526462738.xyz` (`deploy/relay-worker/`, also runnable self-hosted
+> under celld). It reads the request body, so it forwards only the Replicate
+> versions pinned in `lib/decision-models.js`. The Traefik relay could not,
+> so anyone could run any Replicate model from the homelab's IP through it.
+> Country filtering and rate limiting moved to the zone's WAF. The Traefik
+> design below is kept as history; `apps/aura-relay` is removed.
+
+### Default relay (historical): `aura-relay.526462738.xyz` in homelab-manifests
 
 The relay lives in the operator's
 `barakplasma/homelab-manifests` (private) repo

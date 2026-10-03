@@ -1,0 +1,13 @@
+// Aura's BYOK CORS relay, portable config: self-hosted with celld
+// (`celld dev` / `celld deploy`). celld reads JSONC only and rejects
+// Cloudflare-only keys (routes, workers_dev, env), so Cloudflare deploys use
+// wrangler.cloudflare.jsonc instead. Keep the two in step. See README.md.
+{
+  "name": "aura-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-20",
+  "vars": {
+    // Aura's origins (scheme + host). Everything else gets a 404.
+    "ALLOWED_ORIGINS": "https://barakplasma.github.io,https://aura.526462738.xyz"
+  }
+}

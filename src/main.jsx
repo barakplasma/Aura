@@ -3,7 +3,7 @@ import './monitoring.js';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
-import { migrateLegacySettings, migrateScanEveryKey, migrateBrowserModelKey, migrateLegacyRate } from '../lib/settings-migrate.js';
+import { migrateLegacySettings, migrateScanEveryKey, migrateBrowserModelKey, migrateLegacyRate, migrateRelayUrl } from '../lib/settings-migrate.js';
 
 
 // One-time migration BEFORE React reads localStorage: legacy v1 configs stored
@@ -16,6 +16,7 @@ try {
     migrateScanEveryKey(localStorage);
     migrateBrowserModelKey(localStorage);
     migrateLegacyRate(localStorage);
+    migrateRelayUrl(localStorage);
   }
 } catch {}
 

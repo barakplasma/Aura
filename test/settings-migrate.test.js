@@ -5,7 +5,9 @@ import {
   migrateScanEveryKey,
   migrateBrowserModelKey,
   migrateLegacyRate,
+  migrateRelayUrl,
 } from "../lib/settings-migrate.js";
+import { DEFAULT_RELAY_URL, LEGACY_RELAY_URL } from "../lib/decision-models.js";
 
 // Minimal Storage-like stub over a plain object.
 function makeStorage(initial = {}) {
@@ -165,4 +167,16 @@ test("migrates a legacy blended rate into a per-model override", () => {
     "https://api.openai.com/v1\u0000gpt-4o-mini": { inputRate: 0.25, outputRate: 0.25 },
   });
   assert.equal(migrateLegacyRate(st), false);
+});
+
+test("migrateRelayUrl moves the old Traefik relay default to the Worker, and nothing else", () => {
+  const old = makeStorage({ "aura.decisionUrl": JSON.stringify(LEGACY_RELAY_URL) });
+  assert.equal(migrateRelayUrl(old), true);
+  assert.equal(JSON.parse(old.getItem("aura.decisionUrl")), DEFAULT_RELAY_URL);
+  assert.equal(migrateRelayUrl(old), false); // already moved
+  const custom = makeStorage({ "aura.decisionUrl": JSON.stringify("https://proxy.corsfix.com/?{url}") });
+  assert.equal(migrateRelayUrl(custom), false);
+  assert.equal(JSON.parse(custom.getItem("aura.decisionUrl")), "https://proxy.corsfix.com/?{url}");
+  assert.equal(migrateRelayUrl(makeStorage({})), false);
+  assert.equal(migrateRelayUrl(null), false);
 });

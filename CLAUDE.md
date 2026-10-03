@@ -58,6 +58,7 @@ always beat the reset. `docs/PRD-ux-redesign.md` is the plan this UI follows; Ph
 | `lib/aura.js`                         | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models; `runProviderLeg()` announces for DECISION                     |
 | `lib/decision.js`                     | DECISION engine: `scanDecision()`, mission → question, one pure `toRequest`/`fromResponse` adapter per wire dialect, relay templates, polling, provider fallback    |
 | `lib/decision-models.js`              | `DECISION_MODELS` table (dialect, pinned Replicate version, per-second price) + relay presets — pure                                                                |
+| `deploy/relay-worker/`                | The BYOK CORS relay: one Workers-module fetch handler, deployed to Cloudflare Workers or run under celld; forwards only the versions pinned in the table above      |
 | `src/setup/`                          | Setup cards: EngineCard (choose, connect, test), Provider/Browser/DecisionFields, Cadence, Delivery, Camera, Advanced (folds with value summaries)                  |
 | `lib/frame-test.js`                   | "Test on current frame" for every engine: one threshold-0 detection pass via injected scan functions; DECISION runs with no fallback                                |
 | `lib/verdict.js`                      | Pure result model: `fromScan()` + `verdicts.*` build every status the monitor shows, as a structured verdict plus its legacy one-line text                          |
@@ -168,7 +169,10 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - A DECISION model is also a **row, not a branch** (`lib/decision-models.js`); its
   `dialect` picks the adapter. Confidence is `round(100 × p(yes))`, never the model's
   reported confidence. The relay forwards the caller's own `Authorization` and must never
-  hold a token — a stored key would bill one account for every user. An announcer failure
+  hold a token — a stored key would bill one account for every user. It imports
+  `lib/decision-models.js` and forwards only pinned versions, so **re-deploy the relay after
+  pinning a new version** (`deploy/relay-worker/README.md`). It must stay runnable under celld:
+  no `request.cf` geo fields or Cloudflare-only bindings; geo and rate limits are WAF rules. An announcer failure
   falls back to the template and never drops a fired alert; a failed decision re-runs on
   the provider when `aura.decisionFallback` is on. `ENGINE=decision node scripts/dev-gate-e2e.mjs`
   drives it against a fake Replicate.
