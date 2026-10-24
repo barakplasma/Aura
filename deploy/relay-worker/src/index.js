@@ -15,14 +15,17 @@ import { DECISION_MODELS } from "../../../lib/decision-models.js";
 
 const REPLICATE = "https://api.replicate.com";
 const CLOUDFLARE = "https://api.cloudflare.com";
+const TYPESAFE = "https://api.typesafe.ai";
 const MAX_BODY_BYTES = 4_000_000; // a 640x480 JPEG as base64 is ~100 KB
 
 const rows = Object.values(DECISION_MODELS);
 const REPLICATE_VERSIONS = new Set(rows.filter((r) => r.dialect === "replicate").map((r) => r.version));
 const WORKERS_MODELS = new Set(rows.filter((r) => r.dialect === "workers-ai").map((r) => r.workersModel));
+const TYPESAFE_MODELS = new Set(rows.filter((r) => r.dialect === "typesafe").map((r) => r.typesafeModel));
 
 const REPLICATE_TOKEN = /^Bearer r8_[A-Za-z0-9]+$/;
 const CLOUDFLARE_TOKEN = /^Bearer [A-Za-z0-9_-]{30,}$/;
+const TYPESAFE_TOKEN = /^Bearer [A-Za-z0-9_.-]{20,}$/;
 const PREDICTION_ID = /^[a-z0-9]{10,64}$/;
 const WORKERS_RUN = /^\/client\/v4\/accounts\/[0-9a-f]{32}\/ai\/run\/(@cf\/[a-z0-9-]+\/[a-z0-9.-]+)$/;
 
@@ -40,6 +43,9 @@ export function route(method, path) {
   if (run && WORKERS_MODELS.has(run[1]) && method === "POST") {
     return { upstream: CLOUDFLARE, token: CLOUDFLARE_TOKEN, checkBody: (b) => b && typeof b === "object" };
   }
+  if (path === "/v1/systemone" && method === "POST") {
+    return { upstream: TYPESAFE, token: TYPESAFE_TOKEN, checkBody: (b) => TYPESAFE_MODELS.has(b?.model) };
+  }
   return null;
 }
 
@@ -47,7 +53,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST",
-    "Access-Control-Allow-Headers": "authorization, content-type, prefer",
+    "Access-Control-Allow-Headers": "authorization, content-type, prefer, typesafe-danger-zone-images",
     "Access-Control-Max-Age": "600",
     Vary: "Origin",
   };
@@ -95,6 +101,7 @@ export default {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const prefer = request.headers.get("Prefer");
     if (prefer && /^wait=\d{1,2}$/.test(prefer)) headers.Prefer = prefer;
+    if (request.headers.get("TypeSafe-Danger-Zone-Images") === "true") headers["TypeSafe-Danger-Zone-Images"] = "true";
 
     const upstream = await fetch(`${r.upstream}${url.pathname}${url.search}`, { method: request.method, headers, body });
     const out = new Headers(corsHeaders(origin));

@@ -86,6 +86,22 @@ test("Clef goes to the account's Workers AI URL; other models and Cloudflare API
   assert.equal(calls.length, 1);
 });
 
+test("only the pinned TypeSafe Jev model is forwarded, with just the images opt-in header", async () => {
+  const calls = stubUpstream();
+  const TS = "Bearer ts_live_0123456789abcdefghij";
+  const ok = await call("/v1/systemone", {
+    headers: { Authorization: TS, "TypeSafe-Danger-Zone-Images": "true", "TypeSafe-Danger-Zone-Long-Context": "true" },
+    body: { model: "jev-1.14.0" },
+  });
+  assert.equal(ok.status, 401);
+  assert.equal(calls[0].url, "https://api.typesafe.ai/v1/systemone");
+  assert.deepEqual(calls[0].init.headers, { Authorization: TS, "Content-Type": "application/json", "TypeSafe-Danger-Zone-Images": "true" });
+  for (const model of ["jev-latest", "other"]) {
+    assert.equal((await call("/v1/systemone", { headers: { Authorization: TS }, body: { model } })).status, 403);
+  }
+  assert.equal(calls.length, 1);
+});
+
 test("no token, a wrong-shaped token, another origin, or a 5 MB body is never forwarded", async () => {
   const calls = stubUpstream();
   assert.equal((await call("/v1/predictions", { body: { version: pinned } })).status, 404);
