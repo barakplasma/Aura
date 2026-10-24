@@ -75,9 +75,9 @@ const noSleep = async () => {};
 test("every row names a known dialect and pins what it calls", () => {
   assert.ok(DECISION_MODELS[DEFAULT_DECISION_MODEL]);
   for (const [id, row] of Object.entries(DECISION_MODELS)) {
-    assert.ok(["replicate", "content", "workers-ai"].includes(row.dialect), id);
+    assert.ok(["replicate", "content", "workers-ai", "typesafe"].includes(row.dialect), id);
     assert.ok(row.label, id);
-    if (row.dialect === "workers-ai") {
+    if (row.dialect === "workers-ai" || row.dialect === "typesafe") {
       assert.ok(vendorFor(row), id);
       assert.ok(Number.isFinite(row.perMillionInput) && row.perMillionInput > 0, id);
       assert.equal(defaultDecisionUrl(row), DEFAULT_RELAY_URL);
@@ -481,6 +481,36 @@ test("scanDecision: clef goes through the relay to the account's Workers AI URL 
   assert.equal(pricing.source, "cloudflare");
   assert.ok(Math.abs(costForUsage({ decision_tokens: 1e6 }, pricing) - 0.24) < 1e-12);
   assert.equal(sumUsage(r.usage, { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, reported: false }).decision_tokens, 186);
+});
+
+// --- TypeSafe Jev 1.14 (hosted, images behind an opt-in header) ------------------
+
+const JEV = DECISION_MODELS["jev-typesafe"];
+
+test("typesafe adapter: frame in the assets map as raw jpg base64, referenced from state", () => {
+  const req = toDialectRequest(JEV, buildDecisionRequest({ image: IMAGE, question: QUESTION, context: "porch" }));
+  const [ref] = Object.keys(req.assets);
+  assert.deepEqual(req.assets[ref], { type: "image", format: "jpg", data_base64: "/9j/AAAA" });
+  assert.deepEqual(req.state, { frame: ref, context: "porch" });
+  assert.equal(req.model, "jev-1.14.0");
+  assert.equal(req.questions.alert.instructions, `Look at \`frame\`. ${QUESTION.question}`);
+});
+
+test("scanDecision: Jev sends the images opt-in header through the relay and bills input tokens", async () => {
+  const fetchImpl = fakeFetch([jsonResponse({
+    model: "jev-1.14.0",
+    answers: { alert: { type: "choice", choice: "yes", probabilities: { yes: 0.9, no: 0.1 }, confidence: 0.8 } },
+    usage: { input_tokens: 420, output_tokens: 0 },
+  })]);
+  const r = await scanDecision({
+    modelId: "jev-typesafe", url: "https://relay.example{path}", apiKey: "ts-key", question: QUESTION, image: IMAGE, fetchImpl, sleep: noSleep,
+  });
+  assert.equal(fetchImpl.calls[0].url, "https://relay.example/v1/systemone");
+  assert.equal(fetchImpl.calls[0].init.headers["TypeSafe-Danger-Zone-Images"], "true");
+  assert.equal(fetchImpl.calls[0].init.headers.Authorization, "Bearer ts-key");
+  assert.equal(r.confidence, 90);
+  assert.equal(r.usage.decision_tokens, 420);
+  assert.ok(Math.abs(costForUsage({ decision_tokens: 1e6 }, resolveDecisionPricing({ row: JEV })) - 0.042) < 1e-12);
 });
 
 test("clef needs a 32-hex account ID — nothing else ever reaches the URL path", async () => {
