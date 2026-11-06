@@ -25,6 +25,9 @@
 //   GATE=0 node scripts/dev-gate-e2e.mjs     # control run, gate off
 //   ENGINE=browser node scripts/dev-gate-e2e.mjs
 //       # (see below)
+//   ENGINE=decision DECISION_MODEL=mirage node scripts/dev-gate-e2e.mjs
+//       # the DECISION engine's on-device default (Mirage + Needle 3 in the
+//       # Cactus WASM worker, weights through the Hub mirror below)
 //   ENGINE=decision node scripts/dev-gate-e2e.mjs
 //       # the DECISION engine against a fake Replicate on the same origin
 //       # (relay template `${origin}{path}`): every prediction answers
@@ -46,6 +49,8 @@ const ROOT = path.join(import.meta.dirname, "..");
 const PUBLIC = path.join(ROOT, "public");
 const GATE = process.env.GATE !== "0";
 const ENGINE = ["browser", "decision"].includes(process.env.ENGINE) ? process.env.ENGINE : "provider";
+const DECISION_MODEL = process.env.DECISION_MODEL || "glance-qwen3-vl-4b";
+const MIRAGE = ENGINE === "decision" && DECISION_MODEL === "mirage";
 // The in-page VLM runs on WASM here (headless has no GPU adapter) at many
 // seconds a scan, so give it longer.
 const RUN_S = Number(process.env.SECONDS || (ENGINE === "browser" ? 240 : 100));
@@ -306,7 +311,7 @@ async function main() {
     "aura.keepScreenOn": false, "aura.speech": false, "aura.haptics": false,
     "aura.objectGate": GATE, "aura.objectModel": "yolo26n-int8",
     "aura.objectGateEveryS": 1, "aura.heartbeatMin": 5,
-    "aura.decisionModel": "glance-qwen3-vl-4b", "aura.decisionUrl": `${origin}{path}`,
+    "aura.decisionModel": DECISION_MODEL, "aura.decisionUrl": `${origin}{path}`,
     "aura.decisionKey": "r8_e2e", "aura.decisionAnnouncer": "template",
     "aura.decisionFallback": false,
   };
@@ -344,8 +349,11 @@ async function main() {
       return c ? c.innerText.replace(/\\s+/g, ' ').trim() : '';
     })()`);
     const t = ((Date.now() - armedAt) / 1000).toFixed(0);
-    const n = ENGINE === "browser" ? await evaluate(`window.__vlmScans || 0`) : scans.length;
-    const status = ENGINE === "browser"
+    // In-page engines (the BROWSER VLM, Mirage's worker) post 'scan' messages
+    // rather than HTTP calls.
+    const inPage = ENGINE === "browser" || MIRAGE;
+    const n = inPage ? await evaluate(`window.__vlmScans || 0`) : scans.length;
+    const status = inPage
       ? await evaluate(`(document.body.innerText.split('\\n').find(l => /^(Watching|Loading|Error|Monitoring|⚠)/.test(l.trim())) || '').trim().slice(0, 60)`)
       : "";
     samples.push({ t: Number(t), card, scans: n, status });
@@ -443,7 +451,12 @@ async function main() {
     ["Lab > Evaluate runs a matrix against the provider and tabulates it", /Accuracy/.test(evalTable) && /(Trigger|Clear) \d+/.test(evalTable)],
     ["Settings renders the gate block (toggle on, WAKE ON kinds listed)",
       Boolean(settingsRender?.toggle && settingsRender?.wakeOn)],
-    ...(ENGINE === "decision"
+    ...(MIRAGE
+      ? [
+          // Counted before Lab › Evaluate, whose matrix runs on the fake provider.
+          ["no frame went to a remote decision backend", providerScansBefore === 0],
+        ]
+      : ENGINE === "decision"
       ? [
           // The monitor is still armed when the counters are read, so the newest
           // prediction can be mid-flight: allow exactly one unpolled.

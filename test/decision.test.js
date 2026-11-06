@@ -75,7 +75,7 @@ const noSleep = async () => {};
 test("every row names a known dialect and pins what it calls", () => {
   assert.ok(DECISION_MODELS[DEFAULT_DECISION_MODEL]);
   for (const [id, row] of Object.entries(DECISION_MODELS)) {
-    assert.ok(["replicate", "content", "workers-ai", "typesafe"].includes(row.dialect), id);
+    assert.ok(["replicate", "content", "workers-ai", "typesafe", "mirage"].includes(row.dialect), id);
     assert.ok(row.label, id);
     if (row.dialect === "workers-ai" || row.dialect === "typesafe") {
       assert.ok(vendorFor(row), id);
@@ -85,6 +85,10 @@ test("every row names a known dialect and pins what it calls", () => {
       assert.match(row.version, /^[0-9a-f]{64}$/, `${id} must pin a full version id`);
       assert.ok(Number.isFinite(row.perSecond) && row.perSecond > 0, id);
       assert.equal(defaultDecisionUrl(row), DEFAULT_RELAY_URL);
+    } else if (row.local) {
+      assert.equal(row.upstream, null, id);
+      assert.equal(defaultDecisionUrl(row), "", id);
+      assert.equal(row.perSecond, 0, id);
     } else {
       assert.equal(row.upstream, null, id);
       assert.ok(defaultDecisionUrl(row).startsWith("http"), id);

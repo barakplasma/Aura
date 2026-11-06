@@ -44,7 +44,23 @@ await Promise.all([
     minify: true,
     sourcemap: "linked",
   }),
+  // The DECISION engine's default row (lib/mirage.js): the ONLY bundle that
+  // pulls in the vendored Cactus glue. Its `require("node:fs")` is on the
+  // Node-only path, so it stays external and is never reached in a browser.
+  esbuild.build({
+    entryPoints: [path.join(root, "src", "workers", "mirage.worker.js")],
+    outdir,
+    entryNames: "mirage.worker",
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2020",
+    external: ["node:*"],
+    minify: true,
+    sourcemap: "linked",
+  }),
   copyOnnxRuntimeFiles(),
+  copyCactusEngine(),
 ]);
 
 // The one stylesheet: Tailwind (tokens, reset, utilities) → assets/ui.css. Its
@@ -64,6 +80,17 @@ execFileSync(
 await buildServiceWorker();
 
 console.log("React bundle built.");
+
+// The vendored Cactus engine (vendor/cactus/) → public/cactus/, where
+// assets/mirage.worker.js fetches it. Not under assets/ so the service
+// worker doesn't precache 1.2 MB for everyone; the worker caches it itself
+// on first use.
+async function copyCactusEngine() {
+  const dest = path.join(root, "public", "cactus");
+  await rm(dest, { recursive: true, force: true });
+  await mkdir(dest, { recursive: true });
+  await copyFile(path.join(root, "vendor", "cactus", "cactus.wasm"), path.join(dest, "cactus.wasm"));
+}
 
 // The BROWSER engine's worker points ONNX Runtime Web at these same-origin
 // files (env.backends.onnx.wasm.wasmPaths in src/workers/ml.worker.js)

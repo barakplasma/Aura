@@ -9,9 +9,12 @@ An **automated visual monitoring PWA** that runs entirely in the browser. A phon
 - **PROVIDER** (default) — an OpenAI-compatible vision model (Cerebras, OpenAI, Groq, a local server, etc.), called with the user's own API key — no backend, no secrets.
 - **BROWSER** — a small vision-language model run entirely client-side via Transformers.js/WebGPU. No key, no server, no CORS; the frame never leaves the device. The model is picked from a table (`lib/browser-models.js`); the reference device is a Pixel 10 in Chrome. See `lib/browser-engine.js` and `src/workers/ml.worker.js`.
 
-- **DECISION** — a typed-decision classifier (Glance/Qwen3-VL on Replicate by default,
-  Jev-Omni, Cloudflare's Clef on Workers AI, or a self-hosted `/v1/systemone` server)
-  returns p(yes) from one forward pass. BYOK: the user's own Replicate or Cloudflare token
+- **DECISION** — a typed-decision classifier returns p(yes) for the mission. The default row,
+  `mirage`, runs **on this device** in the vendored Cactus WASM engine: Needle 3 (text, 35 MB)
+  reads the mission once into a target, Mirage (vision, 22 MB) names what it sees, and its
+  scene description words the alert (`lib/mirage.js`). The hosted rows — Glance/Qwen3-VL on
+  Replicate, Jev-Omni, Cloudflare's Clef on Workers AI, or a self-hosted `/v1/systemone`
+  server — return p(yes) from one forward pass. BYOK: the user's own Replicate or Cloudflare token
   goes through a CORS pass-through relay that stores nothing. It writes no text, so a fired alert is worded by the provider, the BROWSER
   model, or a template. See `lib/decision.js` and docs/PRD-decision-engine.md.
 
@@ -58,6 +61,11 @@ always beat the reset. `docs/PRD-ux-redesign.md` is the plan this UI follows; Ph
 | `lib/aura.js`                         | PROVIDER engine: `scanClient()` calls the configured provider directly, `fetchModels()` lists models; `runProviderLeg()` announces for DECISION                     |
 | `lib/decision.js`                     | DECISION engine: `scanDecision()`, mission → question, one pure `toRequest`/`fromResponse` adapter per wire dialect, relay templates, polling, provider fallback    |
 | `lib/decision-models.js`              | `DECISION_MODELS` table (dialect, pinned Replicate version, per-second price) + relay presets — pure                                                                |
+| `lib/mirage.js`                       | `mirage` DECISION row, pure: asset pins + hashes, Needle 3 tool, mission → target (subject only), detections → answer, scene line |
+| `lib/mirage-runtime.js`               | Drives Cactus engine instances (one per model): Needle target (cached per mission), Mirage describe — shared by worker and Node     |
+| `lib/mirage-engine.js`                | Main-thread facade: posts scans to `assets/mirage.worker.js`; its timeout covers inference only, never the first download           |
+| `src/workers/mirage.worker.js`        | Fetches + hash-checks engine and weights into Cache Storage, decodes the frame to RGB, runs the scan — ONLY importer of `vendor/cactus/` |
+| `vendor/cactus/`                      | Cactus runtime 4.0.0 WASM (`cactus.js` + `cactus.wasm`, Apache-2.0), unmodified; build copies the wasm to `public/cactus/`        |
 | `deploy/relay-worker/`                | The BYOK CORS relay: one Workers-module fetch handler, deployed to Cloudflare Workers or run under celld; forwards only the versions pinned in the table above      |
 | `src/setup/`                          | Setup cards: EngineCard (choose, connect, test), Provider/Browser/DecisionFields, Cadence, Delivery, Camera, Advanced (folds with value summaries)                  |
 | `lib/frame-test.js`                   | "Test on current frame" for every engine: one threshold-0 detection pass via injected scan functions; DECISION runs with no fallback                                |
@@ -94,6 +102,10 @@ or from within a dedicated worker:
   `lib/training.js` (that's why the training-example store is a separate
   module, `lib/training-store.js`) — `OptimizeScreen.jsx` reaches it only via
   a dynamic `import()`.
+- `vendor/cactus/cactus.js` (the Cactus engine glue): only `src/workers/mirage.worker.js`
+  imports it; `lib/mirage-runtime.js` takes the factory as an argument so Node
+  (`scripts/dev-mirage.mjs`) can hand in the same one. `vendor/cactus/package.json` marks the
+  glue CommonJS (the repo is `"type": "module"`).
 - `@huggingface/transformers`: only `src/workers/ml.worker.js` may import it.
   `lib/browser-engine.js` (statically imported — it's the BROWSER engine's
   main-thread facade) talks to that worker purely by `postMessage`, spawned
@@ -176,6 +188,16 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
   falls back to the template and never drops a fired alert; a failed decision re-runs on
   the provider when `aura.decisionFallback` is on. `ENGINE=decision node scripts/dev-gate-e2e.mjs`
   drives it against a fake Replicate.
+- Mirage (`dialect: "mirage"`, `local: true`) has no wire: `scanDecision` hands the request to
+  `localImpl` (the worker facade). Measured before it was built: Mirage's yes/no and count
+  *forms* are uncalibrated, so the answer is "a detected object carries the target's name",
+  scored by that detection score (true hits 0.5–0.85 — not a probability; the row's note says
+  keep the threshold ≤ 50). Keywords steer what Mirage *calls* an object, so only the target
+  goes in. Needle 3 names the object; the alert direction ("not", "gone", "leaves") is a
+  regex, and places after the first preposition ("on the couch") are never matchers. A
+  Needle failure falls back to the mission's COCO words. `node scripts/dev-mirage.mjs <img>
+  "<mission>"` runs the real models in Node; `ENGINE=decision DECISION_MODEL=mirage node
+  scripts/dev-gate-e2e.mjs` runs them in the app.
 - Clef (`dialect: "workers-ai"`) needs the user's Cloudflare account ID
   (`aura.decisionAccount`) in its URL path; only a 32-hex ID may reach it (`isAccountId`).
   Its `images` must be data URIs and it bills per input token (`usage.decision_tokens` ×

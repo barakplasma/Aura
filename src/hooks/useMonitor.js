@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { scanClient, runProviderLeg, isLocalBaseUrl } from "../../lib/aura.js";
 import { scanDecision, missionToQuestion } from "../../lib/decision.js";
+import { getDecisionModel } from "../../lib/decision-models.js";
 import { isEngineConfigured } from "../../lib/providers.js";
 import { demoScan } from "../../lib/demo.js";
 import {
@@ -810,11 +811,14 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         // Model-download progress (first arm, or a model switch) is surfaced
         // as the monitor status so the operator sees "Loading LFM2.5-VL 450M
         // — 61%" instead of a blank screen while the weights fetch.
-        const onProgress = isBrowserEngine || (isDecisionEngine && s.decisionAnnouncer === "browser")
+        // Who is loading: the on-device decision row (Mirage's download) or
+        // the BROWSER model (as the engine, or as the decision announcer).
+        const localDecision = isDecisionEngine && getDecisionModel(s.decisionModel)?.local;
+        const onProgress = isBrowserEngine || localDecision || (isDecisionEngine && s.decisionAnnouncer === "browser")
           ? (msg) => {
               if (!internalRef.current.running || msg.pct == null) return;
-              const label =
-                BROWSER_MODELS[s.browserModel]?.label || "browser model";
+              const label = msg.file
+                || BROWSER_MODELS[s.browserModel]?.label || "browser model";
               say(verdicts.loading(label, msg.pct));
             }
           : undefined;
@@ -893,6 +897,7 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
                   requestTimeout: effTimeoutMs == null ? null : effTimeoutMs / 1000,
                   signal: abort.signal,
                   onStage,
+                  onProgress,
                 })
               : await scanClient(providerArgs);
         if (!internalRef.current.running) return;

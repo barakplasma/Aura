@@ -28,6 +28,11 @@ public/ort/
 # ONNX Runtime loader bundles the worker imports relative to itself — copied
 # from node_modules by scripts/build-react.js on every build, like public/ort/.
 public/assets/ort*.bundle.min.mjs
+# The Mirage worker bundle and the Cactus engine it loads — rebuilt from
+# vendor/cactus/ by scripts/build-react.js, like ml.worker.js and public/ort/.
+public/assets/mirage.worker.js
+public/assets/mirage.worker.js.map
+public/cactus/
 npm-debug.log*
 .DS_Store
 megalinter-reports/

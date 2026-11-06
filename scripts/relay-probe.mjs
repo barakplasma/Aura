@@ -29,7 +29,7 @@
 
 import sharp from "sharp";
 import { expandRelayUrl } from "../lib/decision.js";
-import { DECISION_MODELS, DEFAULT_DECISION_MODEL } from "../lib/decision-models.js";
+import { DECISION_MODELS } from "../lib/decision-models.js";
 
 const args = process.argv.slice(2);
 const relay = args.find((a) => !a.startsWith("--"));
@@ -45,7 +45,8 @@ const opt = (name, dflt) => {
 const ORIGIN = opt("origin", "https://barakplasma.github.io");
 const HOSTED = flag("hosted");
 const MEASURE = Number(opt("measure", 0));
-const row = DECISION_MODELS[DEFAULT_DECISION_MODEL];
+// The default *hosted* row: the relay only ever carries Replicate-shaped traffic.
+const row = DECISION_MODELS["glance-qwen3-vl-4b"];
 const UPSTREAM = `${row.upstream}/v1/predictions`;
 const at = (upstreamUrl) => expandRelayUrl(relay, upstreamUrl);
 const FAKE_TOKEN = "r8_relayprobe0000000000000000000000000000";
