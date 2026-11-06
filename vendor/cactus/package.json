@@ -1,3 +1,8 @@
 {
+  "name": "cactus-runtime-wasm",
+  "version": "4.0.0",
+  "private": true,
+  "description": "Vendored Cactus WASM glue; marks cactus.js CommonJS for Node (the repo is type: module).",
+  "license": "Apache-2.0",
   "type": "commonjs"
 }
