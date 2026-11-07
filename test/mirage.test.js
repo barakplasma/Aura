@@ -8,7 +8,7 @@ import {
   nameMatches,
   parseNeedleTarget,
 } from "../lib/mirage.js";
-import { runMirage, _setMirageWorkerFactory } from "../lib/mirage-engine.js";
+import { releaseMirage, runMirage, _setMirageWorkerFactory } from "../lib/mirage-engine.js";
 import { scanDecision } from "../lib/decision.js";
 import { DECISION_MODELS, DEFAULT_DECISION_MODEL, isDecisionConfigured } from "../lib/decision-models.js";
 
@@ -204,4 +204,24 @@ test("runMirage: an aborted scan rejects at once", async (t) => {
   const p = runMirage({ image: IMAGE, mission: "cats" }, { signal: ac.signal });
   ac.abort(new Error("stopped"));
   await assert.rejects(p, /stopped/);
+});
+
+test("releaseMirage drops an idle worker but never one with a scan in flight", async (t) => {
+  t.after(() => _setMirageWorkerFactory(null));
+  const workers = [];
+  let answer = null;
+  _setMirageWorkerFactory(() => {
+    const w = fakeWorker((msg, reply) => { answer = () => reply({ type: "result", result: { ok: true } }); });
+    workers.push(w);
+    return w;
+  });
+  const p = runMirage({ image: IMAGE, mission: "cats" });
+  await new Promise((r) => setTimeout(r, 0));
+  releaseMirage();
+  assert.equal(workers[0].terminated, false, "a scan is in flight");
+  answer();
+  assert.deepEqual(await p, { ok: true });
+  releaseMirage();
+  assert.equal(workers[0].terminated, true, "idle now, so it goes");
+  releaseMirage(); // no worker: a no-op
 });

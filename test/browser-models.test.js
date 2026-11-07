@@ -57,10 +57,11 @@ test("pickBrowserModel: a Pixel 10 in Chrome gets the largest auto-selectable ro
   // Chrome caps navigator.deviceMemory at 8 by spec, so a 12-16 GB phone is
   // indistinguishable from an 8 GB one here. 8 must not read as "be careful".
   // Not the DEFAULT any more: the default must be measured-working
-  // (smolvlm2-500m), while auto-pick recommends the largest runnable row,
-  // which after grey-lining qwen is LFM2.5-VL.
+  // (smolvlm2-500m), while auto-pick recommends the largest runnable row.
+  // Qwen3.5 and LFM2.5-VL both carry a knownIssue now, so that is the 256M row
+  // — the tests below keep their shape for when a larger row is cleared again.
   const pixel10 = { hasWebGpu: true, hasShaderF16: true, deviceMemoryGB: 8, maxBufferBytes: 2 ** 31 - 1 };
-  assert.equal(pickBrowserModel(pixel10), "lfm2.5-vl-450m");
+  assert.equal(pickBrowserModel(pixel10), "smolvlm2-256m");
   assert.notEqual(DEFAULT_BROWSER_MODEL, FALLBACK_BROWSER_MODEL);
 });
 
@@ -68,7 +69,7 @@ test("pickBrowserModel: unknown deviceMemory is treated as comfortable, not as t
   // Firefox and Safari don't implement deviceMemory at all.
   assert.equal(
     pickBrowserModel({ hasWebGpu: true, hasShaderF16: true, maxBufferBytes: 2 ** 31 - 1 }),
-    "lfm2.5-vl-450m",
+    "smolvlm2-256m",
   );
 });
 
@@ -185,6 +186,10 @@ test("a measured failure on one phone warns and blocks auto-pick, but does not d
   assert.match(modelKnownIssue("qwen3.5-0.8b"), /Pixel 7a/);
   assert.equal(modelUnsupportedReason("qwen3.5-0.8b", { hasWebGpu: true, hasShaderF16: true }), null);
   assert.notEqual(pickBrowserModel(pixel10), "qwen3.5-0.8b");
+  // Same for LFM2.5-VL, which crashed Chrome on a Pixel 10 during its download.
+  assert.match(modelKnownIssue("lfm2.5-vl-450m"), /Pixel 10/);
+  assert.equal(modelUnsupportedReason("lfm2.5-vl-450m", { hasWebGpu: true, hasShaderF16: true }), null);
+  assert.notEqual(pickBrowserModel(pixel10), "lfm2.5-vl-450m");
   assert.equal(DEFAULT_BROWSER_MODEL, "smolvlm2-500m");
   assert.equal(modelKnownIssue(DEFAULT_BROWSER_MODEL), null, "the default must have no known issue");
   assert.equal(modelUnsupportedReason(DEFAULT_BROWSER_MODEL, { hasWebGpu: true, hasShaderF16: true }), null);

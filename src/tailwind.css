@@ -60,7 +60,7 @@
 @media (prefers-color-scheme: light) {
   :root {
     --color-bg-0: #f6f8fb;
-    --color-bg-1: #ffffff;
+    --color-bg-1: #fff;
     --color-bg-2: #e9edf3;
     --color-border: #c4ccd8;
     --color-text: #10151c;

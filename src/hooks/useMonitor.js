@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { scanClient, runProviderLeg, isLocalBaseUrl } from "../../lib/aura.js";
 import { scanDecision, missionToQuestion } from "../../lib/decision.js";
 import { getDecisionModel } from "../../lib/decision-models.js";
+import { releaseMirage } from "../../lib/mirage-engine.js";
 import { isEngineConfigured } from "../../lib/providers.js";
 import { demoScan } from "../../lib/demo.js";
 import {
@@ -814,6 +815,8 @@ export function useMonitor({ settingsRef, videoRef, canvasRef, demoMode, keepScr
         // Who is loading: the on-device decision row (Mirage's download) or
         // the BROWSER model (as the engine, or as the decision announcer).
         const localDecision = isDecisionEngine && getDecisionModel(s.decisionModel)?.local;
+        // Switched away from Mirage: don't keep its models resident beside this engine's.
+        if (!localDecision) releaseMirage();
         const onProgress = isBrowserEngine || localDecision || (isDecisionEngine && s.decisionAnnouncer === "browser")
           ? (msg) => {
               if (!internalRef.current.running || msg.pct == null) return;

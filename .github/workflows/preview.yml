@@ -13,9 +13,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  deployments: write
+permissions: {}
 
 concurrency:
   group: preview-${{ github.event.pull_request.number }}
@@ -28,9 +26,13 @@ env:
 
 jobs:
   preview:
+    name: preview
     # A fork's PR gets no secrets, so it can't deploy.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      deployments: write # the "preview" environment's deployment on the PR
     environment:
       name: preview
       url: https://pr-${{ github.event.pull_request.number }}.${{ env.PAGES_SUBDOMAIN }}
