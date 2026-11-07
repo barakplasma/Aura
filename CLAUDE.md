@@ -228,7 +228,10 @@ Base URL + model are what "configured" means — never gate the UI on the API ke
 - Every PR from this repo gets a Cloudflare Pages preview at `https://pr-<N>.aura-2q7.pages.dev`
   (`.github/workflows/preview.yml`, the `aura` Pages project, headers from
   `deploy/pages/_headers`). Pages caps files at 25 MiB, so ORT's jsep/asyncify wasm are
-  dropped there — previews can't exercise the BROWSER engine's WebGPU path.
+  dropped there. Before any model download `ml.worker.js` reads those files' first bytes
+  (`lib/ort-files.js`): HTML instead of `\0asm` → the identical ORT build from jsDelivr (as
+  media-clusterer does on Pages); neither → fail up front. The service worker never caches an
+  HTML answer under `/ort/`.
 - `public/sw.js` is **generated** by `npm run build` (and gitignored — it isn't in
   a fresh clone until you build) — edit `scripts/sw-template.js`.
   It caches the app shell only, so the PWA boots offline against a local model. It

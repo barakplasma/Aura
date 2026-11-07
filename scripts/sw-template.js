@@ -141,7 +141,10 @@ self.addEventListener("fetch", (event) => {
           isolate(
             hit ||
               fetch(req).then((resp) => {
-                if (resp.ok) caches.open(CACHE).then((cache) => cache.put(req, resp.clone()));
+                // A host's SPA fallback answers a missing binary with
+                // index.html (200); caching that would poison every later load.
+                const html = (resp.headers.get("content-type") || "").includes("text/html");
+                if (resp.ok && !html) caches.open(CACHE).then((cache) => cache.put(req, resp.clone()));
                 return resp;
               }),
           ),

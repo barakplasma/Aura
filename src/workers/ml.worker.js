@@ -56,6 +56,7 @@ import { deviceRequest, limitReport } from "../../lib/webgpu-limits.js";
 import { verdictStats, verdictTokenIds } from "../../lib/logprob.js";
 import { makeLogitCapture } from "../../lib/logit-capture.js";
 import { generatedRepetitionPenalty } from "../../lib/repetition-penalty.js";
+import { resolveOrtBase } from "../../lib/ort-files.js";
 
 // Point ONNX Runtime Web at same-origin WASM files instead of its default CDN,
 // so the browser engine works offline once cached (see scripts/build-react.js,
@@ -72,6 +73,26 @@ import { generatedRepetitionPenalty } from "../../lib/repetition-penalty.js";
 // "no available backend found. ERR: [webgpu] TypeError: … webgpuInit is not a
 // function", i.e. it *breaks* WebGPU rather than enabling it. Let ORT choose.
 env.backends.onnx.wasm.wasmPaths = new URL("../ort/", self.location).href;
+
+// Checked once, before the first model download: a host that doesn't serve
+// these files (Pages previews drop the >25 MiB builds) switches to jsDelivr,
+// or fails here rather than after hundreds of MB (lib/ort-files.js).
+let ortBase = null;
+function ensureOrtBase() {
+  ortBase ??= resolveOrtBase({
+    local: env.backends.onnx.wasm.wasmPaths,
+    version: env.backends.onnx.versions?.web,
+  })
+    .then((r) => {
+      env.backends.onnx.wasm.wasmPaths = r.base;
+      return r;
+    })
+    .catch((err) => {
+      ortBase = null;
+      throw err;
+    });
+  return ortBase;
+}
 
 // A StoppingCriteria whose interrupt() can be flipped mid-generation so an
 // 'abort' message stops decoding within one token instead of running to
@@ -258,6 +279,7 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
 
   const resolvedDevice =
     device || (typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm");
+  await ensureOrtBase();
   const limits = await useAdapterLimits(resolvedDevice);
 
   // transformers.js reports progress per file (config.json, tokenizer.json,
@@ -458,6 +480,7 @@ async function handleLoadDetector(id, { model, dtype, device }) {
   await disposeDetector();
   const resolvedDevice =
     device || (typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm");
+  await ensureOrtBase();
   // Shares the VLM's device request: useAdapterLimits() is idempotent, and on
   // a gated session the detector is usually what triggers it first.
   await useAdapterLimits(resolvedDevice);

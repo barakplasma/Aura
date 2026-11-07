@@ -51,8 +51,8 @@ jobs:
         run: npm run build
 
       # Pages rejects files over 25 MiB: ONNX Runtime's jsep/asyncify wasm
-      # builds (27–28 MB) don't fit, so the BROWSER engine's WebGPU path is
-      # missing from previews. Everything else, Mirage included, is complete.
+      # builds (27–28 MB) don't fit. ml.worker.js notices before any model
+      # download and loads the identical build from jsDelivr (lib/ort-files.js).
       - name: Prepare for Pages
         run: |
           cp deploy/pages/_headers public/_headers
