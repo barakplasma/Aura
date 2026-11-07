@@ -298,10 +298,15 @@ async function handleLoad(id, { task, model, dtype, device, recipe }) {
   });
   const progressState = createProgressState();
 
+  // One message per whole percent, not per chunk: an 810 MB model was ~3,500
+  // messages, each a main-thread re-render, on a phone already short of memory.
+  let lastPct;
   const progress_callback = (info) => {
     if (!info || (info.status !== "progress" && info.status !== "download")) return;
     recordProgress(progressState, info);
     const { loaded, total, pct } = aggregateProgress(progressState, expectedTotal);
+    if (pct === lastPct) return;
+    lastPct = pct;
     post({ id, type: "progress", file: info.file, loaded, total, pct });
   };
 

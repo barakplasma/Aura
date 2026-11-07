@@ -33,13 +33,16 @@ async function fetchPinned(url, asset, label) {
     if (!res.ok || !res.body) throw new Error(`Downloading ${label} failed: HTTP ${res.status}`);
     const chunks = [];
     let got = 0;
+    let lastPct;
     const reader = res.body.getReader();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       chunks.push(value);
       got += value.length;
-      report({ phase: "download", file: label, pct: Math.min(99, Math.round((100 * got) / asset.bytes)) });
+      // One message per whole percent, not per chunk (each one re-renders the page).
+      const pct = Math.min(99, Math.round((100 * got) / asset.bytes));
+      if (pct !== lastPct) report({ phase: "download", file: label, pct: (lastPct = pct) });
     }
     buf = new Uint8Array(got);
     let at = 0;
