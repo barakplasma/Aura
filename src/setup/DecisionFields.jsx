@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   DECISION_MODELS, RELAY_PRESETS, relayPresetFor, decisionModelKeys, defaultDecisionUrl,
-  getDecisionModel, usesRelay, vendorFor, isAccountId, DEFAULT_DECISION_MODEL,
+  getDecisionModel, usesRelay, vendorFor, isAccountId, isLocal, DEFAULT_DECISION_MODEL,
 } from '../../lib/decision-models.js';
 import { decisionTarget } from '../../lib/decision.js';
 import { Button } from '../ui/button.jsx';
@@ -27,6 +27,7 @@ export default function DecisionFields({ s, set }) {
   const rowKey = getDecisionModel(s.decisionModel) ? s.decisionModel : DEFAULT_DECISION_MODEL;
   const row = DECISION_MODELS[rowKey];
   const relayed = usesRelay(row);
+  const local = isLocal(row);
   const vendor = vendorFor(row);
   const providerConfigured = Boolean(s.baseUrl && s.model);
 
@@ -65,7 +66,14 @@ export default function DecisionFields({ s, set }) {
         </Select>
       </Field>
 
-      <Field
+      {local && (
+        <Status>
+          Runs on this device: Needle 3 reads the mission once to decide what to look for, then Mirage
+          names what it sees in each frame. No key, no relay — frames never leave the browser.
+        </Status>
+      )}
+
+      {!local && <Field
         label={relayed ? 'CORS relay' : 'Server URL'}
         htmlFor="decision-url"
         hint={relayed ? (
@@ -98,7 +106,7 @@ export default function DecisionFields({ s, set }) {
           </div>
         )}
         {relayed && relayPresetFor(s.decisionUrl) && <Status>{relayPresetFor(s.decisionUrl).note}</Status>}
-      </Field>
+      </Field>}
 
       {row.needsAccount && (
         <Field
@@ -124,7 +132,7 @@ export default function DecisionFields({ s, set }) {
         </Field>
       )}
 
-      <Field
+      {!local && <Field
         label={relayed ? `Your ${vendor.name} token` : 'Server API key'}
         htmlFor="decision-key"
         hint={relayed
@@ -138,7 +146,7 @@ export default function DecisionFields({ s, set }) {
           placeholder={relayed ? vendor.tokenPlaceholder : 'blank if the server needs none'}
         />
         <Status tone="warn">{keyNote}</Status>
-      </Field>
+      </Field>}
 
       <Field
         label="Announcer"
@@ -146,7 +154,7 @@ export default function DecisionFields({ s, set }) {
           Decision models return probabilities, not words. When an alert fires, the
           {s.decisionAnnouncer === 'provider' && ' provider below writes the announcement (one chat call, only when fired).'}
           {s.decisionAnnouncer === 'browser' && ' in-browser model writes it on this device.'}
-          {s.decisionAnnouncer === 'template' && ' mission\'s "on alert, announce" text is spoken as written.'}
+          {s.decisionAnnouncer === 'template' && ` mission's "on alert, announce" text is spoken as written${local ? ', followed by what Mirage saw' : ''}.`}
           {s.decisionAnnouncer === 'provider' && !providerConfigured && ' No provider is configured yet, so the template is used.'}
           {' '}If the announcer fails, the template speaks — the alert itself is never dropped.
         </>}

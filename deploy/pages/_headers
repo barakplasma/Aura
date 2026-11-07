@@ -1,0 +1,16 @@
+# Cloudflare Pages headers for PR previews (.github/workflows/preview.yml),
+# mirroring deploy/caddy/Caddyfile: cross-origin isolation on everything,
+# no-cache on the shell and sw.js, long cache only on content-hashed chunks.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+  Cache-Control: no-cache
+
+/assets/chunk-*
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+
+/ort/*
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable

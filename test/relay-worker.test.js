@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../deploy/relay-worker/src/index.js";
-import { DECISION_MODELS, DEFAULT_DECISION_MODEL } from "../lib/decision-models.js";
+import { DECISION_MODELS } from "../lib/decision-models.js";
 
 const ORIGIN = "https://barakplasma.github.io";
 const env = { ALLOWED_ORIGINS: `${ORIGIN},https://aura.526462738.xyz` };
@@ -9,7 +9,7 @@ const R8 = "Bearer r8_test0000";
 const CF = "Bearer cftoken000000000000000000000000000000";
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const CLEF = `/client/v4/accounts/${ACCOUNT}/ai/run/@cf/cloudflare/clef`;
-const pinned = DECISION_MODELS[DEFAULT_DECISION_MODEL].version;
+const pinned = DECISION_MODELS["glance-qwen3-vl-4b"].version;
 
 // Every upstream call the worker makes, answered with a fixed 401 like a real
 // API rejecting a test token.

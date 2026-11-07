@@ -144,10 +144,13 @@ export default function EvalScreen({
       : []),
     ...(chromeAICapable ? [CHROME_AI_MODEL_ID] : []),
     // Decision rows that share the configured one's endpoint — so the same
-    // relay/server URL and the same key are valid for each of them.
+    // relay/server URL and the same key are valid for each of them — plus
+    // the on-device row, which needs neither.
     ...(isDecisionConfigured(decision)
       ? Object.keys(DECISION_MODELS)
-          .filter((k) => DECISION_MODELS[k].upstream === getDecisionModel(decision.decisionModel).upstream)
+          .filter((k) => DECISION_MODELS[k].local
+            || (!getDecisionModel(decision.decisionModel).local
+              && DECISION_MODELS[k].upstream === getDecisionModel(decision.decisionModel).upstream))
           .map((k) => `${DECISION_MODEL_PREFIX}${k}`)
       : []),
   ];
