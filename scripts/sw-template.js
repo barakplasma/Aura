@@ -101,17 +101,15 @@ self.addEventListener("fetch", (event) => {
         // CORS-readable. Model weights come from the Hugging Face CDN, which
         // sends `Access-Control-Allow-Origin: *`; nothing else is loaded
         // cross-origin (see public/index.html: local CSS, icons, manifest).
-        return isolate(
-          new Response(resp.body, {
-            status: resp.status,
-            statusText: resp.statusText,
-            headers: {
-              ...Object.fromEntries(resp.headers.entries()),
-              "Cross-Origin-Opener-Policy": "same-origin",
-              "Cross-Origin-Embedder-Policy": "require-corp",
-            },
-          }),
-        );
+        //
+        // `set`, not an object spread: entries() yields lowercase names, so
+        // spreading them beside "Cross-Origin-Opener-Policy" kept both and
+        // Headers joined them into "same-origin, same-origin" — an invalid
+        // COOP the browser drops, so any host that already sends COOP
+        // (Caddy, Pages) lost isolation as soon as this worker took over.
+        const headers = new Headers(resp.headers);
+        headers.set("Cross-Origin-Opener-Policy", "same-origin");
+        return isolate(new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers }));
       })(),
     );
     return;
