@@ -1,0 +1,31 @@
+name: Notify homelab-manifests
+
+# After "Build image" succeeds, tell homelab-manifests to bump its apps/aura pin
+# (it no longer polls). Needs the secret HOMELAB_DISPATCH_TOKEN: a token allowed
+# to send repository_dispatch to barakplasma/homelab-manifests. Without it this
+# only warns, so it cannot break the build.
+on:
+  workflow_run:
+    workflows: ["Build image"]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  notify:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.HOMELAB_DISPATCH_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::HOMELAB_DISPATCH_TOKEN is not set; not notifying homelab-manifests"
+            exit 0
+          fi
+          gh api repos/barakplasma/homelab-manifests/dispatches \
+            -f event_type=aura-image-published \
+            -f "client_payload[sha]=$SHA"
